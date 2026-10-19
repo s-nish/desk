@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0.75" y2="1">
+      <stop stop-color="#fffdf7"/>
+      <stop offset="1" stop-color="#e7e3d9"/>
+    </linearGradient>
+    <linearGradient id="ink" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#283a48"/>
+      <stop offset="1" stop-color="#14232e"/>
+    </linearGradient>
+    <filter id="shadow" x="-15%" y="-15%" width="130%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="15" flood-color="#13212c" flood-opacity="0.18"/>
+    </filter>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#tile)" filter="url(#shadow)"/>
+  <rect x="102" y="102" width="820" height="820" rx="184" fill="none" stroke="#ffffff" stroke-opacity="0.7" stroke-width="4"/>
+  <!-- The open D joins a stable sidebar with a generous, curved workspace. -->
+  <rect x="292" y="264" width="104" height="496" rx="30" fill="url(#ink)"/>
+  <path d="M480 316H502C631 316 708 390 708 512S631 708 502 708H480" fill="none" stroke="url(#ink)" stroke-width="104" stroke-linecap="round"/>
+  <rect x="456" y="466" width="132" height="92" rx="25" fill="#e97c50"/>
+</svg>
