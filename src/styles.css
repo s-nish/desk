@@ -1707,3 +1707,35 @@ button:disabled { cursor: not-allowed; }
 .accent-dot.is-amber { background: #c69d63; }
 .accent-dot.is-sage { background: #94a785; }
 :root[data-motion="reduced"] :is(button, .section-toggle svg, .group-toggle svg, .toggle-track > span, .node-chevron) { transition: none !important; }
+
+/* Rounded tab cards, with a separate insertion marker while reordering. */
+:root { --tabbar-h: 48px; }
+.tabbar { padding-left: 0; }
+.tabs { align-items: center; gap: 6px; padding: 6px 8px; overflow-y: hidden; }
+.tab {
+  height: 34px; min-width: 116px; max-width: 280px; margin: 0; padding: 0 7px 0 11px;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: var(--surface); color: var(--muted); cursor: grab; touch-action: none;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.tab::before { display: none; }
+.tab:hover { background: var(--bg-hover); border-color: var(--line-strong); color: var(--text-2); }
+.tab.is-active {
+  background: var(--bg-press); border-color: var(--line-strong); color: var(--text);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text) 7%, transparent), 0 1px 2px #0002;
+}
+.tab.is-active .tab-label { font-weight: 600; }
+.tab .tab-icon { opacity: .8; }
+.tab.is-active .tab-icon { opacity: 1; color: var(--ui-accent); }
+.tab:focus-visible { outline-offset: -2px; }
+.tab .tab-close { width: 20px; height: 20px; border-radius: 5px; opacity: .45; margin-left: 5px; }
+.tab.is-active .tab-close, .tab:hover .tab-close, .tab:focus-within .tab-close { opacity: 1; }
+.tab-close:hover { background: color-mix(in srgb, var(--text) 10%, transparent); }
+.tab.is-dragging-tab { opacity: .45; border-style: dashed; }
+.tab.is-drop-before::after {
+  content: ""; position: absolute; left: -5px; top: 4px; bottom: 4px; width: 2px;
+  background: var(--ui-accent); border-radius: 2px; pointer-events: none;
+}
+.tabs.has-drop-at-end::after { content: ""; flex: none; width: 2px; height: 26px; background: var(--ui-accent); border-radius: 2px; }
+body.is-reordering-tabs, body.is-reordering-tabs * { cursor: grabbing !important; user-select: none !important; }
+:root[data-motion="reduced"] .tab { transition: none; }
