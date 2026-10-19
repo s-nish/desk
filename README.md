@@ -4,7 +4,7 @@ A macOS workspace for Claude Code and Codex. Projects on the left, terminals in 
 
 ## Make it yours
 
-Open **Settings** from the sidebar, title bar, or **⌘,**. Choose Graphite, Midnight, Forest, Paper, or match your system appearance. Themes and text sizes apply to open terminals and editors without restarting sessions. Settings also includes comfortable/compact spacing, panel visibility, account management, and a shortcut reference.
+Open **Settings** from the sidebar, title bar, or **⌘,**. Choose Graphite, Midnight, Forest, Paper, or match your system appearance. Themes and text sizes apply to open terminals and editors without restarting sessions. Settings also includes comfortable/compact spacing, panel visibility, account management, and a shortcut reference. Desk’s interface accent is independent of terminal colors: choose Neutral (default), Amber, or Sage. Account color indicators are optional, and Workspace settings can hide the status bar, full paths, or account emails. Reduce interface motion is available under Appearance.
 
 Search projects from the sidebar. Accounts start collapsed; expand the section or individual tool groups when needed. By default only the selected project shows account chips; enable **Always show project accounts** to keep every project’s chips visible. Preferences and collapsed sections are saved on this Mac.
 

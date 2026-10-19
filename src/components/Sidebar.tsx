@@ -10,7 +10,7 @@ import type { Account, MenuItem, Project, Tool } from "../types";
 export function Sidebar() {
   return (
     <aside className="sidebar">
-      <div className="sidebar-brand"><span className="brand-mark"><DeskLogo size={22} /></span><div><strong>Desk</strong><span>Your development space</span></div></div>
+      <div className="sidebar-brand"><span className="brand-mark"><DeskLogo size={22} /></span><div><strong>Desk</strong></div></div>
       <Projects />
       <Accounts />
       <button className="settings-link" onClick={() => useDesk.getState().setModal({ kind: "settings" })}><Settings2 size={16} /><span>Settings</span><kbd>⌘,</kbd></button>

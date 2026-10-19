@@ -15,6 +15,7 @@ export function TitleBar() {
     const tab = s.tabs.find((t) => t.id === focusedTabId(s));
     return s.projects.find((p) => p.id === (tab?.projectId ?? s.activeProjectId));
   });
+  const showPaths = useDesk((s) => s.preferences.showPaths);
   const layout = useDesk((s) => s.layout);
   const setLayout = useDesk((s) => s.setLayout);
   return (
@@ -35,9 +36,9 @@ export function TitleBar() {
             <span className="title-project" data-tauri-drag-region>
               {project.name}
             </span>
-            <span className="title-path" data-tauri-drag-region>
+            {showPaths && <span className="title-path" data-tauri-drag-region>
               {shortPath(project.path, home)}
-            </span>
+            </span>}
           </>
         ) : (
           <span className="title-project" data-tauri-drag-region>
@@ -63,6 +64,7 @@ export function TitleBar() {
 
 function AccountSegment({ kind, account, project }: { kind: Tool; account: Account; project: Project }) {
   const identity = useDesk((s) => s.identities[account.id]);
+  const showEmails = useDesk((s) => s.preferences.showAccountEmails);
   return (
     <button
       className="status-account"
@@ -72,7 +74,7 @@ function AccountSegment({ kind, account, project }: { kind: Tool; account: Accou
     >
       <span className="status-tool">{TOOL_LABEL[kind]}</span>
       <span className="status-name">{account.name}</span>
-      {identity?.email && <span className="status-email">{identity.email}</span>}
+      {showEmails && identity?.email && <span className="status-email">{identity.email}</span>}
       {identity && !identity.signedIn && <span className="status-email">not signed in</span>}
     </button>
   );
@@ -83,6 +85,7 @@ export function StatusBar() {
   const tab = useDesk((s) => s.tabs.find((t) => t.id === focusedTabId(s)));
   const project = useDesk((s) => s.projects.find((p) => p.id === (tab?.projectId ?? s.activeProjectId)));
   const accounts = useDesk((s) => s.accounts);
+  const showPaths = useDesk((s) => s.preferences.showPaths);
   const branch = useDesk((s) => (project ? s.branches[project.id] : null));
 
   // A Claude Code or Codex tab shows only the account it runs as; anything else shows both.
@@ -99,8 +102,8 @@ export function StatusBar() {
             <GitBranch size={12} /> {branch}
           </span>
         )}
-        {tab?.type === "terminal" && <span className="status-item">{shortPath(tab.cwd, home)}</span>}
-        {tab?.type === "file" && <span className="status-item">{shortPath(tab.path, home)}</span>}
+        {showPaths && tab?.type === "terminal" && <span className="status-item">{shortPath(tab.cwd, home)}</span>}
+        {showPaths && tab?.type === "file" && <span className="status-item">{shortPath(tab.path, home)}</span>}
       </div>
       <div className="status-right">
         {project &&

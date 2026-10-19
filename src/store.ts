@@ -24,9 +24,15 @@ export interface Preferences {
   density: "comfortable" | "compact";
   fontSize: number;
   showProjectAccounts: boolean;
+  accent: "neutral" | "amber" | "sage";
+  showStatusBar: boolean;
+  showPaths: boolean;
+  showAccountEmails: boolean;
+  accountColors: boolean;
+  reduceMotion: boolean;
 }
 
-export const DEFAULT_PREFERENCES: Preferences = { theme: "graphite", density: "comfortable", fontSize: 13, showProjectAccounts: false };
+export const DEFAULT_PREFERENCES: Preferences = { theme: "graphite", density: "comfortable", fontSize: 13, showProjectAccounts: false, accent: "neutral", showStatusBar: true, showPaths: false, showAccountEmails: false, accountColors: false, reduceMotion: false };
 
 export type Modal =
   | { kind: "settings" }
