@@ -1,6 +1,7 @@
 mod accounts;
 mod files;
 mod git;
+mod bridge;
 mod pty;
 mod search;
 
@@ -336,9 +337,11 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let ptys = Arc::new(PtyManager::default());
+    bridge::start(Arc::clone(&ptys));
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .manage(Arc::new(PtyManager::default()))
+        .manage(ptys)
         .manage(files::Watchers::default())
         .manage(QuitState::default())
         .menu(build_menu)
