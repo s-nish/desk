@@ -1681,7 +1681,7 @@ button:disabled { cursor: not-allowed; }
 .side-header h2, .section-toggle { font-size: 11px; }
 .section-count { background: none; color: var(--muted); padding: 0 2px; }
 .project { border-radius: 7px; }
-.project.is-active { border-color: transparent; background: var(--bg-raised); box-shadow: inset 2px 0 var(--ui-accent); }
+.project.is-active { border-color: transparent; background: var(--bg-raised); box-shadow: none; }
 .project-accounts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-left: 0; gap: 5px; }
 .project-accounts .pill { min-width: 0; gap: 4px; font-size: 10px; border-color: transparent; background: transparent; padding: 0 3px; }
 .project-accounts .pill:hover { background: var(--bg-hover); }
