@@ -4,13 +4,14 @@ A macOS workspace for Claude Code and Codex. Projects on the left, terminals in 
 
 ## Make it yours
 
-Open **Settings** from the sidebar, title bar, or **⌘,**. Choose Graphite, Midnight, Forest, Paper, or match your system appearance. Themes and text sizes apply to open terminals and editors without restarting sessions. Settings also includes comfortable/compact spacing, panel visibility, account management, and a shortcut reference.
+Open **Settings** from the sidebar, title bar, or **⌘,**. Choose Graphite, Midnight, Forest, Paper, or match your system appearance. Themes and text sizes apply to open terminals and editors without restarting sessions. Settings also includes comfortable/compact spacing, panel visibility, account management, and a shortcut reference. Desk’s interface accent is independent of terminal colors: choose Neutral (default), Amber, or Sage. Account color indicators are optional, and Workspace settings can hide the status bar, full paths, or account emails. Reduce interface motion is available under Appearance.
 
 Search projects from the sidebar. Accounts start collapsed; expand the section or individual tool groups when needed. By default only the selected project shows account chips; enable **Always show project accounts** to keep every project’s chips visible. Preferences and collapsed sections are saved on this Mac.
 
 ## Workspace features
 
 - **Recovery:** Desk restores open files, unsaved buffers, tab selection, and split layout. Normal quit waits for a recovery snapshot. Changed disk versions show a conflict before overwrite. Terminal tabs restore as restart cards: process output and running processes do not survive app exit.
+- **Tab order:** Drag tabs left or right to reorder them across projects. The insertion marker shows where a tab will land, and the strip scrolls at its edges. Press Escape to cancel a drag, or focus a tab and use **⌥⇧← / →** to move it with the keyboard. The order is restored when Desk reopens.
 - **Split panes:** Use the split button or **⌘\** to work side by side. Click a pane to target it when opening tabs; drag the divider or use its arrow keys to resize. If only one tab is open, splitting opens a shell beside it.
 - **Source control:** Open **Changes** in the right panel to review working-tree or staged diffs, stage/unstage individual files, and commit staged changes. Git operations cover the repository root, including when the project is a subfolder. Desk never pushes automatically. Unsaved editor buffers are not included in commits.
 - **Project search:** Open **Search** or **⌘⇧F** for literal text search with optional case sensitivity. Expand Replace to preview and confirm replacements. Dirty editor buffers and files changed since the search are skipped. Search respects ignore files, skips binary/unreadable files and common build folders, and reports limits (25,000 scanned files, 200 matching files, 2,000 matches, or 8 MB of matching text). Narrow a truncated search before replacing all.

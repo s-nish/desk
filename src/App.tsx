@@ -127,6 +127,9 @@ export function App() {
     const apply = () => {
       document.documentElement.dataset.theme = resolvedTheme();
       document.documentElement.dataset.density = preferences.density;
+      document.documentElement.dataset.accent = preferences.accent;
+      document.documentElement.dataset.accountColors = preferences.accountColors ? "on" : "off";
+      document.documentElement.dataset.motion = preferences.reduceMotion ? "reduced" : "system";
       document.documentElement.style.setProperty("--code-size", `${preferences.fontSize}px`);
       updateTerminalAppearance();
       updateEditorAppearance();
@@ -200,7 +203,7 @@ export function App() {
           </>
         )}
       </div>
-      <StatusBar />
+      {preferences.showStatusBar && <StatusBar />}
       <ModalLayer />
       <QuickOpen />
       <CommandPalette />

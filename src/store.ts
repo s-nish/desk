@@ -24,9 +24,15 @@ export interface Preferences {
   density: "comfortable" | "compact";
   fontSize: number;
   showProjectAccounts: boolean;
+  accent: "neutral" | "amber" | "sage";
+  showStatusBar: boolean;
+  showPaths: boolean;
+  showAccountEmails: boolean;
+  accountColors: boolean;
+  reduceMotion: boolean;
 }
 
-export const DEFAULT_PREFERENCES: Preferences = { theme: "graphite", density: "comfortable", fontSize: 13, showProjectAccounts: false };
+export const DEFAULT_PREFERENCES: Preferences = { theme: "graphite", density: "comfortable", fontSize: 13, showProjectAccounts: false, accent: "neutral", showStatusBar: true, showPaths: false, showAccountEmails: false, accountColors: false, reduceMotion: false };
 
 export type Modal =
   | { kind: "settings" }
@@ -97,6 +103,7 @@ interface DeskState extends Persisted {
   setIdentity(id: string, identity: Identity): void;
   addTab(tab: Tab): void;
   removeTab(id: string): void;
+  moveTab(id: string, beforeId: string | null): void;
   patchTab(id: string, patch: Partial<TerminalTab> | Partial<FileTab>): void;
   selectTab(tabId: string): void;
   setBranch(projectId: string, branch: string | null): void;
@@ -301,6 +308,17 @@ export const useDesk = create<DeskState>((set, get) => ({
       return s.focusedPane === "secondary" && s.secondaryTabId
         ? { tabs, secondaryTabId: tab.id, activeProjectId: tab.projectId }
         : { tabs, activeTabId: tab.id, activeProjectId: tab.projectId };
+    });
+  },
+
+  moveTab(id, beforeId) {
+    set((s) => {
+      const tab = s.tabs.find((t) => t.id === id);
+      if (!tab || id === beforeId || (beforeId !== null && !s.tabs.some((t) => t.id === beforeId))) return {};
+      const tabs = s.tabs.filter((t) => t.id !== id);
+      const at = beforeId === null ? tabs.length : tabs.findIndex((t) => t.id === beforeId);
+      tabs.splice(at, 0, tab);
+      return tabs.every((t, i) => t.id === s.tabs[i]?.id) ? {} : { tabs };
     });
   },
 

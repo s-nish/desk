@@ -4,6 +4,7 @@ import { TOOL_LABEL, projectAccount, tabAccount, useDesk, focusedTabId } from ".
 import { addProjectsFromDialog, closeTab, openTerminal, saveTab, terminalSpec, splitWorkspace } from "../actions";
 import { mountTerminal, setTerminalVisible, unmountTerminal } from "../terminals";
 import { focusEditor, keepEditorVersion, mountEditor, reloadEditor } from "../editors";
+import { useTabReorder } from "./useTabReorder";
 import { DeskLogo } from "./DeskLogo";
 import { openMenu } from "./Menu";
 import type { FileTab, MenuItem, Project, Tab, TabTool, TerminalTab } from "../types";
@@ -54,13 +55,14 @@ export function newTabMenu(project: Project): MenuItem[] {
   return items;
 }
 
-/** Every tab from every project, grouped by project, so switching projects never hides a terminal. */
+/** Every project shares one reorderable tab strip; pane identity is independent of order. */
 function TabBar({ project }: { project: Project }) {
   const tabs = useDesk((s) => s.tabs);
   const projects = useDesk((s) => s.projects);
   const activeTabId = useDesk(focusedTabId);
   const multi = new Set(tabs.map((t) => t.projectId)).size > 1;
   const scroller = useRef<HTMLDivElement>(null);
+  const reorder = useTabReorder(scroller);
 
   useEffect(() => {
     scroller.current?.querySelector(".tab.is-active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -68,8 +70,8 @@ function TabBar({ project }: { project: Project }) {
 
   return (
     <div className="tabbar">
-      <div className="tabs" ref={scroller} role="tablist">
-        {tabs.map((t, i) => {
+      <div className={"tabs" + (reorder.landing?.before === null ? " has-drop-at-end" : "")} ref={scroller} role="tablist" aria-label="Open tabs" onClickCapture={(e) => { if (reorder.suppressClick.current) { e.preventDefault(); e.stopPropagation(); } }}>
+        {tabs.map((t) => {
           const owner = projects.find((p) => p.id === t.projectId);
           if (!owner) return null;
           return (
@@ -79,7 +81,9 @@ function TabBar({ project }: { project: Project }) {
               project={owner}
               active={t.id === activeTabId}
               showProject={multi}
-              groupStart={i > 0 && tabs[i - 1].projectId !== t.projectId}
+              dragging={reorder.draggingId === t.id}
+              dropBefore={reorder.landing?.before === t.id}
+              onDragPointerDown={(e) => reorder.start(t.id, e)}
             />
           );
         })}
@@ -103,7 +107,10 @@ function TabBar({ project }: { project: Project }) {
   );
 }
 
-function TabButton({ tab, project, active, showProject, groupStart }: { tab: Tab; project: Project; active: boolean; showProject: boolean; groupStart: boolean }) {
+function TabButton({ tab, project, active, showProject, dragging, dropBefore, onDragPointerDown }: {
+  tab: Tab; project: Project; active: boolean; showProject: boolean; dragging: boolean; dropBefore: boolean;
+  onDragPointerDown: (e: React.PointerEvent) => void;
+}) {
   const accounts = useDesk((s) => s.accounts);
   const select = () => useDesk.getState().selectTab(tab.id);
   let color = "transparent";
@@ -123,13 +130,16 @@ function TabButton({ tab, project, active, showProject, groupStart }: { tab: Tab
     <div
       role="tab"
       aria-selected={active}
+      data-tab-id={tab.id}
+      onPointerDown={onDragPointerDown}
       tabIndex={0}
       className={
         "tab" +
         (active ? " is-active" : "") +
         (tab.type === "terminal" && tab.status === "exited" ? " is-exited" : "") +
         (tab.type === "file" && tab.dirty ? " is-dirty" : "") +
-        (groupStart ? " is-group-start" : "")
+        (dragging ? " is-dragging-tab" : "") +
+        (dropBefore ? " is-drop-before" : "")
       }
       style={{ "--acct": color } as React.CSSProperties}
       onMouseDown={(e) => {
@@ -139,8 +149,17 @@ function TabButton({ tab, project, active, showProject, groupStart }: { tab: Tab
         }
       }}
       onClick={select}
-      onKeyDown={(e) => e.key === "Enter" && select()}
-      title={tab.type === "file" ? tab.path : `${TOOL_LABEL[tab.tool]} in ${project.name}${sub ? `, as ${sub}` : ""}\n${tab.cwd}`}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.altKey && e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+          e.preventDefault();
+          const { tabs, moveTab } = useDesk.getState();
+          const at = tabs.findIndex((t) => t.id === tab.id);
+          if (e.key === "ArrowLeft" && at > 0) moveTab(tab.id, tabs[at - 1].id);
+          else if (e.key === "ArrowRight" && at < tabs.length - 1) moveTab(tab.id, tabs[at + 2]?.id ?? null);
+        } else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(); }
+      }}
+      title={(tab.type === "file" ? tab.path : `${TOOL_LABEL[tab.tool]} in ${project.name}${sub ? `, as ${sub}` : ""}\n${tab.cwd}`) + "\nDrag to reorder · ⌥⇧← / →"}
     >
       {tab.type === "terminal" ? <SquareTerminal size={13} className="tab-icon" /> : <FileText size={13} className="tab-icon" />}
       {where && <span className="tab-project">{where}</span>}
