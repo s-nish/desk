@@ -63,7 +63,7 @@ try {
   await page.getByRole('heading', { name: 'studio', exact: true }).waitFor();
   // Command palette is discoverable and handles keyboard selection.
   await page.getByRole('button', { name: 'Open command palette' }).click();
-  await page.getByRole('combobox').fill('theme paper');
+  await page.getByRole('combobox').fill('theme light');
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => document.documentElement.dataset.theme === 'paper');
   await page.keyboard.press('Meta+Shift+p');
@@ -135,17 +135,17 @@ try {
   await page.getByText('1 file(s) updated. 1 unsaved file(s) skipped.', { exact: true }).waitFor();
   assert.equal(await page.evaluate(() => window.testFiles['/demo/studio/b.ts']), 'goodbye world\n');
   // Git diff, stage, unstage and commit are bound to the selected repository.
-  await page.getByRole('button', { name: 'Changes', exact: true }).click();
-  await page.getByTitle('Review a.ts').click();
-  await page.getByRole('dialog', { name: 'Review changes' }).getByText('+new', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Git', exact: true }).click();
+  await page.getByRole('button', { name: 'Review a.ts', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Review changes' }).getByText('new', { exact: true }).waitFor();
   if (process.env.DESK_SCREENSHOT) await page.screenshot({ path: process.env.DESK_SCREENSHOT.replace('.png', '-diff.png') });
   await page.getByRole('button', { name: 'Close', exact: true }).click();
   await page.getByRole('button', { name: 'Stage a.ts', exact: true }).click();
   await page.getByRole('button', { name: 'Unstage a.ts', exact: true }).click();
   await page.getByRole('button', { name: 'Stage a.ts', exact: true }).click();
   await page.getByLabel('Commit message').fill('Update greeting');
-  await page.getByRole('button', { name: 'Commit 1 staged file', exact: true }).click();
-  await page.getByText("Working tree clean. You're all caught up.").waitFor();
+  await page.getByRole('button', { name: 'Commit 1 file', exact: true }).click();
+  await page.getByText("No changes", { exact: true }).waitFor();
   // Dirty buffer changes outside Desk surface a conflict on restoration.
   await page.evaluate(() => { window.testFiles['/demo/studio/a.ts'] = 'external change\n'; localStorage.setItem('test-files', JSON.stringify(window.testFiles)); });
   await page.reload();

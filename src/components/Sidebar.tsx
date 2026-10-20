@@ -1,17 +1,18 @@
 import { useState } from "react";
-import { Search, Settings2, ChevronDown, Ellipsis, Folder, FolderOpen, FolderSearch, LogIn, Palette, Pencil, Plus, SquareTerminal, Trash2 } from "lucide-react";
-import { ACCOUNT_COLORS, TOOL_LABEL, projectAccount, useDesk } from "../store";
-import { addProjectsFromDialog, chooseProjectAccount, openTerminal, removeAccount, removeProject } from "../actions";
+import { Search, Settings2, ChevronDown, Copy, Ellipsis, Eye, Folder, FolderOpen, FolderSearch, GitBranch, GitBranchPlus, GitMerge, KeyRound, LogIn, Palette, Pencil, Plug, Plus, Server, SquareTerminal, Trash2 } from "lucide-react";
+import { ACCOUNT_COLORS, TOOL_LABEL, projectAccount, projectTree, useDesk } from "../store";
+import { addProjectsFromDialog, chooseProjectAccount, connectionLabel, deleteConnection, mergeWorktree, openConnection, openTerminal, removeAccount, removeProject, removeWorktree, saveConnection } from "../actions";
 import { ipc } from "../ipc";
 import { DeskLogo } from "./DeskLogo";
 import { openMenu } from "./Menu";
-import type { Account, MenuItem, Project, Tool } from "../types";
+import type { Account, MenuItem, Project, SshConnection, Tool } from "../types";
 
 export function Sidebar() {
   return (
     <aside className="sidebar">
       <div className="sidebar-brand"><span className="brand-mark"><DeskLogo size={22} /></span><div><strong>Desk</strong></div></div>
       <Projects />
+      <Connections />
       <Accounts />
       <button className="settings-link" onClick={() => useDesk.getState().setModal({ kind: "settings" })}><Settings2 size={16} /><span>Settings</span><kbd>⌘,</kbd></button>
     </aside>
@@ -65,18 +66,86 @@ function AccountPill({ project, kind }: { project: Project; kind: Tool }) {
   );
 }
 
+/** Running terminals, agents waiting for you, and whether any has new output, for one project. */
+function useProjectRuns(projectId: string) {
+  const running = useDesk((s) => s.tabs.filter((t) => t.projectId === projectId && t.type === "terminal" && t.status === "running").length);
+  const waiting = useDesk((s) => s.tabs.filter((t) => t.projectId === projectId && t.type === "terminal" && t.attention).length);
+  const busy = useDesk((s) => s.tabs.some((t) => t.projectId === projectId && t.type === "terminal" && t.busy && t.status === "running"));
+  const activity = useDesk((s) => s.tabs.some((t) => t.projectId === projectId && t.type === "terminal" && t.activity));
+  return { running, waiting, busy, activity };
+}
+
+function RunBadges({ projectId }: { projectId: string }) {
+  const { running, waiting, busy, activity } = useProjectRuns(projectId);
+  return <>
+    {waiting > 0 && <span className="wait-count" title={`${waiting} agent${waiting > 1 ? "s" : ""} waiting for you`}>{waiting}</span>}
+    {running > 0 && waiting === 0 && (
+      <span className={"run-count" + (activity ? " has-activity" : "") + (busy ? " is-busy" : "")} title={`${running} running terminal${running > 1 ? "s" : ""}${busy ? ", an agent is working" : ""}`}>
+        {running}
+      </span>
+    )}
+  </>;
+}
+
+function showChanges(projectId: string) {
+  const s = useDesk.getState();
+  s.selectProject(projectId);
+  s.setLayout({ filesOpen: true, panel: "git" });
+}
+
+function worktreeMenu(project: Project): MenuItem[] {
+  return [
+    { label: "New Claude Code tab", icon: <SquareTerminal size={14} />, onSelect: () => openTerminal(project.id, "claude") },
+    { label: "New Codex tab", icon: <SquareTerminal size={14} />, onSelect: () => openTerminal(project.id, "codex") },
+    { label: "New shell tab", icon: <SquareTerminal size={14} />, onSelect: () => openTerminal(project.id, "shell") },
+    { separator: true },
+    { label: "Review changes", icon: <Eye size={14} />, onSelect: () => showChanges(project.id) },
+    { label: `Merge into ${project.base ?? "its base branch"}…`, icon: <GitMerge size={14} />, disabled: !project.branch, onSelect: () => mergeWorktree(project) },
+    { label: "Reveal in Finder", icon: <FolderSearch size={14} />, onSelect: () => void ipc.reveal(project.path) },
+    { separator: true },
+    { label: "Remove worktree…", icon: <Trash2 size={14} />, danger: true, onSelect: () => removeWorktree(project) },
+    { label: "Hide from Desk", hint: "Keeps the folder", onSelect: () => removeProject(project.id) },
+  ];
+}
+
+function WorktreeRow({ project }: { project: Project }) {
+  const active = useDesk((s) => s.activeProjectId === project.id);
+  const changes = useDesk((s) => s.changeCounts[project.path] ?? 0);
+  const menu = (at: { x: number; y: number } | Element) => openMenu(at, worktreeMenu(project));
+  return (
+    <div
+      className={"project worktree" + (active ? " is-active" : "")}
+      role="button"
+      tabIndex={0}
+      onClick={() => useDesk.getState().selectProject(project.id)}
+      onKeyDown={(e) => e.key === "Enter" && useDesk.getState().selectProject(project.id)}
+      onContextMenu={(e) => { e.preventDefault(); menu({ x: e.clientX, y: e.clientY }); }}
+      title={`${project.path}\nWorktree on ${project.branch ?? "a detached HEAD"}${project.base ? `, from ${project.base}` : ""}`}
+    >
+      <div className="project-head">
+        <GitBranch size={13} className="project-icon" />
+        <span className="project-name">{project.name}</span>
+        {changes > 0 && <span className="worktree-changes" title={`${changes} changed file${changes > 1 ? "s" : ""}`}>{changes}</span>}
+        <RunBadges projectId={project.id} />
+        <button className="icon-btn row-more" aria-label="Worktree actions" onClick={(e) => { e.stopPropagation(); menu(e.currentTarget); }}>
+          <Ellipsis size={14} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ProjectRow({ project, index }: { project: Project; index: number }) {
   const active = useDesk((s) => s.activeProjectId === project.id);
-  const running = useDesk((s) => s.tabs.filter((t) => t.projectId === project.id && t.type === "terminal" && t.status === "running").length);
-  const activity = useDesk((s) => s.tabs.some((t) => t.projectId === project.id && t.type === "terminal" && t.activity));
   const showAccounts = useDesk((s) => s.preferences.showProjectAccounts);
   const [dropTarget, setDropTarget] = useState(false);
 
   const menu = (at: { x: number; y: number } | Element) =>
     openMenu(at, [
-      { label: "New Claude Code tab", icon: <SquareTerminal size={14} />, onSelect: () => openTerminal(project.id, "claude") },
-      { label: "New Codex tab", icon: <SquareTerminal size={14} />, onSelect: () => openTerminal(project.id, "codex") },
-      { label: "New shell tab", icon: <SquareTerminal size={14} />, onSelect: () => openTerminal(project.id, "shell") },
+      { label: "New Claude Code tab", hint: "⌘D", icon: <SquareTerminal size={14} />, onSelect: () => openTerminal(project.id, "claude") },
+      { label: "New Codex tab", hint: "⌘E", icon: <SquareTerminal size={14} />, onSelect: () => openTerminal(project.id, "codex") },
+      { label: "New shell tab", hint: "⌘J", icon: <SquareTerminal size={14} />, onSelect: () => openTerminal(project.id, "shell") },
+      { label: "New worktree…", hint: "⌘⇧T", icon: <GitBranchPlus size={14} />, onSelect: () => useDesk.getState().setModal({ kind: "worktree", projectId: project.id }) },
       { separator: true },
       { label: "Claude Code account", disabled: true },
       ...accountChoices(project, "claude", false),
@@ -134,11 +203,7 @@ function ProjectRow({ project, index }: { project: Project; index: number }) {
       <div className="project-head">
         {active ? <FolderOpen size={15} className="project-icon" /> : <Folder size={15} className="project-icon" />}
         <span className="project-name">{project.name}</span>
-        {running > 0 && (
-          <span className={"run-count" + (activity ? " has-activity" : "")} title={`${running} running terminal${running > 1 ? "s" : ""}`}>
-            {running}
-          </span>
-        )}
+        <RunBadges projectId={project.id} />
         <button
           className="icon-btn row-more"
           aria-label="Project actions"
@@ -161,21 +226,27 @@ function ProjectRow({ project, index }: { project: Project; index: number }) {
 function Projects() {
   const projects = useDesk((s) => s.projects);
   const [query, setQuery] = useState("");
-  const filtered = projects.filter((p) => `${p.name} ${p.path}`.toLowerCase().includes(query.toLowerCase()));
+  const matches = (p: Project) => `${p.name} ${p.path}`.toLowerCase().includes(query.toLowerCase());
+  const tree = projectTree(projects)
+    .map(({ root, worktrees }) => ({ root, worktrees: worktrees.filter((w) => !query || matches(w) || matches(root)) }))
+    .filter(({ root, worktrees }) => !query || matches(root) || worktrees.length > 0);
   return (
     <section className="side-section projects">
       <header className="side-header">
-        <h2>Projects <span className="section-count">{projects.length}</span></h2>
+        <h2>Projects <span className="section-count">{projects.filter((p) => !p.worktreeOf).length}</span></h2>
         <button className="icon-btn" aria-label="Add project folder" title="Add project folder (⌘O)" onClick={() => void addProjectsFromDialog()}>
           <Plus size={15} />
         </button>
       </header>
       <label className="project-search"><Search size={13} /><input aria-label="Search projects" placeholder="Find a project…" value={query} onChange={(e) => setQuery(e.target.value)} /></label>
       <div className="side-scroll">
-        {filtered.map((p) => (
-          <ProjectRow key={p.id} project={p} index={projects.indexOf(p)} />
+        {tree.map(({ root, worktrees }) => (
+          <div key={root.id} className={"project-group" + (worktrees.length ? " has-worktrees" : "")}>
+            <ProjectRow project={root} index={projects.indexOf(root)} />
+            {worktrees.length > 0 && <div className="worktree-list">{worktrees.map((w) => <WorktreeRow key={w.id} project={w} />)}</div>}
+          </div>
         ))}
-        {query && filtered.length === 0 && <p className="search-empty">No matching projects.</p>}
+        {query && tree.length === 0 && <p className="search-empty">No matching projects.</p>}
         {projects.length === 0 && (
           <button className="side-empty" onClick={() => void addProjectsFromDialog()}>
             Add a folder, or drop one here
@@ -287,6 +358,103 @@ function Accounts() {
           </div>
         ))}
       </div>}
+    </section>
+  );
+}
+
+// Saved connections
+
+export function connectionMenu(c: SshConnection, from?: "settings"): MenuItem[] {
+  const s = useDesk.getState();
+  return [
+    { label: "Connect in new tab", icon: <Plug size={14} />, onSelect: () => (s.setModal(null), openConnection(c.id)) },
+    { label: "Edit…", icon: <Pencil size={14} />, onSelect: () => s.setModal({ kind: "ssh", id: c.id, from }) },
+    {
+      label: "Duplicate",
+      icon: <Copy size={14} />,
+      // The copy starts without a password; it's never read back out of storage.
+      onSelect: () => void saveConnection({ ...c, id: crypto.randomUUID(), name: `${c.name} copy`, password: false }, undefined),
+    },
+    { label: "Copy command", icon: <Copy size={14} />, onSelect: () => void navigator.clipboard.writeText(c.command) },
+    ...(c.password ? [{ label: "Forget password", icon: <KeyRound size={14} />, onSelect: () => void saveConnection(c, null) }] : []),
+    { separator: true },
+    { label: "Delete…", icon: <Trash2 size={14} />, danger: true, onSelect: () => deleteConnection(c) },
+  ];
+}
+
+export function ConnectionRow({ connection, from }: { connection: SshConnection; from?: "settings" }) {
+  const status = useDesk((s) => {
+    const tabs = s.tabs.filter((t) => t.type === "terminal" && t.sshId === connection.id);
+    return tabs.some((t) => t.type === "terminal" && t.status === "running") ? "live" : tabs.length ? "closed" : "idle";
+  });
+  const detail = connectionLabel(connection);
+  const connect = () => {
+    // Jump to a tab that's already connected instead of opening another.
+    const s = useDesk.getState();
+    s.setModal(null);
+    const live = s.tabs.find((t) => t.type === "terminal" && t.sshId === connection.id && t.status === "running");
+    if (live) s.selectTab(live.id);
+    else openConnection(connection.id);
+  };
+  return (
+    <div
+      className={"connection is-" + status}
+      role="button"
+      tabIndex={0}
+      onClick={connect}
+      onKeyDown={(e) => e.key === "Enter" && connect()}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        openMenu({ x: e.clientX, y: e.clientY }, connectionMenu(connection, from));
+      }}
+      title={`${connection.command}\n${status === "live" ? "Connected. Click to show the tab." : "Click to connect."}`}
+    >
+      <span className="connection-icon"><Server size={14} /><i aria-hidden /></span>
+      <span className="connection-text">
+        <span className="connection-name">{connection.name}</span>
+        <span className="connection-detail">{detail}</span>
+      </span>
+      {connection.password && <KeyRound size={12} className="connection-key" aria-label="Password saved" />}
+      <button
+        className="icon-btn row-more"
+        aria-label={`${connection.name} actions`}
+        onClick={(e) => {
+          e.stopPropagation();
+          openMenu(e.currentTarget, connectionMenu(connection, from));
+        }}
+      >
+        <Ellipsis size={14} />
+      </button>
+    </div>
+  );
+}
+
+function Connections() {
+  const connections = useDesk((s) => s.connections);
+  const open = useDesk((s) => s.layout.sshOpen);
+  const setLayout = useDesk((s) => s.setLayout);
+  const add = () => useDesk.getState().setModal({ kind: "ssh", id: null });
+  return (
+    <section className="side-section connections">
+      <header className="side-header">
+        <button className="section-toggle" aria-expanded={open} aria-controls="sidebar-connections" onClick={() => setLayout({ sshOpen: !open })}>
+          <ChevronDown size={13} className={open ? "" : "is-collapsed"} />SSH<span className="section-count">{connections.length}</span>
+        </button>
+        <button className="icon-btn" aria-label="New connection" title="New SSH connection" onClick={add}>
+          <Plus size={15} />
+        </button>
+      </header>
+      {open && (
+        <div className="side-scroll" id="sidebar-connections">
+          {connections.map((c) => <ConnectionRow key={c.id} connection={c} />)}
+          {connections.length === 0 && (
+            <button className="side-empty connection-empty" onClick={add}>
+              <Server size={14} />
+              <span><strong>Save an SSH connection</strong>Connect in one click, with the password filled in.</span>
+            </button>
+          )}
+        </div>
+      )}
     </section>
   );
 }

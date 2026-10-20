@@ -6,7 +6,8 @@ import { ACCOUNT_COLORS, TOOL_LABEL, accountId, projectAccount, sessionEnv, uid,
 import { disposeTerminal } from "./terminals";
 import { disposeEditor, focusEditor, handleDiskChanges, openEditor, saveEditor, revealEditorLine } from "./editors";
 import { useTree } from "./tree";
-import type { Account, FileTab, TabTool, TerminalTab, Tool } from "./types";
+import type { Account, AgentSession, FileTab, Project, SshConnection, TabTool, TerminalTab, Tool, Worktree } from "./types";
+import type { DropZone } from "./store";
 import type { SessionSpec } from "./terminals";
 
 const COMMAND: Record<TabTool, string | null> = { claude: "claude", codex: "codex", shell: null };
@@ -26,7 +27,7 @@ export function activeTab() {
 
 // Terminals
 
-export function openTerminal(projectId: string, tool: TabTool, opts: { accountId?: string; cwd?: string } = {}) {
+export function openTerminal(projectId: string, tool: TabTool, opts: { accountId?: string; cwd?: string; sshId?: string; sessionId?: string; resume?: string; command?: string } = {}) {
   const s = desk();
   const project = s.projects.find((p) => p.id === projectId);
   if (!project) return;
@@ -36,6 +37,12 @@ export function openTerminal(projectId: string, tool: TabTool, opts: { accountId
     type: "terminal",
     tool,
     accountId: tool === "shell" ? null : (opts.accountId ?? null),
+    ...(opts.sshId ? { sshId: opts.sshId } : {}),
+    // Each Claude Code tab gets its own conversation id up front, so the tab can
+    // pick the same conversation back up after Desk quits.
+    ...(tool === "claude" ? { sessionId: opts.sessionId ?? uid() } : {}),
+    ...(tool === "codex" && opts.resume ? { resume: opts.resume } : {}),
+    ...(tool === "shell" && opts.command ? { command: opts.command } : {}),
     cwd: opts.cwd ?? project.path,
     title: "",
     status: "starting",
@@ -46,8 +53,10 @@ export function openTerminal(projectId: string, tool: TabTool, opts: { accountId
   return tab.id;
 }
 
+const SAFE_ID = /^[0-9a-zA-Z-]{8,64}$/;
+
 /** Re-reads accounts at spawn time so restarts use the current folder for that account. */
-export function terminalSpec(tabId: string): SessionSpec {
+export async function terminalSpec(tabId: string): Promise<SessionSpec> {
   const s = desk();
   const tab = s.tabs.find((t) => t.id === tabId) as TerminalTab | undefined;
   const project = s.projects.find((p) => p.id === tab?.projectId);
@@ -58,7 +67,360 @@ export function terminalSpec(tabId: string): SessionSpec {
     s.accounts.find((a) => tab.tool === kind && a.id === tab.accountId) ?? projectAccount(s.accounts, project, kind);
   const overrides = { claude: resolve("claude"), codex: resolve("codex") };
   s.patchTab(tabId, { runAs: { claude: overrides.claude.id, codex: overrides.codex.id } });
-  return { cwd: tab.cwd, command: COMMAND[tab.tool], ...sessionEnv(s.accounts, project, overrides) };
+  const env = sessionEnv(s.accounts, project, overrides);
+  if (tab.sshId) {
+    const connection = s.connections.find((c) => c.id === tab.sshId);
+    // The session ends with the command, so Enter reconnects (and fills the password again).
+    if (!connection) return { cwd: tab.cwd, command: "printf '%s\\n' 'This saved connection was deleted from Desk.'; exit 1", keepShell: false, ...env };
+    return { cwd: tab.cwd, command: connection.command, ssh: connection.password ? connection.id : null, keepShell: false, ...env };
+  }
+  if (tab.tool === "claude" && tab.sessionId && SAFE_ID.test(tab.sessionId)) {
+    // Resume the tab's conversation once Claude Code has saved it; until then, start it under that id.
+    const state = await ipc.claudeSessionState(overrides.claude.dir, tab.cwd, tab.sessionId).catch(() => "missing" as const);
+    if (state === "resumable") return { cwd: tab.cwd, command: `claude --resume ${tab.sessionId}`, ...env };
+    // A transcript with nothing typed into it can't be resumed or reused: start over under a new id.
+    const id = state === "empty" ? uid() : tab.sessionId;
+    if (id !== tab.sessionId) s.patchTab(tabId, { sessionId: id });
+    return { cwd: tab.cwd, command: `claude --session-id ${id}`, ...env };
+  }
+  if (tab.tool === "codex" && tab.resume && SAFE_ID.test(tab.resume)) {
+    return { cwd: tab.cwd, command: `codex resume ${tab.resume}`, ...env };
+  }
+  if (tab.tool === "shell" && tab.command) {
+    // Runs once; restarting the tab gives a plain shell.
+    s.patchTab(tabId, { command: undefined });
+    return { cwd: tab.cwd, command: tab.command, ...env };
+  }
+  return { cwd: tab.cwd, command: COMMAND[tab.tool], ...env };
+}
+
+/** Restarts a restored Claude Code tab as a new conversation instead of resuming. */
+export function startFresh(tabId: string) {
+  desk().patchTab(tabId, { sessionId: uid(), resume: undefined, restored: false, status: "starting" });
+}
+
+// Waiting agents
+
+/** Marks a tab as waiting when you can't see it (another tab, or Desk in the background). */
+export function markAttention(tabId: string, reason: string, visible: boolean) {
+  const s = desk();
+  const tab = s.tabs.find((t) => t.id === tabId);
+  if (!s.preferences.agentAlerts || !tab || tab.type !== "terminal" || tab.tool === "shell") return;
+  if (visible && document.hasFocus()) return;
+  if (tab.attention === reason) return;
+  s.patchTab(tabId, { attention: reason });
+  const project = s.projects.find((p) => p.id === tab.projectId);
+  if (document.hasFocus()) {
+    s.toast(`${TOOL_LABEL[tab.tool]} in ${project?.name ?? "a project"}: ${reason.toLowerCase()}.`, "info", { label: "Show", run: () => desk().selectTab(tabId) });
+  }
+}
+
+/** Shows the next tab that's waiting for you, after the current one. */
+export function jumpToWaiting() {
+  const s = desk();
+  const waiting = s.tabs.filter((t) => t.type === "terminal" && t.attention);
+  if (!waiting.length) {
+    s.toast("No agents are waiting for you.");
+    return;
+  }
+  const current = s.tabs.findIndex((t) => t.id === focusedTabId(s));
+  const next = waiting.find((t) => s.tabs.indexOf(t) > current) ?? waiting[0];
+  s.selectTab(next.id);
+}
+
+// Past conversations
+
+/** The project a folder belongs to, preferring the deepest match (a worktree over its repo). */
+export function projectForPath(path: string): Project | undefined {
+  return desk()
+    .projects.filter((p) => path === p.path || path.startsWith(p.path + "/"))
+    .sort((a, b) => b.path.length - a.path.length)[0];
+}
+
+/** Opens a past conversation in a new tab, or shows the tab already running it. */
+export function resumeSession(session: AgentSession, fallbackProjectId: string) {
+  const s = desk();
+  const open = s.tabs.find((t) => t.type === "terminal" && (t.sessionId === session.id || t.resume === session.id) && t.status !== "exited");
+  if (open) {
+    s.selectTab(open.id);
+    return;
+  }
+  const project = projectForPath(session.cwd) ?? s.projects.find((p) => p.id === fallbackProjectId);
+  if (!project) return;
+  const account = s.accounts.find((a) => a.kind === session.tool && a.dir === session.dir);
+  return openTerminal(project.id, session.tool, {
+    accountId: account?.id,
+    cwd: session.cwd,
+    ...(session.tool === "claude" ? { sessionId: session.id } : { resume: session.id }),
+  });
+}
+
+/** Every Claude Code and Codex account folder, for listing past conversations. */
+export function accountDirs() {
+  const accounts = desk().accounts;
+  const dirs = (kind: Tool) => [...new Set(accounts.filter((a) => a.kind === kind).map((a) => a.dir))];
+  return { claude: dirs("claude"), codex: dirs("codex") };
+}
+
+// Split panes
+
+/** Shows `tabId` next to the focused tab. Left/top puts it first; the middle replaces the focused pane. */
+export function openInSplit(tabId: string, zone: DropZone) {
+  const s = desk();
+  const tab = s.tabs.find((t) => t.id === tabId);
+  if (!tab) return;
+  if (zone === "center") {
+    s.selectTab(tabId);
+    return;
+  }
+  const focused = focusedTabId(s);
+  const partner = focused && focused !== tabId ? focused : (s.activeTabId !== tabId ? s.activeTabId : s.secondaryTabId) ?? s.tabs.find((t) => t.id !== tabId)?.id;
+  if (!partner || partner === tabId) {
+    s.toast("Open another tab to split the workspace.");
+    return;
+  }
+  const first = zone === "left" || zone === "top";
+  useDesk.setState((st) => ({
+    activeTabId: first ? tabId : partner,
+    secondaryTabId: first ? partner : tabId,
+    focusedPane: first ? "primary" : "secondary",
+    activeProjectId: tab.projectId,
+    layout: { ...st.layout, splitDir: zone === "left" || zone === "right" ? "row" : "column" },
+    tabs: st.tabs.map((t) => (t.id === tabId && t.type === "terminal" ? { ...t, activity: false, attention: null } : t)),
+  }));
+}
+
+export function swapPanes() {
+  useDesk.setState((s) => (s.secondaryTabId && s.activeTabId ? { activeTabId: s.secondaryTabId, secondaryTabId: s.activeTabId, focusedPane: s.focusedPane === "primary" ? "secondary" : "primary" } : {}));
+}
+
+export function flipSplit() {
+  const s = desk();
+  s.setLayout({ splitDir: s.layout.splitDir === "row" ? "column" : "row" });
+}
+
+export function closeOtherTabs(tabId: string, which: "others" | "right") {
+  const s = desk();
+  const at = s.tabs.findIndex((t) => t.id === tabId);
+  for (const t of s.tabs.filter((t, i) => t.id !== tabId && (which === "others" || i > at))) closeTab(t.id);
+}
+
+// Worktrees
+
+/** Lowercase words joined by dashes, for a branch name typed as a sentence. */
+export function branchSlug(text: string) {
+  return text.trim().toLowerCase().replace(/[^a-z0-9._/-]+/g, "-").replace(/-{2,}/g, "-").replace(/^[-./]+|[-./]+$/g, "");
+}
+
+/** The repository's own project when given one of its worktrees. */
+export function rootProject(project: Project) {
+  return (project.worktreeOf && desk().projects.find((p) => p.id === project.worktreeOf)) || project;
+}
+
+/** Adds a worktree folder as a project nested under its repository, sharing its accounts. */
+export function addWorktreeProject(parent: Project, path: string, branch: string | null, base?: string) {
+  const id = desk().addProject(path, {
+    name: branch ?? path.split("/").pop() ?? path,
+    worktreeOf: parent.id,
+    branch: branch ?? undefined,
+    base,
+    claudeAccountId: parent.claudeAccountId,
+    codexAccountId: parent.codexAccountId,
+    claudeChosen: true,
+    codexChosen: true,
+  });
+  void watchProject(id);
+  return id;
+}
+
+export async function createWorktree(parentId: string, branch: string, base: string, tool: TabTool | null) {
+  const parent = desk().projects.find((p) => p.id === parentId);
+  if (!parent) throw new Error("The project was removed.");
+  const path = await ipc.gitWorktreeAdd(parent.path, branch, base);
+  const id = addWorktreeProject(parent, path, branch, base);
+  if (tool) openTerminal(id, tool);
+  return id;
+}
+
+/** Worktrees git knows about that aren't in Desk yet. */
+export async function untrackedWorktrees(project: Project): Promise<Worktree[]> {
+  const list = await ipc.gitWorktrees(project.path);
+  const known = new Set(desk().projects.map((p) => p.path));
+  return list.filter((w) => !w.main && !w.prunable && !known.has(w.path));
+}
+
+/** Opens a shell in the repository with the merge running, so conflicts can be fixed right there. */
+export function mergeWorktree(project: Project) {
+  const parent = rootProject(project);
+  if (parent === project || !project.branch) return;
+  const into = project.base ?? desk().branches[parent.id] ?? "the current branch";
+  const switches = !!project.base && project.base !== desk().branches[parent.id];
+  desk().setModal({
+    kind: "confirm",
+    title: `Merge ${project.branch} into ${into}?`,
+    body: `Desk opens a shell in ${parent.name} and runs git merge ${project.branch} there.${switches ? ` It first switches ${parent.name} to ${project.base}.` : ""} Commit your work in the worktree first. If there are conflicts, resolve them in that shell.`,
+    confirm: "Open merge",
+    onConfirm: () => {
+      openTerminal(parent.id, "shell", { command: `${switches ? `git switch ${shellWord(project.base!)} && ` : ""}git merge --no-ff --no-edit ${shellWord(project.branch!)}` });
+    },
+  });
+}
+
+function shellWord(word: string) {
+  return /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`;
+}
+
+/** Removes the worktree folder (asking first if it has uncommitted work) and, optionally, its branch. */
+export function removeWorktree(project: Project) {
+  const parent = rootProject(project);
+  if (parent === project) return;
+  const s = desk();
+  const run = async (force: boolean) => {
+    // Stop anything running in the folder before deleting it.
+    for (const t of desk().tabs.filter((t) => t.projectId === project.id && t.type === "terminal")) {
+      disposeTerminal(t.id);
+      desk().patchTab(t.id, { status: "exited", restored: true, busy: false });
+    }
+    try {
+      await ipc.gitWorktreeRemove(parent.path, project.path, force);
+    } catch (e) {
+      const text = errorText(e);
+      if (!force && /modified or untracked|--force/i.test(text)) {
+        desk().setModal({
+          kind: "confirm",
+          title: `${project.name} has uncommitted work`,
+          body: "Its changed and new files are deleted with the folder. Commit or copy anything you want to keep first.",
+          confirm: "Delete anyway",
+          danger: true,
+          onConfirm: () => void run(true),
+        });
+      } else desk().toast(`Couldn't remove the worktree: ${text}`, "error");
+      return;
+    }
+    forgetProject(project.id);
+    if (!project.branch) return;
+    try {
+      await ipc.gitBranchDelete(parent.path, project.branch);
+      desk().toast(`Removed ${project.name} and its branch.`);
+    } catch {
+      desk().toast(`Removed the ${project.name} worktree. Its branch is kept because it has commits that aren't merged.`);
+    }
+  };
+  s.setModal({
+    kind: "confirm",
+    title: `Remove the ${project.name} worktree?`,
+    body: `Deletes the folder ${project.path}. The branch ${project.branch ?? ""} is deleted too if it's fully merged, and kept otherwise. Running terminals in it are stopped.`,
+    confirm: "Remove worktree",
+    danger: true,
+    onConfirm: () => void run(false),
+  });
+}
+
+/** Drops a project and its tabs from Desk without asking. Folders stay on disk. */
+function forgetProject(projectId: string) {
+  const project = desk().projects.find((p) => p.id === projectId);
+  if (!project) return;
+  for (const t of desk().tabs.filter((t) => t.projectId === projectId)) {
+    disposeTerminal(t.id);
+    disposeEditor(t.id);
+  }
+  void ipc.unwatch(project.path);
+  desk().removeProject(projectId);
+}
+
+/** Worktrees deleted outside Desk disappear from the sidebar. */
+export async function pruneWorktrees() {
+  for (const p of desk().projects.filter((p) => p.worktreeOf)) {
+    if (!(await ipc.pathExists(p.path).catch(() => true))) forgetProject(p.id);
+  }
+}
+
+// Saved connections
+
+export interface SshSummary { user: string | null; host: string | null; port: string | null; forwards: string[]; jump: string | null }
+
+/** Reads the parts of an ssh command worth showing. Non-ssh commands give nulls. */
+export function parseSsh(command: string): SshSummary {
+  const out: SshSummary = { user: null, host: null, port: null, forwards: [], jump: null };
+  const words = command.match(/"[^"]*"|'[^']*'|\S+/g)?.map((w) => w.replace(/^["']|["']$/g, "")) ?? [];
+  const at = words.findIndex((w) => w === "ssh" || w.endsWith("/ssh"));
+  if (at < 0) return out;
+  const withValue = new Set("BbcDEeFIiJLlmOoPpQRSWw".split(""));
+  for (let i = at + 1; i < words.length; i++) {
+    const w = words[i];
+    if (w.startsWith("-") && w.length > 1) {
+      // Flags can be grouped (-NfL 8080:...); the first one taking a value ends the group.
+      for (let j = 1; j < w.length; j++) {
+        const flag = w[j];
+        if (!withValue.has(flag)) continue;
+        const value = w.slice(j + 1) || words[++i] || "";
+        if (flag === "L" || flag === "R") out.forwards.push(`${flag === "L" ? "Local" : "Remote"} ${value}`);
+        else if (flag === "D") out.forwards.push(`SOCKS ${value}`);
+        else if (flag === "p") out.port = value;
+        else if (flag === "l") out.user = value;
+        else if (flag === "J") out.jump = value;
+        break;
+      }
+      continue;
+    }
+    const dest = w.replace(/^ssh:\/\//, "");
+    const m = dest.match(/^(?:([^@]+)@)?([^:/]+)(?::(\d+))?/);
+    if (m) {
+      out.user = m[1] ?? out.user;
+      out.host = m[2];
+      out.port = m[3] ?? out.port;
+    }
+    break;
+  }
+  return out;
+}
+
+export function connectionLabel(c: Pick<SshConnection, "command">) {
+  const p = parseSsh(c.command);
+  return p.host ? `${p.user ? p.user + "@" : ""}${p.host}` : c.command.trim().split(/\s+/).slice(0, 3).join(" ");
+}
+
+/** Opens a saved connection in a new tab, in its project or the selected one. */
+export function openConnection(id: string) {
+  const s = desk();
+  const connection = s.connections.find((c) => c.id === id);
+  if (!connection) return;
+  const project = s.projects.find((p) => p.id === connection.projectId) ?? activeProject() ?? s.projects[0];
+  if (!project) {
+    s.toast("Add a project folder first. Connections open as tabs inside a project.", "error");
+    return;
+  }
+  return openTerminal(project.id, "shell", { sshId: id });
+}
+
+/** Saves the connection; a non-empty `password` replaces the saved one, null removes it. */
+export async function saveConnection(connection: SshConnection, password: string | null | undefined) {
+  if (password) await ipc.sshSavePassword(connection.id, password);
+  else if (password === null) await ipc.sshForgetPassword(connection.id);
+  const saved = password ? true : password === null ? false : connection.password;
+  desk().saveConnection({ ...connection, password: saved });
+}
+
+export function deleteConnection(connection: SshConnection) {
+  desk().setModal({
+    kind: "confirm",
+    title: `Delete ${connection.name}?`,
+    body: "The saved command and password are removed from Desk. Tabs already connected stay open until you close them.",
+    confirm: "Delete",
+    danger: true,
+    onConfirm: () => {
+      void ipc.sshForgetPassword(connection.id).catch(() => {});
+      desk().removeConnection(connection.id);
+    },
+  });
+}
+
+/** Keeps each connection's "password saved" flag in step with the files on disk. */
+export async function syncConnectionPasswords() {
+  for (const c of desk().connections) {
+    const has = await ipc.sshHasPassword(c.id).catch(() => c.password);
+    if (has !== c.password) desk().saveConnection({ ...c, password: has });
+  }
 }
 
 export function signInSpec(account: Account): SessionSpec {
@@ -179,14 +541,11 @@ export function removeProject(projectId: string) {
   const s = desk();
   const project = s.projects.find((p) => p.id === projectId);
   if (!project) return;
-  const tabs = s.tabs.filter((t) => t.projectId === projectId);
+  // Its worktrees leave Desk with it (their folders stay on disk).
+  const ids = [projectId, ...s.projects.filter((p) => p.worktreeOf === projectId).map((p) => p.id)];
+  const tabs = s.tabs.filter((t) => ids.includes(t.projectId));
   const run = () => {
-    for (const t of tabs) {
-      disposeTerminal(t.id);
-      disposeEditor(t.id);
-    }
-    void ipc.unwatch(project.path);
-    desk().removeProject(projectId);
+    for (const id of ids) forgetProject(id);
   };
   const running = tabs.filter((t) => t.type === "terminal" && t.status === "running").length;
   const dirty = tabs.filter((t) => t.type === "file" && t.dirty).length;

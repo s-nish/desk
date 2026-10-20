@@ -41,6 +41,13 @@ pub struct SpawnOpts {
     /// Variables removed from this session (accounts that use the default dir).
     #[serde(default)]
     pub unset: Vec<String>,
+    /// Saved SSH connection whose saved password the askpass helper may answer with.
+    #[serde(default)]
+    pub ssh: Option<String>,
+    /// Drop to an interactive shell when the command ends. Saved connections end
+    /// the session instead, so the tab shows the connection as closed.
+    #[serde(default = "yes")]
+    pub keep_shell: bool,
     pub cols: u16,
     pub rows: u16,
 }
@@ -57,6 +64,22 @@ struct Session {
 pub struct PtyManager {
     next_id: AtomicU32,
     sessions: Mutex<HashMap<u32, Session>>,
+}
+
+fn yes() -> bool {
+    true
+}
+
+static SESSIONS: AtomicU32 = AtomicU32::new(0);
+
+/// The script for a saved connection: the user's command as written, with the
+/// askpass helper exported after rc files run so they can't override it.
+pub fn connection_script(opts: &SpawnOpts, command: &str) -> Result<String, String> {
+    let Some(id) = opts.ssh.as_deref() else {
+        return Ok(command.to_string());
+    };
+    let session = (std::process::id() as u64) << 32 | SESSIONS.fetch_add(1, Ordering::Relaxed) as u64;
+    Ok(format!("{}\n{command}", crate::ssh::askpass_exports(id, session)?))
 }
 
 pub fn user_shell() -> String {
@@ -96,7 +119,7 @@ pub fn build_command(opts: &SpawnOpts) -> Result<CommandBuilder, String> {
     cmd.arg("-i");
     if let Some(command) = opts.command.as_deref().filter(|c| !c.trim().is_empty()) {
         cmd.arg("-c");
-        cmd.arg(command_script(opts, command)?);
+        cmd.arg(if opts.keep_shell { command_script(opts, command)? } else { connection_script(opts, command)? });
     }
 
     let cwd = std::path::Path::new(&opts.cwd);
@@ -316,6 +339,8 @@ mod tests {
             command: Some(format!("{command}; exit")),
             env: HashMap::new(),
             unset: vec![],
+            ssh: None,
+            keep_shell: true,
             cols: 80,
             rows: 24,
         }
@@ -368,6 +393,24 @@ mod tests {
             .output()
             .unwrap();
         assert!(stray.stdout.is_empty(), "foreground program survived");
+    }
+
+    #[test]
+    fn connection_ends_with_its_command() {
+        let mut o = opts("printf 'askpass=[%s]\\n' \"$SSH_ASKPASS_REQUIRE\"");
+        o.keep_shell = false;
+        o.command = Some("printf 'ran\\n'; exit 3".into());
+        assert!(run(o).contains("ran"));
+    }
+
+    #[test]
+    fn connection_exports_askpass_only_when_asked() {
+        let mut o = opts("x");
+        o.keep_shell = false;
+        o.command = Some("printf 'req=[%s] secret=[%s]\\n' \"$SSH_ASKPASS_REQUIRE\" \"${DESK_SSH_SECRET##*/}\"".into());
+        assert!(run(o.clone()).contains("req=[] secret=[]"));
+        o.ssh = Some("abc-123".into());
+        assert!(run(o).contains("req=[force] secret=[abc-123]"));
     }
 
     #[test]

@@ -26,6 +26,23 @@ export interface Project {
   /** Set once the user picks an account by hand; automatic detection then leaves it alone. */
   claudeChosen?: boolean;
   codexChosen?: boolean;
+  /** Set for a git worktree: the project it was branched from. Shown nested under it. */
+  worktreeOf?: string;
+  /** Branch checked out in the worktree, and the branch it started from. */
+  branch?: string;
+  base?: string;
+}
+
+/** A saved command, usually ssh, opened in its own tab. Its password is kept in
+ * Desk's support folder (owner-only), never in this state. */
+export interface SshConnection {
+  id: string;
+  name: string;
+  command: string;
+  /** Whether a password is saved for this connection. */
+  password: boolean;
+  /** Project whose tab group it opens in; null opens in the selected project. */
+  projectId: string | null;
 }
 
 export interface TerminalTab {
@@ -37,12 +54,24 @@ export interface TerminalTab {
   accountId: string | null;
   /** Accounts the running session was actually started with; set at every spawn. */
   runAs?: Partial<Record<Tool, string>>;
+  /** Saved connection this tab runs (a shell tab running its command). */
+  sshId?: string;
   cwd: string;
   title: string;
   status: "starting" | "running" | "exited";
   exitCode: number | null;
   activity: boolean;
   restored?: boolean;
+  /** Claude Code or Codex is producing output (working on something). */
+  busy?: boolean;
+  /** Why the agent wants you: it finished, rang the bell, or sent a notification. */
+  attention?: string | null;
+  /** Claude Code conversation this tab runs, so it can be resumed after Desk restarts. */
+  sessionId?: string;
+  /** Codex conversation to resume when the tab starts. */
+  resume?: string;
+  /** Command a shell tab runs once when it first starts (e.g. a merge). */
+  command?: string;
 }
 
 export interface FileTab {
@@ -68,8 +97,11 @@ export interface Layout {
   accountsOpen: boolean;
   claudeOpen: boolean;
   codexOpen: boolean;
-  panel: "files" | "search" | "git";
+  sshOpen: boolean;
+  panel: "files" | "search" | "git" | "sessions";
   splitRatio: number;
+  /** Split side by side ("row") or stacked ("column"). */
+  splitDir: "row" | "column";
 }
 
 export interface DirEntry {
@@ -100,7 +132,9 @@ export interface MenuItem {
   onSelect?: () => void;
 }
 
-export interface GitChange { path: string; originalPath: string | null; index: string; worktree: string }
-export interface GitStatus { root: string; branch: string; changes: GitChange[] }
+export interface GitChange { path: string; originalPath: string | null; index: string; worktree: string; stagedLines: [number, number] | null; unstagedLines: [number, number] | null }
+export interface GitStatus { root: string; branch: string; changes: GitChange[]; upstream: string | null; ahead: number; behind: number; lastCommit: string | null }
+export interface Worktree { path: string; branch: string | null; head: string; main: boolean; locked: boolean; prunable: boolean }
+export interface AgentSession { tool: Tool; dir: string | null; id: string; title: string; prompt: string | null; cwd: string; updated: number }
 export interface SearchFile { path: string; original: string; matches: { line: number; text: string }[]; count: number }
 export interface SearchResults { files: SearchFile[]; truncated: boolean; skipped: number }

@@ -187,7 +187,7 @@ pub struct Usage {
 
 /// Claude Code names each project's history folder after its path with every
 /// character other than a letter or digit replaced by `-`.
-fn claude_project_key(path: &str) -> String {
+pub(crate) fn claude_project_key(path: &str) -> String {
     path.trim_end_matches('/')
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })

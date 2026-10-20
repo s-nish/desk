@@ -1,5 +1,21 @@
 import { useEffect, useRef, useState, type PointerEvent, type RefObject } from "react";
-import { useDesk } from "../store";
+import { useDesk, type DropZone } from "../store";
+import { openInSplit } from "../actions";
+
+/** Which part of the workspace the pointer is over: the outer fifth of each side splits, the middle shows the tab. */
+function zoneAt(x: number, y: number): DropZone | null {
+  const stage = document.querySelector(".stage")?.getBoundingClientRect();
+  if (!stage || x < stage.left || x > stage.right || y < stage.top || y > stage.bottom) return null;
+  const fx = (x - stage.left) / stage.width;
+  const fy = (y - stage.top) / stage.height;
+  const edges: [DropZone, number][] = [["left", fx], ["right", 1 - fx], ["top", fy], ["bottom", 1 - fy]];
+  const [zone, distance] = edges.sort((a, b) => a[1] - b[1])[0];
+  return distance < 0.28 ? zone : "center";
+}
+
+function setZone(zone: DropZone | null) {
+  if (useDesk.getState().dropZone !== zone) useDesk.setState({ dropZone: zone });
+}
 
 /** Pointer dragging works in the desktop webview without intercepting file drops. */
 export function useTabReorder(scroller: RefObject<HTMLDivElement | null>) {
@@ -18,6 +34,7 @@ export function useTabReorder(scroller: RefObject<HTMLDivElement | null>) {
       target.current = null;
       setDraggingId(null);
       setLanding(null);
+      setZone(null);
       document.body.classList.remove("is-reordering-tabs");
     };
     const update = () => {
@@ -36,7 +53,8 @@ export function useTabReorder(scroller: RefObject<HTMLDivElement | null>) {
           return drag.x < box.left + box.width / 2;
         });
         next = { before: before?.dataset.tabId ?? null };
-      }
+        setZone(null);
+      } else setZone(zoneAt(drag.x, drag.y));
       if ((target.current === null) !== (next === null) || target.current?.before !== next?.before) {
         target.current = next;
         setLanding(next);
@@ -67,6 +85,9 @@ export function useTabReorder(scroller: RefObject<HTMLDivElement | null>) {
       const box = scroller.current?.getBoundingClientRect();
       if (drag.dragging && target.current && box && e.clientY >= box.top && e.clientY <= box.bottom && e.clientX >= box.left - 24 && e.clientX <= box.right + 24) {
         useDesk.getState().moveTab(drag.id, target.current.before);
+      } else if (drag.dragging) {
+        const zone = zoneAt(e.clientX, e.clientY);
+        if (zone) openInSplit(drag.id, zone);
       }
       finish();
       clickTimer = window.setTimeout(() => { suppressClick.current = false; }, 0);

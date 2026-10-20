@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { CircleCheck, X } from "lucide-react";
-import { ACCOUNT_COLORS, TOOL_LABEL, useDesk, type Modal } from "../store";
-import { createAccount, refreshIdentities, signInSpec } from "../actions";
+import { ArrowLeftRight, CircleCheck, Eye, EyeOff, KeyRound, Server, X } from "lucide-react";
+import { ACCOUNT_COLORS, TOOL_LABEL, uid, useDesk, type Modal } from "../store";
+import { connectionLabel, createAccount, openConnection, parseSsh, refreshIdentities, saveConnection, signInSpec } from "../actions";
 import { disposeTerminal, mountTerminal, setTerminalVisible } from "../terminals";
 import { errorText } from "../ipc";
-import { DiffView } from "./ProjectTools";
+import { Review } from "./Review";
+import { WorktreeDialog } from "./Worktrees";
 import { Settings } from "./Settings";
 import type { Tool } from "../types";
 
@@ -13,9 +14,13 @@ export function ModalLayer() {
   if (!modal) return null;
   switch (modal.kind) {
     case "diff":
-      return <Shell title="Review changes" wide><DiffView root={modal.root} path={modal.path} staged={modal.staged} /></Shell>;
+      return <Shell title="Review changes" wide review><Review root={modal.root} path={modal.path} staged={modal.staged} /></Shell>;
+    case "worktree":
+      return <WorktreeDialog projectId={modal.projectId} />;
     case "settings":
-      return <Shell title="Settings" wide settings><Settings /></Shell>;
+      return <Shell title="Settings" wide settings><Settings initial={modal.section} /></Shell>;
+    case "ssh":
+      return <SshEditor id={modal.id} from={modal.from} />;
     case "addAccount":
       return <AddAccount initial={modal.tool} />;
     case "signin":
@@ -29,7 +34,7 @@ export function ModalLayer() {
 
 const close = () => useDesk.getState().setModal(null);
 
-function Shell({ title, children, wide, settings, escape = true }: { title: string; children: React.ReactNode; wide?: boolean; settings?: boolean; escape?: boolean }) {
+export function Shell({ title, children, wide, settings, review, escape = true }: { title: string; children: React.ReactNode; wide?: boolean; settings?: boolean; review?: boolean; escape?: boolean }) {
   const dialog = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
@@ -48,7 +53,7 @@ function Shell({ title, children, wide, settings, escape = true }: { title: stri
   }, [escape]);
   return (
     <div className="modal-backdrop" onMouseDown={(e) => escape && e.target === e.currentTarget && close()}>
-      <div ref={dialog} tabIndex={-1} className={"modal" + (wide ? " is-wide" : "") + (settings ? " settings-shell" : "")} role="dialog" aria-modal="true" aria-label={title}>
+      <div ref={dialog} tabIndex={-1} className={"modal" + (wide ? " is-wide" : "") + (settings ? " settings-shell" : "") + (review ? " review-shell" : "")} role="dialog" aria-modal="true" aria-label={title}>
         <header className="modal-head">
           <h2>{title}</h2>
           <button className="icon-btn" aria-label="Close" onClick={close}>
@@ -252,6 +257,118 @@ function Confirm({ modal }: { modal: Extract<Modal, { kind: "confirm" }> }) {
           </button>
         </footer>
       </div>
+    </Shell>
+  );
+}
+
+function SshEditor({ id, from }: { id: string | null; from?: "settings" }) {
+  const back = () => useDesk.getState().setModal(from === "settings" ? { kind: "settings", section: "ssh" } : null);
+  const existing = useDesk((s) => s.connections.find((c) => c.id === id));
+  const projects = useDesk((s) => s.projects);
+  const [name, setName] = useState(existing?.name ?? "");
+  const [command, setCommand] = useState(existing?.command ?? "");
+  const [projectId, setProjectId] = useState(existing?.projectId ?? "");
+  // The password stays in this dialog only and is dropped once saved.
+  const [password, setPassword] = useState("");
+  const [changing, setChanging] = useState(!existing?.password);
+  const [forget, setForget] = useState(false);
+  const [reveal, setReveal] = useState(false);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const summary = parseSsh(command);
+  const fallbackName = command.trim() ? connectionLabel({ command }) : "";
+
+  const submit = async (e: React.FormEvent | React.MouseEvent, andConnect = true) => {
+    e.preventDefault();
+    if (!command.trim()) return setError("Enter the command to run, for example ssh user@host.");
+    setBusy(true);
+    try {
+      const connection = { id: existing?.id ?? uid(), name: name.trim() || fallbackName, command: command.trim(), password: existing?.password ?? false, projectId: projectId || null };
+      await saveConnection(connection, forget ? null : changing && password ? password : undefined);
+      setPassword("");
+      if (andConnect) {
+        close();
+        openConnection(connection.id);
+      } else back();
+    } catch (err) {
+      setError(errorText(err));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Shell title={existing ? "Edit connection" : "New connection"}>
+      <form className="modal-body ssh-editor" onSubmit={(e) => void submit(e)}>
+        <label className="field">
+          <span>Command</span>
+          <textarea
+            className="ssh-command"
+            autoFocus={!existing}
+            rows={2}
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
+            value={command}
+            placeholder="ssh -N -L 5901:127.0.0.1:5900 user@203.0.113.10"
+            onChange={(e) => (setCommand(e.target.value), setError(""))}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }}
+          />
+        </label>
+        {summary.host && (
+          <div className="ssh-summary" aria-label="What this command connects to">
+            <span><Server size={12} />{summary.user ? `${summary.user}@` : ""}{summary.host}{summary.port ? `:${summary.port}` : ""}</span>
+            {summary.jump && <span>via {summary.jump}</span>}
+            {summary.forwards.map((f) => <span key={f}><ArrowLeftRight size={12} />{f}</span>)}
+          </div>
+        )}
+        <label className="field">
+          <span>Name</span>
+          <input value={name} placeholder={fallbackName || "Office tunnel"} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <div className="field">
+          <span>Password <em>optional</em></span>
+          {changing && !forget ? (
+            <div className="password-input">
+              <KeyRound size={14} />
+              <input
+                type={reveal ? "text" : "password"}
+                autoComplete="off"
+                autoFocus={!!existing && existing.password}
+                value={password}
+                placeholder={existing?.password ? "New password" : "Typed for you when ssh asks"}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+              <button type="button" className="icon-btn" aria-label={reveal ? "Hide password" : "Show password"} onClick={() => setReveal(!reveal)}>
+                {reveal ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
+            </div>
+          ) : (
+            <div className="password-saved">
+              <KeyRound size={14} />
+              <span>{forget ? "Will be removed when you save" : "Saved on this Mac"}</span>
+              {!forget && <button type="button" className="mini-btn" onClick={() => setChanging(true)}>Change</button>}
+              <button type="button" className="mini-btn" onClick={() => setForget(!forget)}>{forget ? "Keep" : "Remove"}</button>
+            </div>
+          )}
+        </div>
+        <label className="field">
+          <span>Open in</span>
+          <select value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+            <option value="">Selected project</option>
+            {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        </label>
+        <p className="modal-note">
+          Desk types the password once, when ssh asks for it. Other questions, like trusting a new host, stay in the terminal. The password is kept in
+          Desk's folder on this Mac, readable only by your user. It isn't encrypted.
+        </p>
+        {error && <p className="form-error">{error}</p>}
+        <footer className="modal-foot">
+          <button type="button" className="btn" onClick={back}>Cancel</button>
+          <button type="button" className="btn" disabled={busy} onClick={(e) => void submit(e, false)}>Save</button>
+          <button type="submit" className="btn is-primary" disabled={busy}>Save and connect</button>
+        </footer>
+      </form>
     </Shell>
   );
 }

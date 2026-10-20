@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Command, GitBranch, PanelLeft, PanelRight, Settings2 } from "lucide-react";
+import { Bell, Command, GitBranch, PanelLeft, PanelRight, Settings2 } from "lucide-react";
 import { homeDir } from "@tauri-apps/api/path";
-import { TOOL_LABEL, projectAccount, shortPath, tabAccount, useDesk, focusedTabId } from "../store";
+import { useShallow } from "zustand/react/shallow";
+import { TOOL_LABEL, projectAccount, shortPath, tabAccount, useDesk, focusedTabId, waitingTabs } from "../store";
 import type { Account, Project, Tool } from "../types";
 import { accountChoices } from "./Sidebar";
 import { openMenu } from "./Menu";
@@ -47,6 +48,7 @@ export function TitleBar() {
         )}
       </div>
       <div className="titlebar-right" data-tauri-drag-region>
+        <WaitingButton />
         <button className="icon-btn" aria-label="Open command palette" title="Command palette (⌘⇧P)" onClick={() => useDesk.getState().setCommandOpen(true)}><Command size={15} /></button>
         <button className="icon-btn" aria-label="Open settings" title="Settings (⌘,)" onClick={() => useDesk.getState().setModal({ kind: "settings" })}><Settings2 size={15} /></button>
         <button
@@ -59,6 +61,29 @@ export function TitleBar() {
         </button>
       </div>
     </header>
+  );
+}
+
+/** Shows up only while agents are waiting; lists them to jump straight to one. */
+function WaitingButton() {
+  const waiting = useDesk(useShallow((s) => waitingTabs(s)));
+  const projects = useDesk((s) => s.projects);
+  if (!waiting.length) return null;
+  return (
+    <button
+      className="waiting-button"
+      aria-label={`${waiting.length} agent${waiting.length > 1 ? "s" : ""} waiting`}
+      title="Agents waiting for you (⌘⇧A)"
+      onClick={(e) => openMenu(e.currentTarget, waiting.map((t) => ({
+        label: `${TOOL_LABEL[t.tool]} in ${projects.find((p) => p.id === t.projectId)?.name ?? "a project"}`,
+        hint: t.attention ?? "",
+        icon: <span className="tab-waiting is-menu" />,
+        onSelect: () => useDesk.getState().selectTab(t.id),
+      })))}
+    >
+      <Bell size={13} />
+      <span>{waiting.length} waiting</span>
+    </button>
   );
 }
 
@@ -88,9 +113,10 @@ export function StatusBar() {
   const showPaths = useDesk((s) => s.preferences.showPaths);
   const branch = useDesk((s) => (project ? s.branches[project.id] : null));
 
-  // A Claude Code or Codex tab shows only the account it runs as; anything else shows both.
+  // A Claude Code or Codex tab shows only the account it runs as; SSH tabs show none; anything else shows both.
   const segments: [Tool, Account][] = [];
   if (tab?.type === "terminal" && tab.tool !== "shell") segments.push([tab.tool, tabAccount(accounts, project, tab)]);
+  else if (tab?.type === "terminal" && tab.sshId) { /* an SSH session runs no Claude Code or Codex account */ }
   else if (tab?.type === "terminal") segments.push(["claude", tabAccount(accounts, project, tab, "claude")], ["codex", tabAccount(accounts, project, tab, "codex")]);
   else if (project) segments.push(["claude", projectAccount(accounts, project, "claude")], ["codex", projectAccount(accounts, project, "codex")]);
 

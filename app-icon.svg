@@ -1,21 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
   <defs>
-    <linearGradient id="tile" x1="0" y1="0" x2="0.8" y2="1">
-      <stop stop-color="#303132"/><stop offset="1" stop-color="#111213"/>
-    </linearGradient>
-    <linearGradient id="silver" gradientUnits="userSpaceOnUse" x1="258" y1="286" x2="650" y2="738">
-      <stop stop-color="#faf9f5"/><stop offset="1" stop-color="#b8b9b5"/>
-    </linearGradient>
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
-      <feDropShadow dx="0" dy="16" stdDeviation="16" flood-color="#000" flood-opacity="0.28"/>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#000000" flood-opacity="0.35"/>
     </filter>
   </defs>
-  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#tile)" filter="url(#shadow)"/>
-  <rect x="102" y="102" width="820" height="820" rx="184" fill="none" stroke="#fff" stroke-opacity="0.12" stroke-width="3"/>
-  <rect x="258" y="286" width="508" height="452" rx="62" fill="none" stroke="url(#silver)" stroke-width="36"/>
-  <path d="M276 400H748" stroke="#8d8e8b" stroke-width="22"/>
-  <circle cx="320" cy="344" r="13" fill="#d7d8d2"/>
-  <circle cx="367" cy="344" r="13" fill="#777976"/>
-  <path d="M352 493L430 562L352 631" fill="none" stroke="url(#silver)" stroke-width="36" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M512 630H650" stroke="url(#silver)" stroke-width="36" stroke-linecap="round"/>
+  <!-- Solid black tile with a hairline edge so it reads on dark docks too. -->
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="#000000" filter="url(#shadow)"/>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="184.5" fill="none" stroke="#ffffff" stroke-opacity="0.16" stroke-width="3"/>
+
+  <!-- Terminal window: white outline, title bar rule, three dots. -->
+  <rect x="236" y="290" width="552" height="444" rx="56" fill="none" stroke="#ffffff" stroke-width="22"/>
+  <path d="M247 386 H777" stroke="#ffffff" stroke-width="14" stroke-opacity="0.35"/>
+  <circle cx="306" cy="338" r="14" fill="#ffffff"/>
+  <circle cx="352" cy="338" r="14" fill="#ffffff" fill-opacity="0.55"/>
+  <circle cx="398" cy="338" r="14" fill="#ffffff" fill-opacity="0.3"/>
+
+  <!-- Prompt -->
+  <path d="M350 474 L432 548 L350 622" fill="none" stroke="#ffffff" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="478" y="600" width="164" height="44" rx="22" fill="#ffffff"/>
 </svg>

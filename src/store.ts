@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Account, DetectedAccount, FileTab, Identity, Layout, Project, Tab, TabTool, TerminalTab, Tool } from "./types";
+import type { Account, DetectedAccount, FileTab, Identity, Layout, Project, SshConnection, Tab, TabTool, TerminalTab, Tool } from "./types";
 
 export const ACCOUNT_COLORS = ["#2dd4bf", "#f59e0b", "#60a5fa", "#fb7185", "#4ade80", "#e5e5e5"];
 
@@ -20,23 +20,37 @@ export const accountId = (kind: Tool, dir: string | null) => `${kind}:${dir ?? "
 export const uid = () => crypto.randomUUID();
 
 export interface Preferences {
-  theme: "graphite" | "midnight" | "forest" | "paper" | "system";
+  theme: "black" | "graphite" | "dim" | "paper" | "system";
   density: "comfortable" | "compact";
   fontSize: number;
   showProjectAccounts: boolean;
-  accent: "neutral" | "amber" | "sage";
+  accent: "neutral";
   showStatusBar: boolean;
   showPaths: boolean;
   showAccountEmails: boolean;
   accountColors: boolean;
   reduceMotion: boolean;
+  /** Terminal color preset; "desk" follows the interface theme. */
+  terminalTheme: string;
+  /** Colors changed by hand on top of the preset, keyed by xterm theme field. */
+  terminalColors: Record<string, string>;
+  cursorStyle: "bar" | "block" | "underline";
+  cursorBlink: boolean;
+  /** Mark Claude Code and Codex tabs that finished or need input while out of sight. */
+  agentAlerts: boolean;
+  /** Show how many agents are waiting on the Dock icon. */
+  alertBadge: boolean;
+  /** Bounce the Dock icon once when an agent starts waiting and Desk is in the background. */
+  alertBounce: boolean;
 }
 
-export const DEFAULT_PREFERENCES: Preferences = { theme: "graphite", density: "comfortable", fontSize: 13, showProjectAccounts: false, accent: "neutral", showStatusBar: true, showPaths: false, showAccountEmails: false, accountColors: false, reduceMotion: false };
+export const DEFAULT_PREFERENCES: Preferences = { theme: "black", density: "comfortable", fontSize: 13, showProjectAccounts: false, accent: "neutral", showStatusBar: true, showPaths: false, showAccountEmails: false, accountColors: false, reduceMotion: false, terminalTheme: "desk", terminalColors: {}, cursorStyle: "bar", cursorBlink: true, agentAlerts: true, alertBadge: true, alertBounce: true };
 
 export type Modal =
-  | { kind: "settings" }
+  | { kind: "settings"; section?: string }
+  | { kind: "ssh"; id: string | null; from?: "settings" }
   | { kind: "diff"; root: string; path: string; staged: boolean }
+  | { kind: "worktree"; projectId: string }
   | { kind: "addAccount"; tool: Tool }
   | { kind: "signin"; accountId: string }
   | {
@@ -63,10 +77,15 @@ export interface Toast {
   id: string;
   text: string;
   tone: "info" | "error";
+  action?: { label: string; run: () => void };
 }
+
+/** Where a tab dragged over the workspace would open: an edge splits, the middle replaces. */
+export type DropZone = "left" | "right" | "top" | "bottom" | "center";
 
 interface Persisted {
   accounts: Account[];
+  connections: SshConnection[];
   projects: Project[];
   activeProjectId: string | null;
   layout: Layout;
@@ -88,10 +107,13 @@ interface DeskState extends Persisted {
   quickOpen: boolean;
   commandOpen: boolean;
   toasts: Toast[];
+  dropZone: DropZone | null;
+  /** Files with Git changes, by project folder. Fills in once its Changes panel has looked. */
+  changeCounts: Record<string, number>;
 
   init(saved: Partial<Persisted> | null, detected: DetectedAccount[]): void;
   mergeDetected(detected: DetectedAccount[]): void;
-  addProject(path: string): string;
+  addProject(path: string, extra?: Partial<Project>): string;
   removeProject(id: string): void;
   renameProject(id: string, name: string): void;
   moveProject(id: string, toIndex: number): void;
@@ -100,6 +122,8 @@ interface DeskState extends Persisted {
   addAccount(account: Account): void;
   updateAccount(id: string, patch: Partial<Account>): void;
   removeAccount(id: string): void;
+  saveConnection(connection: SshConnection): void;
+  removeConnection(id: string): void;
   setIdentity(id: string, identity: Identity): void;
   addTab(tab: Tab): void;
   removeTab(id: string): void;
@@ -107,6 +131,7 @@ interface DeskState extends Persisted {
   patchTab(id: string, patch: Partial<TerminalTab> | Partial<FileTab>): void;
   selectTab(tabId: string): void;
   setBranch(projectId: string, branch: string | null): void;
+  setChangeCount(path: string, count: number): void;
   setLayout(patch: Partial<Layout>): void;
   setPreferences(patch: Partial<Preferences>): void;
   setModal(modal: Modal | null): void;
@@ -114,11 +139,19 @@ interface DeskState extends Persisted {
   setCommandOpen(open: boolean): void;
   toggleSplit(): void;
   focusPane(pane: "primary" | "secondary"): void;
-  toast(text: string, tone?: Toast["tone"]): void;
+  toast(text: string, tone?: Toast["tone"], action?: Toast["action"]): void;
   dismissToast(id: string): void;
 }
 
-const DEFAULT_LAYOUT: Layout = { sidebarWidth: 248, filesWidth: 280, sidebarOpen: true, filesOpen: true, accountsOpen: false, claudeOpen: true, codexOpen: true, panel: "files", splitRatio: 50 };
+const DEFAULT_LAYOUT: Layout = { sidebarWidth: 248, filesWidth: 280, sidebarOpen: true, filesOpen: true, accountsOpen: false, claudeOpen: true, codexOpen: true, sshOpen: true, panel: "files", splitRatio: 50, splitDir: "row" };
+
+const THEME_IDS = ["black", "graphite", "dim", "paper", "system"];
+
+/** Retired color themes and accents (Glass, Midnight, Forest, amber, sage) fall back to Black and neutral. */
+function migratePreferences(saved: Partial<Preferences> | undefined): Preferences {
+  const p = { ...DEFAULT_PREFERENCES, ...saved };
+  return { ...p, theme: THEME_IDS.includes(p.theme) ? p.theme : "black", accent: "neutral" };
+}
 
 function baseName(path: string) {
   return path.replace(/\/+$/, "").split("/").pop() || path;
@@ -166,6 +199,7 @@ function mergeAccounts(accounts: Account[], detected: DetectedAccount[]) {
 export const useDesk = create<DeskState>((set, get) => ({
   loaded: false,
   accounts: [],
+  connections: [],
   projects: [],
   activeProjectId: null,
   layout: DEFAULT_LAYOUT,
@@ -180,6 +214,8 @@ export const useDesk = create<DeskState>((set, get) => ({
   quickOpen: false,
   commandOpen: false,
   toasts: [],
+  dropZone: null,
+  changeCounts: {},
 
   init(saved, detected) {
     const { accounts, identities } = mergeAccounts(saved?.accounts ?? [], detected);
@@ -188,7 +224,7 @@ export const useDesk = create<DeskState>((set, get) => ({
       ? saved!.activeProjectId!
       : (projects[0]?.id ?? null);
     const tabs = (saved?.tabs ?? []).filter((t) => projects.some((p) => p.id === t.projectId)).map((t): Tab => t.type === "terminal"
-      ? { ...t, status: "exited", activity: false, restored: true }
+      ? { ...t, status: "exited", activity: false, restored: true, busy: false, attention: null }
       : { ...t, ready: false, error: null });
     const activeTabId = tabs.some((t) => t.id === saved?.activeTabId) ? saved!.activeTabId! : tabs[0]?.id ?? null;
     const secondaryTabId = tabs.some((t) => t.id === saved?.secondaryTabId && t.id !== activeTabId) ? saved!.secondaryTabId! : null;
@@ -200,10 +236,11 @@ export const useDesk = create<DeskState>((set, get) => ({
       focusedPane: secondaryTabId && saved?.focusedPane === "secondary" ? "secondary" : "primary",
       accounts,
       identities,
+      connections: saved?.connections ?? [],
       projects,
       activeProjectId,
       layout: { ...DEFAULT_LAYOUT, ...saved?.layout },
-      preferences: { ...DEFAULT_PREFERENCES, ...saved?.preferences },
+      preferences: migratePreferences(saved?.preferences),
     });
   },
 
@@ -212,13 +249,13 @@ export const useDesk = create<DeskState>((set, get) => ({
     set((s) => ({ accounts, identities: { ...s.identities, ...identities } }));
   },
 
-  addProject(path) {
+  addProject(path, extra = {}) {
     const existing = get().projects.find((p) => p.path === path);
     if (existing) {
       set({ activeProjectId: existing.id });
       return existing.id;
     }
-    const project: Project = { id: uid(), name: baseName(path), path, claudeAccountId: null, codexAccountId: null };
+    const project: Project = { id: uid(), name: baseName(path), path, claudeAccountId: null, codexAccountId: null, ...extra };
     set((s) => ({ projects: [...s.projects, project], activeProjectId: project.id }));
     return project.id;
   },
@@ -232,6 +269,7 @@ export const useDesk = create<DeskState>((set, get) => ({
       return {
         projects,
         tabs,
+        connections: s.connections.map((c) => (c.projectId === id ? { ...c, projectId: null } : c)),
         secondaryTabId: tabs.some((t) => t.id === s.secondaryTabId && t.id !== activeTabId) ? s.secondaryTabId : null,
         focusedPane: "primary",
         activeTabId,
@@ -287,6 +325,18 @@ export const useDesk = create<DeskState>((set, get) => ({
         codexAccountId: p.codexAccountId === id ? null : p.codexAccountId,
       })),
     }));
+  },
+
+  saveConnection(connection) {
+    set((s) => ({
+      connections: s.connections.some((c) => c.id === connection.id)
+        ? s.connections.map((c) => (c.id === connection.id ? connection : c))
+        : [...s.connections, connection],
+    }));
+  },
+
+  removeConnection(id) {
+    set((s) => ({ connections: s.connections.filter((c) => c.id !== id) }));
   },
 
   setIdentity(id, identity) {
@@ -348,7 +398,7 @@ export const useDesk = create<DeskState>((set, get) => ({
         ...(focus === "secondary" ? { secondaryTabId: tabId } : { activeTabId: tabId }),
         focusedPane: focus,
         activeProjectId: tab.projectId,
-        tabs: s.tabs.map((t) => t.id === tabId && t.type === "terminal" ? { ...t, activity: false } : t),
+        tabs: s.tabs.map((t) => t.id === tabId && t.type === "terminal" ? { ...t, activity: false, attention: null } : t),
       };
     });
   },
@@ -365,7 +415,11 @@ export const useDesk = create<DeskState>((set, get) => ({
   },
 
   setBranch(projectId, branch) {
-    set((s) => ({ branches: { ...s.branches, [projectId]: branch } }));
+    set((s) => (s.branches[projectId] === branch ? {} : { branches: { ...s.branches, [projectId]: branch } }));
+  },
+
+  setChangeCount(path, count) {
+    set((s) => (s.changeCounts[path] === count ? {} : { changeCounts: { ...s.changeCounts, [path]: count } }));
   },
 
   setLayout(patch) {
@@ -388,10 +442,10 @@ export const useDesk = create<DeskState>((set, get) => ({
     set({ commandOpen: open, quickOpen: false });
   },
 
-  toast(text, tone = "info") {
+  toast(text, tone = "info", action) {
     const id = uid();
-    set((s) => ({ toasts: [...s.toasts.slice(-2), { id, text, tone }] }));
-    setTimeout(() => get().dismissToast(id), tone === "error" ? 6000 : 3200);
+    set((s) => ({ toasts: [...s.toasts.slice(-2), { id, text, tone, action }] }));
+    setTimeout(() => get().dismissToast(id), tone === "error" ? 6000 : action ? 7000 : 3200);
   },
 
   dismissToast(id) {
@@ -445,11 +499,23 @@ export function sessionEnv(accounts: Account[], project: Project | undefined, ov
 }
 
 export function persistedSlice(s: DeskState): Persisted & { version: number } {
-  return { version: 2, tabs: s.tabs, activeTabId: s.activeTabId, secondaryTabId: s.secondaryTabId, focusedPane: s.focusedPane, accounts: s.accounts, projects: s.projects, activeProjectId: s.activeProjectId, layout: s.layout, preferences: s.preferences };
+  return { version: 4, tabs: s.tabs, activeTabId: s.activeTabId, secondaryTabId: s.secondaryTabId, focusedPane: s.focusedPane, accounts: s.accounts, connections: s.connections, projects: s.projects, activeProjectId: s.activeProjectId, layout: s.layout, preferences: s.preferences };
 }
 
 export function shortPath(path: string, home: string | null) {
   return home && path.startsWith(home) ? "~" + path.slice(home.length) : path;
+}
+
+/** Tabs whose agent finished or wants input, in tab order. */
+export function waitingTabs(s: Pick<DeskState, "tabs">) {
+  return s.tabs.filter((t): t is TerminalTab => t.type === "terminal" && !!t.attention);
+}
+
+/** Top-level projects, each followed by its worktrees. */
+export function projectTree(projects: Project[]) {
+  const ids = new Set(projects.map((p) => p.id));
+  const roots = projects.filter((p) => !p.worktreeOf || !ids.has(p.worktreeOf));
+  return roots.map((root) => ({ root, worktrees: projects.filter((p) => p.worktreeOf === root.id) }));
 }
 
 export function focusedTabId(s: Pick<DeskState, "focusedPane" | "secondaryTabId" | "activeTabId">) {

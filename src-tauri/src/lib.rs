@@ -4,6 +4,8 @@ mod git;
 mod bridge;
 mod pty;
 mod search;
+mod sessions;
+mod ssh;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -239,6 +241,85 @@ async fn git_commit(root: String, message: String) -> Result<String, String> {
         .map_err(|e| e.to_string())?
 }
 #[tauri::command]
+async fn git_change_count(root: String) -> Result<usize, String> {
+    tauri::async_runtime::spawn_blocking(move || git::change_count(&root))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn git_stage_all(root: String, staged: bool) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || git::stage_all(&root, staged))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn git_discard(root: String, path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || git::discard(&root, &path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn git_worktrees(root: String) -> Result<Vec<git::Worktree>, String> {
+    tauri::async_runtime::spawn_blocking(move || git::worktrees(&root))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn git_branches(root: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || git::branches(&root))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+fn git_worktree_path(root: String, branch: String) -> Result<String, String> {
+    git::check_branch(&branch)?;
+    git::worktree_path(&root, &branch)
+}
+#[tauri::command]
+async fn git_worktree_add(root: String, branch: String, base: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || git::add_worktree(&root, &branch, &base))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn git_worktree_remove(root: String, path: String, force: bool) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || git::remove_worktree(&root, &path, force))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn git_branch_delete(root: String, branch: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || git::delete_branch(&root, &branch))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+// Past conversations
+
+#[tauri::command]
+async fn sessions_list(project: String, claude: Vec<Option<String>>, codex: Vec<Option<String>>) -> Vec<sessions::Session> {
+    tauri::async_runtime::spawn_blocking(move || sessions::list(&project, claude, codex))
+        .await
+        .unwrap_or_default()
+}
+#[tauri::command]
+async fn claude_session_state(dir: Option<String>, cwd: String, id: String) -> &'static str {
+    tauri::async_runtime::spawn_blocking(move || sessions::claude_state(dir, &cwd, &id))
+        .await
+        .unwrap_or("missing")
+}
+
+/// Dock badge with the number of agents waiting, and one bounce for a new one.
+#[tauri::command]
+fn attention(app: AppHandle, count: u32, bounce: bool) {
+    let Some(window) = app.get_webview_window("main") else { return };
+    let _ = window.set_badge_count((count > 0).then_some(count as i64));
+    if bounce {
+        let _ = window.request_user_attention(Some(tauri::UserAttentionType::Informational));
+    }
+}
+
+#[tauri::command]
 async fn project_search(
     root: String,
     query: String,
@@ -275,6 +356,29 @@ fn open_external(url: String) -> Result<(), String> {
         .spawn()
         .map(|_| ())
         .map_err(|e| e.to_string())
+}
+
+// Saved SSH connections
+
+#[tauri::command]
+async fn ssh_save_password(id: String, password: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || ssh::save_password(&id, &password))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn ssh_forget_password(id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || ssh::delete_password(&id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn ssh_has_password(id: String) -> bool {
+    tauri::async_runtime::spawn_blocking(move || ssh::has_password(&id))
+        .await
+        .unwrap_or(false)
 }
 
 #[tauri::command]
@@ -373,11 +477,26 @@ pub fn run() {
             git_diff,
             git_stage,
             git_commit,
+            git_change_count,
+            git_stage_all,
+            git_discard,
+            git_worktrees,
+            git_branches,
+            git_worktree_path,
+            git_worktree_add,
+            git_worktree_remove,
+            git_branch_delete,
+            sessions_list,
+            claude_session_state,
+            attention,
             project_search,
             project_replace,
             path_exists,
             open_external,
             reveal_in_finder,
+            ssh_save_password,
+            ssh_forget_password,
+            ssh_has_password,
         ])
         .build(tauri::generate_context!())
         .expect("failed to start Desk");

@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { X } from "lucide-react";
-import { useDesk, focusedTabId } from "./store";
+import { useDesk, focusedTabId, waitingTabs } from "./store";
 import { ipc, errorText } from "./ipc";
 import { flushWorkspace, persistWorkspace } from "./persistence";
 import {
@@ -21,6 +21,10 @@ import {
   detectProjectAccount,
   restoreWorkspace,
   splitWorkspace,
+  syncConnectionPasswords,
+  flipSplit,
+  jumpToWaiting,
+  pruneWorktrees,
 } from "./actions";
 import { resolvedTheme } from "./appearance";
 import { updateEditorAppearance } from "./editors";
@@ -44,6 +48,8 @@ async function boot() {
   useDesk.getState().init(saved && typeof saved === "object" ? (saved as never) : null, detected);
   await restoreWorkspace();
   await refreshIdentities();
+  void syncConnectionPasswords();
+  void pruneWorktrees();
   for (const p of useDesk.getState().projects) {
     void watchProject(p.id);
     void detectProjectAccount(p.id);
@@ -70,6 +76,10 @@ function cycleProject(step: number) {
   s.selectProject(s.projects[(i + step + s.projects.length) % s.projects.length].id);
 }
 
+function inEditor(e: KeyboardEvent) {
+  return !!(e.target as HTMLElement | null)?.closest?.(".cm-editor");
+}
+
 function onKeyDown(e: KeyboardEvent) {
   const s = useDesk.getState();
   if (s.modal) return;
@@ -83,9 +93,20 @@ function onKeyDown(e: KeyboardEvent) {
   else if (!cmd) handled = false;
   else if (e.key.toLowerCase() === "p" && e.shiftKey) s.setCommandOpen(!s.commandOpen);
   else if (e.key.toLowerCase() === "f" && e.shiftKey) s.setLayout({ filesOpen: true, panel: "search" });
-  else if (e.key === "\\") splitWorkspace();
+  // ⌥ changes the typed character on macOS, so match the physical key.
+  else if (e.code === "Backslash" && e.altKey) flipSplit();
+  else if (e.code === "Backslash") splitWorkspace();
+  else if (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight") && s.secondaryTabId) s.focusPane(e.key === "ArrowLeft" ? "primary" : "secondary");
+  else if (e.key.toLowerCase() === "a" && e.shiftKey) jumpToWaiting();
+  else if (e.key.toLowerCase() === "t" && e.shiftKey && project) s.setModal({ kind: "worktree", projectId: project.id });
   else if (e.key === ",") s.setModal({ kind: "settings" });
   else if (e.key === "t" && !e.shiftKey && project) openTerminal(project.id, "claude");
+  // ⌘D/⌘E/⌘J open Claude Code, Codex or a shell in the selected project. In the
+  // editor ⌘D keeps its "select next occurrence" meaning.
+  else if (e.key === "d" && !e.shiftKey && !e.altKey && project && !inEditor(e)) openTerminal(project.id, "claude");
+  else if (e.key === "e" && !e.shiftKey && !e.altKey && project) openTerminal(project.id, "codex");
+  else if (e.key === "j" && !e.shiftKey && !e.altKey && project) openTerminal(project.id, "shell");
+  else if (e.key.toLowerCase() === "n" && e.shiftKey) s.setModal({ kind: "ssh", id: null });
   else if (e.key === "w" && !e.shiftKey) tab && closeTab(tab.id);
   else if (e.key === "s" && !e.shiftKey) tab && void saveTab(tab.id);
   else if (e.key === "p" && !e.shiftKey) project && s.setQuickOpen(!s.quickOpen);
@@ -104,6 +125,44 @@ function onKeyDown(e: KeyboardEvent) {
   if (handled) {
     e.preventDefault();
     e.stopPropagation();
+  }
+}
+
+/** Keeps the Dock badge in step with waiting agents, and bounces once for a new one in the background. */
+function watchAttention() {
+  let last = 0;
+  return useDesk.subscribe((s) => {
+    const count = waitingTabs(s).length;
+    if (count === last) return;
+    const grew = count > last;
+    last = count;
+    const { alertBadge, alertBounce } = s.preferences;
+    void ipc.attention(alertBadge ? count : 0, grew && alertBounce && !document.hasFocus()).catch(() => {});
+  });
+}
+
+/** Coming back to Desk clears the alert on whatever tabs are on screen. */
+function clearVisibleAttention() {
+  const s = useDesk.getState();
+  for (const id of [s.activeTabId, s.secondaryTabId]) {
+    const tab = s.tabs.find((t) => t.id === id);
+    if (tab?.type === "terminal" && tab.attention) s.patchTab(tab.id, { attention: null });
+  }
+}
+
+/** Worktrees show how many files changed, so finished work stands out in the sidebar. */
+let counting = false;
+async function refreshChangeCounts() {
+  if (document.hidden || counting) return;
+  counting = true;
+  try {
+    const s = useDesk.getState();
+    for (const p of s.projects.filter((p) => p.worktreeOf || p.id === s.activeProjectId)) {
+      const count = await ipc.gitChangeCount(p.path).catch(() => null);
+      if (count !== null) useDesk.getState().setChangeCount(p.path, count);
+    }
+  } finally {
+    counting = false;
   }
 }
 
@@ -156,11 +215,17 @@ export function App() {
       catch (e) { useDesk.getState().toast(`Couldn't save workspace before quitting: ${errorText(e)}`, "error"); quitting = false; }
     };
     window.addEventListener("keydown", onKeyDown, true);
+    const unwatch = watchAttention();
+    const counts = setInterval(() => void refreshChangeCounts(), 8000);
     const unlisten = [
       listen("desk-quit", () => void quit()),
       getCurrentWindow().onCloseRequested((e) => { e.preventDefault(); void quit(); }),
       listen<{ root: string; paths: string[] }>("fs-change", ({ payload }) => handleFsChange(payload.root, payload.paths)),
-      getCurrentWindow().onFocusChanged(({ payload: focused }) => focused && void refreshIdentities()),
+      getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+        if (!focused) return;
+        void refreshIdentities();
+        clearVisibleAttention();
+      }),
       getCurrentWebview().onDragDropEvent(({ payload }) => {
         if (payload.type !== "drop") return;
         const ratio = window.devicePixelRatio || 1;
@@ -173,6 +238,8 @@ export function App() {
     window.addEventListener("contextmenu", noContextMenu);
     return () => {
       unsubscribe();
+      unwatch();
+      clearInterval(counts);
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("contextmenu", noContextMenu);
       unlisten.forEach((p) => void p.then((f) => f()));
@@ -212,6 +279,7 @@ export function App() {
         {toasts.map((t) => (
           <div key={t.id} className={"toast is-" + t.tone}>
             <span>{t.text}</span>
+            {t.action && <button className="mini-btn" onClick={() => { t.action!.run(); useDesk.getState().dismissToast(t.id); }}>{t.action.label}</button>}
             <button className="icon-btn" aria-label="Dismiss" onClick={() => useDesk.getState().dismissToast(t.id)}>
               <X size={13} />
             </button>

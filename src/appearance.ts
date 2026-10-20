@@ -1,15 +1,17 @@
 import { useDesk } from "./store";
 
 export const THEMES = [
-  { id: "graphite", name: "Graphite", description: "Quiet, focused, familiar", bg: "#111214", surface: "#191b1f", accent: "#b6c5ff" },
-  { id: "midnight", name: "Midnight", description: "A little deeper after dark", bg: "#0e1524", surface: "#172236", accent: "#91baff" },
-  { id: "forest", name: "Forest", description: "A calmer kind of workspace", bg: "#101a17", surface: "#1a2923", accent: "#a6d8b5" },
-  { id: "paper", name: "Paper", description: "Light, warm, and clear", bg: "#faf9f6", surface: "#eeede7", accent: "#52633d" },
+  { id: "black", name: "Black", description: "Pure black, high contrast", bg: "#000000", surface: "#0a0a0a", accent: "#ffffff" },
+  { id: "graphite", name: "Charcoal", description: "Soft greys, like VS Code Dark Modern", bg: "#1f1f1f", surface: "#181818", accent: "#eeeeee" },
+  { id: "dim", name: "Dim", description: "Classic greys, like VS Code Dark+", bg: "#1e1e1e", surface: "#252526", accent: "#e8e8e8" },
+  { id: "paper", name: "Light", description: "Plain white, black text", bg: "#ffffff", surface: "#f3f3f3", accent: "#111111" },
 ] as const;
+
+export type ThemeId = (typeof THEMES)[number]["id"];
 
 export function resolvedTheme() {
   const theme = useDesk.getState().preferences.theme;
-  return theme === "system" ? (matchMedia("(prefers-color-scheme: dark)").matches ? "graphite" : "paper") : theme;
+  return theme === "system" ? (matchMedia("(prefers-color-scheme: dark)").matches ? "black" : "paper") : theme;
 }
 
 export function appearanceColors() {
