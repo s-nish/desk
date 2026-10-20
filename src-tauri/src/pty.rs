@@ -46,6 +46,8 @@ pub struct SpawnOpts {
 }
 
 struct Session {
+    /// The terminal device the session's programs see (e.g. /dev/ttys012).
+    tty: Option<String>,
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     killer: Box<dyn ChildKiller + Send + Sync>,
@@ -158,6 +160,7 @@ impl PtyManager {
         self.sessions.lock().unwrap().insert(
             id,
             Session {
+                tty: pty.master.tty_name().map(|p| p.to_string_lossy().into_owned()),
                 master: pty.master,
                 writer,
                 killer,
@@ -229,6 +232,22 @@ impl PtyManager {
         let session = sessions.get_mut(&id).ok_or("terminal session not found")?;
         session.writer.write_all(data).map_err(|e| e.to_string())?;
         session.writer.flush().map_err(|e| e.to_string())
+    }
+
+    /// Types into the session whose terminal device is `tty` (used by the local
+    /// bridge, so tools like Speaky can send dictated prompts to a Desk tab).
+    pub fn write_tty(&self, tty: &str, data: &[u8]) -> Result<(), String> {
+        let mut sessions = self.sessions.lock().unwrap();
+        let session = sessions
+            .values_mut()
+            .find(|s| s.tty.as_deref() == Some(tty))
+            .ok_or("no Desk terminal on that tty")?;
+        session.writer.write_all(data).map_err(|e| e.to_string())?;
+        session.writer.flush().map_err(|e| e.to_string())
+    }
+
+    pub fn ttys(&self) -> Vec<String> {
+        self.sessions.lock().unwrap().values().filter_map(|s| s.tty.clone()).collect()
     }
 
     pub fn resize(&self, id: u32, cols: u16, rows: u16) -> Result<(), String> {
