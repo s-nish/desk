@@ -4,7 +4,7 @@ import { basicSetup } from "codemirror";
 import { EditorView, keymap } from "@codemirror/view";
 import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import { indentWithTab } from "@codemirror/commands";
-import { HighlightStyle, syntaxHighlighting, indentUnit } from "@codemirror/language";
+import { HighlightStyle, syntaxHighlighting, indentUnit, LanguageDescription } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
 import { javascript } from "@codemirror/lang-javascript";
 import { python } from "@codemirror/lang-python";
@@ -15,7 +15,10 @@ import { html } from "@codemirror/lang-html";
 import { css } from "@codemirror/lang-css";
 import { go } from "@codemirror/lang-go";
 import { yaml } from "@codemirror/lang-yaml";
-import { resolvedTheme } from "./appearance";
+import { languages } from "@codemirror/language-data";
+import { editorPalette } from "./editorThemes";
+import { useDesk } from "./store";
+import { isLightTheme } from "./appearance";
 import { ipc, errorText } from "./ipc";
 
 export interface EditorHooks {
@@ -36,7 +39,7 @@ interface Entry {
 
 const entries = new Map<string, Entry>();
 
-function languageFor(path: string): Extension {
+export async function languageFor(path: string): Promise<Extension> {
   const name = path.split("/").pop()!.toLowerCase();
   const ext = name.includes(".") ? name.split(".").pop()! : name;
   switch (ext) {
@@ -59,7 +62,6 @@ function languageFor(path: string): Extension {
       return rust();
     case "json":
     case "jsonc":
-    case "lock":
       return json();
     case "md":
     case "mdx":
@@ -68,11 +70,9 @@ function languageFor(path: string): Extension {
     case "html":
     case "htm":
     case "svg":
-    case "vue":
     case "svelte":
       return html();
     case "css":
-    case "scss":
     case "less":
       return css();
     case "go":
@@ -80,20 +80,22 @@ function languageFor(path: string): Extension {
     case "yml":
     case "yaml":
       return yaml();
-    default:
-      return [];
+    default: {
+      const language = LanguageDescription.matchFilename(languages, path.split("/").pop()!);
+      return language ? language.load() : [];
+    }
   }
 }
 
 const highlight = HighlightStyle.define([
-  { tag: [t.keyword, t.modifier, t.operatorKeyword, t.controlKeyword], color: "var(--syntax-keyword)" },
+  { tag: [t.keyword, t.modifier, t.operatorKeyword, t.controlKeyword], color: "var(--syntax-keyword)", fontWeight: "600" },
   { tag: [t.string, t.special(t.string), t.regexp], color: "var(--syntax-string)" },
   { tag: [t.number, t.bool, t.null, t.atom], color: "var(--syntax-number)" },
   { tag: [t.comment, t.lineComment, t.blockComment], color: "var(--muted)", fontStyle: "italic" },
   { tag: [t.function(t.variableName), t.function(t.propertyName)], color: "var(--syntax-function)" },
   { tag: [t.typeName, t.className, t.namespace], color: "var(--syntax-type)" },
-  { tag: [t.propertyName, t.attributeName], color: "var(--syntax-string)" },
-  { tag: [t.tagName], color: "var(--syntax-type)" },
+  { tag: [t.propertyName, t.attributeName], color: "var(--syntax-property)" },
+  { tag: [t.tagName], color: "var(--syntax-tag)" },
   { tag: [t.definition(t.variableName)], color: "var(--text)" },
   { tag: [t.heading], color: "var(--text)", fontWeight: "600" },
   { tag: [t.link, t.url], color: "var(--syntax-string)", textDecoration: "underline" },
@@ -105,7 +107,7 @@ const highlight = HighlightStyle.define([
 const colorMode = new Compartment();
 const theme = EditorView.theme(
   {
-    "&": { height: "100%", backgroundColor: "var(--bg)", color: "var(--text-2)", fontSize: "var(--code-size)" },
+    "&": { height: "100%", backgroundColor: "var(--bg)", color: "var(--text)", fontSize: "var(--code-size)" },
     ".cm-scroller": { fontFamily: '"SF Mono", "JetBrains Mono", Menlo, monospace', lineHeight: "1.6" },
     ".cm-content": { caretColor: "var(--accent)", padding: "8px 0" },
     ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--accent)", borderLeftWidth: "2px" },
@@ -123,6 +125,24 @@ const theme = EditorView.theme(
   },
   { dark: false },
 );
+
+/** Scoped variables keep file colors separate from the surrounding app chrome. */
+export function editorAppearance() {
+  const palette = editorPalette(useDesk.getState().preferences.editorTheme, isLightTheme());
+  return EditorView.theme({ "&": {
+    "--bg": palette.background, "--text": palette.foreground, "--text-2": palette.foreground,
+    "--muted": palette.comment, "--muted-2": palette.comment, "--accent": palette.foreground,
+    "--bg-hover": palette.activeLine, "--bg-raised": palette.activeLine, "--bg-overlay": palette.background,
+    "--bg-press": palette.activeLine, "--line": palette.comment + "50", "--line-strong": palette.comment,
+    "--selection": palette.selection, "--syntax-keyword": palette.keyword, "--syntax-string": palette.string,
+    "--syntax-number": palette.number, "--syntax-function": palette.function, "--syntax-type": palette.type,
+    "--syntax-property": palette.property, "--syntax-tag": palette.tag,
+  } }, { dark: palette.dark });
+}
+
+export async function editorPreviewExtensions(filename: string): Promise<Extension[]> {
+  return [await languageFor(filename), theme, editorAppearance(), syntaxHighlighting(highlight), EditorView.editable.of(false), EditorState.readOnly.of(true)];
+}
 
 function isDirty(entry: Entry) {
   const doc = entry.view.state.doc;
@@ -166,9 +186,9 @@ export async function openEditor(key: string, path: string, hooks: EditorHooks, 
         basicSetup,
         keymap.of([indentWithTab]),
         indentUnit.of(content.includes("\n\t") ? "\t" : "  "),
-        languageFor(path),
+        await languageFor(path),
         theme,
-        colorMode.of(EditorView.theme({}, { dark: resolvedTheme() !== "paper" })),
+        colorMode.of(editorAppearance()),
         syntaxHighlighting(highlight),
         EditorView.updateListener.of((u) => {
           if (u.docChanged) { setDirty(entry, isDirty(entry)); reportRecovery(entry); }
@@ -265,7 +285,7 @@ export function disposeEditor(key: string) {
 
 export function updateEditorAppearance() {
   for (const entry of entries.values()) {
-    entry.view.dispatch({ effects: colorMode.reconfigure(EditorView.theme({}, { dark: resolvedTheme() !== "paper" })) });
+    entry.view.dispatch({ effects: colorMode.reconfigure(editorAppearance()) });
   }
 }
 

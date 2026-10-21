@@ -26,7 +26,7 @@ import {
   jumpToWaiting,
   pruneWorktrees,
 } from "./actions";
-import { resolvedTheme } from "./appearance";
+import { isLightTheme, resolvedTheme } from "./appearance";
 import { updateEditorAppearance } from "./editors";
 import { clearTerminal, pasteIntoTerminal, updateTerminalAppearance } from "./terminals";
 import { Sidebar } from "./components/Sidebar";
@@ -185,6 +185,7 @@ export function App() {
   useEffect(() => {
     const apply = () => {
       document.documentElement.dataset.theme = resolvedTheme();
+      document.documentElement.dataset.colorScheme = isLightTheme() ? "light" : "dark";
       document.documentElement.dataset.density = preferences.density;
       document.documentElement.dataset.accent = preferences.accent;
       document.documentElement.dataset.accountColors = preferences.accountColors ? "on" : "off";
@@ -195,8 +196,10 @@ export function App() {
     };
     apply();
     const media = matchMedia("(prefers-color-scheme: dark)");
+    const motion = matchMedia("(prefers-reduced-motion: reduce)");
     media.addEventListener("change", apply);
-    return () => media.removeEventListener("change", apply);
+    motion.addEventListener("change", apply);
+    return () => { media.removeEventListener("change", apply); motion.removeEventListener("change", apply); };
   }, [preferences]);
 
   const loaded = useDesk((s) => s.loaded);

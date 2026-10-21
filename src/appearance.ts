@@ -1,13 +1,11 @@
 import { useDesk } from "./store";
 
-export const THEMES = [
-  { id: "black", name: "Black", description: "Pure black, high contrast", bg: "#000000", surface: "#0a0a0a", accent: "#ffffff" },
-  { id: "graphite", name: "Charcoal", description: "Soft greys, like VS Code Dark Modern", bg: "#1f1f1f", surface: "#181818", accent: "#eeeeee" },
-  { id: "dim", name: "Dim", description: "Classic greys, like VS Code Dark+", bg: "#1e1e1e", surface: "#252526", accent: "#e8e8e8" },
-  { id: "paper", name: "Light", description: "Plain white, black text", bg: "#ffffff", surface: "#f3f3f3", accent: "#111111" },
-] as const;
+import { THEMES } from "./themeCatalog";
+export { THEMES, type ThemeId } from "./themeCatalog";
 
-export type ThemeId = (typeof THEMES)[number]["id"];
+export function isLightTheme() {
+  return THEMES.find((theme) => theme.id === resolvedTheme())?.light ?? false;
+}
 
 export function resolvedTheme() {
   const theme = useDesk.getState().preferences.theme;

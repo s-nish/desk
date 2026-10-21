@@ -1,4 +1,6 @@
 import { create } from "zustand";
+import { EDITOR_THEMES, type EditorThemeId } from "./editorThemes";
+import { THEMES, type ThemeId } from "./themeCatalog";
 import type { Account, DetectedAccount, FileTab, Identity, Layout, Project, SshConnection, Tab, TabTool, TerminalTab, Tool } from "./types";
 
 export const ACCOUNT_COLORS = ["#2dd4bf", "#f59e0b", "#60a5fa", "#fb7185", "#4ade80", "#e5e5e5"];
@@ -20,7 +22,7 @@ export const accountId = (kind: Tool, dir: string | null) => `${kind}:${dir ?? "
 export const uid = () => crypto.randomUUID();
 
 export interface Preferences {
-  theme: "black" | "graphite" | "dim" | "paper" | "system";
+  theme: ThemeId | "system";
   density: "comfortable" | "compact";
   fontSize: number;
   showProjectAccounts: boolean;
@@ -32,10 +34,12 @@ export interface Preferences {
   reduceMotion: boolean;
   /** Terminal color preset; "desk" follows the interface theme. */
   terminalTheme: string;
+  editorTheme: EditorThemeId;
   /** Colors changed by hand on top of the preset, keyed by xterm theme field. */
   terminalColors: Record<string, string>;
   cursorStyle: "bar" | "block" | "underline";
   cursorBlink: boolean;
+  smoothScroll: boolean;
   /** Mark Claude Code and Codex tabs that finished or need input while out of sight. */
   agentAlerts: boolean;
   /** Show how many agents are waiting on the Dock icon. */
@@ -44,7 +48,7 @@ export interface Preferences {
   alertBounce: boolean;
 }
 
-export const DEFAULT_PREFERENCES: Preferences = { theme: "black", density: "comfortable", fontSize: 13, showProjectAccounts: false, accent: "neutral", showStatusBar: true, showPaths: false, showAccountEmails: false, accountColors: false, reduceMotion: false, terminalTheme: "desk", terminalColors: {}, cursorStyle: "bar", cursorBlink: true, agentAlerts: true, alertBadge: true, alertBounce: true };
+export const DEFAULT_PREFERENCES: Preferences = { theme: "black", density: "comfortable", fontSize: 14, showProjectAccounts: false, accent: "neutral", showStatusBar: true, showPaths: false, showAccountEmails: false, accountColors: false, reduceMotion: false, terminalTheme: "desk", editorTheme: "desk", terminalColors: {}, cursorStyle: "bar", cursorBlink: true, smoothScroll: true, agentAlerts: true, alertBadge: true, alertBounce: true };
 
 export type Modal =
   | { kind: "settings"; section?: string }
@@ -145,12 +149,12 @@ interface DeskState extends Persisted {
 
 const DEFAULT_LAYOUT: Layout = { sidebarWidth: 248, filesWidth: 280, sidebarOpen: true, filesOpen: true, accountsOpen: false, claudeOpen: true, codexOpen: true, sshOpen: true, panel: "files", splitRatio: 50, splitDir: "row" };
 
-const THEME_IDS = ["black", "graphite", "dim", "paper", "system"];
+const THEME_IDS: string[] = [...THEMES.map((theme) => theme.id), "system"];
 
-/** Retired color themes and accents (Glass, Midnight, Forest, amber, sage) fall back to Black and neutral. */
+/** Unknown themes fall back to Black; saved original palette IDs remain valid. */
 function migratePreferences(saved: Partial<Preferences> | undefined): Preferences {
   const p = { ...DEFAULT_PREFERENCES, ...saved };
-  return { ...p, theme: THEME_IDS.includes(p.theme) ? p.theme : "black", accent: "neutral" };
+  return { ...p, theme: THEME_IDS.includes(p.theme) ? p.theme : "black", editorTheme: EDITOR_THEMES.some(theme => theme.id === p.editorTheme) ? p.editorTheme : "desk", accent: "neutral" };
 }
 
 function baseName(path: string) {

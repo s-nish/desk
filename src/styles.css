@@ -1431,20 +1431,6 @@ code {
   }
 }
 
-/* Shared appearance tokens. Editors and terminals use the same palette. */
-:root {
-  --bg: #111214; --bg-raised: #191b1f; --bg-hover: #202329; --bg-press: #2a2e36; --bg-overlay: #191b1f;
-  --line: #282b32; --line-strong: #3b404b; --text: #edeef2; --text-2: #bdc1cd; --muted: #9299a9; --muted-2: #858c9b;
-  --accent: #ffffff; --accent-ink: #000000; --selection: #ffffff26; --surface: #15171a;
-  --syntax-keyword: #ff9d95; --syntax-string: #a5d6ff; --syntax-number: #a8bbff; --syntax-function: #eac08c; --syntax-type: #a6d8b5;
-  --code-size: 13px; --titlebar-h: 46px; --tabbar-h: 42px; --status-h: 28px;
-}
-:root[data-theme="paper"] {
-  color-scheme: light;
-  --bg: #ffffff; --bg-raised: #f3f3f3; --bg-hover: #ededed; --bg-press: #e4e4e4; --bg-overlay: #ffffff; --surface: #f8f8f8;
-  --line: #e5e5e5; --line-strong: #cfcfcf; --text: #111111; --text-2: #3b3b3b; --muted: #6b6b6b; --muted-2: #8a8a8a; --accent: #111111; --accent-ink: #ffffff; --selection: #00000018; --danger: #c4314b;
-  --syntax-keyword: #af00db; --syntax-string: #a31515; --syntax-number: #098658; --syntax-function: #795e26; --syntax-type: #267f99;
-}
 body { font-size: 13px; }
 button, input, select, summary { -webkit-tap-highlight-color: transparent; }
 button { cursor: pointer; }
@@ -1652,26 +1638,6 @@ button:disabled { cursor: not-allowed; }
 .palette-foot { display: flex; gap: 20px; padding: 12px 16px; font-size: 10px; color: var(--muted); border-top: 1px solid var(--line); }
 .palette-foot kbd { margin-left: auto; }
 
-/* Desk chrome is monochrome: white on dark themes, black on light. Terminal
-   output and code highlighting keep their own colors. */
-:root { --ui-accent: #ffffff; --ui-accent-ink: #000000; }
-:root[data-theme="paper"] { --ui-accent: #111111; --ui-accent-ink: #ffffff; }
-
-/* Black (default): pure black, like VS Code's high-contrast dark. */
-:root:not([data-theme]), :root[data-theme="black"] {
-  --bg: #000000; --surface: #0a0a0a; --bg-raised: #161616; --bg-hover: #121212; --bg-press: #1e1e1e; --bg-overlay: #0e0e0e;
-  --line: #1f1f1f; --line-strong: #333333; --text: #f5f5f5; --text-2: #c4c4c4; --muted: #8c8c8c; --muted-2: #6e6e6e;
-}
-/* Charcoal: VS Code's Dark Modern greys. */
-:root[data-theme="graphite"] {
-  --bg: #1f1f1f; --surface: #181818; --bg-raised: #2a2a2a; --bg-hover: #262626; --bg-press: #313131; --bg-overlay: #202020;
-  --line: #2b2b2b; --line-strong: #3c3c3c; --text: #eeeeee; --text-2: #cccccc; --muted: #9d9d9d; --muted-2: #7f7f7f;
-}
-/* Dim: VS Code's classic Dark+. */
-:root[data-theme="dim"] {
-  --bg: #1e1e1e; --surface: #252526; --bg-raised: #2d2d2d; --bg-hover: #2a2d2e; --bg-press: #37373d; --bg-overlay: #252526;
-  --line: #333333; --line-strong: #454545; --text: #e8e8e8; --text-2: #cccccc; --muted: #a0a0a0; --muted-2: #858585;
-}
 :root[data-account-colors="off"] :is(.pill, .account, .tab, .status-account, .launch-tile, .signin-status) { --acct: var(--muted) !important; }
 :root[data-account-colors="off"] :is(.menu-icon .dot, .menu-item .dot) { background: var(--muted) !important; }
 :root[data-account-colors="off"] .tab.is-active::before { background: var(--ui-accent); }
@@ -1821,7 +1787,7 @@ body.is-reordering-tabs, body.is-reordering-tabs * { cursor: grabbing !important
 /* ───────────────── Agents, review, splits, worktrees, history ───────────────── */
 
 :root { --diff-add: #3fb950; --diff-del: #f85149; }
-:root[data-theme="paper"] { --diff-add: #1a7f37; --diff-del: #cf222e; }
+:root[data-color-scheme="light"] { --diff-add: #1a7f37; --diff-del: #cf222e; }
 @keyframes desk-spin { to { transform: rotate(360deg); } }
 .is-spinning { animation: desk-spin 900ms linear infinite; }
 :root[data-motion="reduced"] .is-spinning { animation: none; }
@@ -1903,7 +1869,7 @@ body.is-resizing-rows, body.is-resizing-rows * { cursor: row-resize !important; 
 .session-row:hover { background: var(--bg-hover); }
 .session-row:hover .row-more, .session-row:focus-within .row-more { opacity: 1; }
 .session-row .row-more { position: absolute; right: 5px; top: 7px; }
-.session-row.is-open { box-shadow: inset 2px 0 0 var(--ui-accent); }
+.session-row.is-open { background: var(--bg-raised); }
 .session-title { color: var(--text); font-size: 12.5px; font-weight: 500; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .session-prompt { color: var(--muted); font-size: 11.5px; line-height: 1.4; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .session-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 2px; color: var(--muted); font-size: 10.5px; }

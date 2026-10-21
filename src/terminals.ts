@@ -6,9 +6,9 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { listen } from "@tauri-apps/api/event";
-import { appearanceColors, resolvedTheme } from "./appearance";
+import { appearanceColors, isLightTheme } from "./appearance";
 import { useDesk } from "./store";
-import { findPreset, presetTheme } from "./terminalThemes";
+import { DARK_ANSI, LIGHT_ANSI, findPreset, presetTheme } from "./terminalThemes";
 import { ipc, errorText } from "./ipc";
 
 export interface SessionSpec {
@@ -62,29 +62,10 @@ const IDLE_AFTER = 3500;
 /** Output this soon after a keystroke or resize is just the screen redrawing. */
 const ECHO_WINDOW = 450;
 
-export const TERMINAL_THEME: ITheme = {
-  background: "#0b0b0c",
-  foreground: "#e4e4e6",
-  cursor: "#f2f2f3",
-  cursorAccent: "#0b0b0c",
-  selectionBackground: "#ffffff2e",
-  black: "#1c1c1f",
-  red: "#f87171",
-  green: "#4ade80",
-  yellow: "#fbbf24",
-  blue: "#60a5fa",
-  magenta: "#f472b6",
-  cyan: "#2dd4bf",
-  white: "#d4d4d8",
-  brightBlack: "#5f5f66",
-  brightRed: "#fca5a5",
-  brightGreen: "#86efac",
-  brightYellow: "#fde68a",
-  brightBlue: "#93c5fd",
-  brightMagenta: "#f9a8d4",
-  brightCyan: "#5eead4",
-  brightWhite: "#fafafa",
-};
+/** Motion settings apply to wheel scrolling and the cursor in existing sessions. */
+function reduceMotion() {
+  return useDesk.getState().preferences.reduceMotion || matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
 
 const entries = new Map<string, Entry>();
 const byPty = new Map<number, string>();
@@ -132,16 +113,18 @@ function create(key: string, hooks: TerminalHooks): Entry {
   const term = new Terminal({
     fontFamily: '"SF Mono", "JetBrains Mono", Menlo, monospace',
     fontSize: useDesk.getState().preferences.fontSize,
-    lineHeight: 1.25,
+    lineHeight: 1.4,
     letterSpacing: 0,
-    cursorBlink: useDesk.getState().preferences.cursorBlink,
+    cursorBlink: useDesk.getState().preferences.cursorBlink && !reduceMotion(),
     cursorStyle: useDesk.getState().preferences.cursorStyle,
     cursorWidth: 2,
-    scrollback: 10000,
+    scrollback: 20000,
+    smoothScrollDuration: useDesk.getState().preferences.smoothScroll && !reduceMotion() ? 100 : 0,
+    scrollOnUserInput: true,
     allowProposedApi: true,
     macOptionClickForcesSelection: true,
     drawBoldTextInBrightColors: false,
-    minimumContrastRatio: 1,
+    minimumContrastRatio: 7,
     theme: terminalTheme(),
   });
   const fit = new FitAddon();
@@ -196,6 +179,17 @@ function create(key: string, hooks: TerminalHooks): Entry {
     return true;
   });
   term.attachCustomKeyEventHandler((e) => {
+    // Shift navigation browses normal scrollback without sending keys to the shell.
+    // Full-screen applications keep their own navigation and mouse behavior.
+    if (e.type === "keydown" && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && term.buffer.active.type === "normal") {
+      if (["PageUp", "PageDown", "Home", "End"].includes(e.key)) {
+        e.preventDefault();
+        if (e.key === "Home") term.scrollToTop();
+        else if (e.key === "End") term.scrollToBottom();
+        else term.scrollPages(e.key === "PageUp" ? -1 : 1);
+        return false;
+      }
+    }
     // Shift+Enter inserts a newline in Claude Code and Codex (sent as Meta+Enter).
     if (e.type === "keydown" && e.key === "Enter" && e.shiftKey && !e.metaKey && !e.ctrlKey) {
       if (entry.ptyId !== null) void ipc.ptyWrite(entry.ptyId, "\x1b\r");
@@ -203,6 +197,23 @@ function create(key: string, hooks: TerminalHooks): Entry {
     }
     return true;
   });
+
+  // Observe xterm's public buffer API; never intercept wheel events or TUI input.
+  const latest = document.createElement("button");
+  latest.className = "term-latest";
+  latest.type = "button";
+  latest.textContent = "Latest output";
+  latest.title = "Scroll to latest output (⇧End)";
+  latest.hidden = true;
+  latest.addEventListener("click", () => { term.scrollToBottom(); term.focus(); });
+  host.appendChild(latest);
+  const updateScrollState = () => {
+    const buffer = term.buffer.active;
+    latest.hidden = buffer.type !== "normal" || buffer.baseY <= buffer.viewportY;
+  };
+  term.onScroll(updateScrollState);
+  term.onWriteParsed(updateScrollState);
+  term.buffer.onBufferChange(updateScrollState);
 
   entries.set(key, entry);
   return entry;
@@ -318,9 +329,14 @@ export function disposeTerminal(key: string) {
   entry.host.remove();
 }
 
-function deskTheme(): ITheme {
-  const light = resolvedTheme() === "paper";
-  return { ...TERMINAL_THEME, ...appearanceColors(), ...(light ? {
+export function deskTheme(neutral = false): ITheme {
+  const light = isLightTheme();
+  const base = presetTheme({ id: "desk", name: "Desk", colors: [
+    "#000000", "#fafafa", "#fafafa", "#ffffff30", ...(light ? LIGHT_ANSI : DARK_ANSI),
+  ] });
+  if (neutral) return { ...base, ...appearanceColors() };
+  const original = presetTheme(findPreset("desk"));
+  return { ...original, ...appearanceColors(), ...(light ? {
     black: "#272a24", red: "#b02b35", green: "#34743e", yellow: "#906716", blue: "#275fa8", magenta: "#9143a0", cyan: "#187278", white: "#66685f",
     brightBlack: "#73766b", brightRed: "#b02b35", brightGreen: "#34743e", brightYellow: "#906716", brightBlue: "#275fa8", brightMagenta: "#9143a0", brightCyan: "#187278", brightWhite: "#272a24",
   } : {}) };
@@ -329,22 +345,28 @@ function deskTheme(): ITheme {
 /** The chosen preset ("desk" follows the interface theme) plus any hand-edited colors. */
 export function terminalTheme(): ITheme {
   const { terminalTheme: id, terminalColors } = useDesk.getState().preferences;
-  const base = id === "desk" ? deskTheme() : presetTheme(findPreset(id));
+  const base = (id === "desk" || id === "desk-neutral") ? deskTheme(id === "desk-neutral") : presetTheme(findPreset(id));
   const theme = { ...base, ...terminalColors };
   if (terminalColors.background) theme.cursorAccent = terminalColors.background;
+  const foreground = theme.foreground ?? "#fafafa";
+  theme.scrollbarSliderBackground = foreground + "50";
+  theme.scrollbarSliderHoverBackground = foreground + "75";
+  theme.scrollbarSliderActiveBackground = foreground + "99";
   return theme;
 }
 
 export function updateTerminalAppearance() {
   const theme = terminalTheme();
-  const { fontSize, cursorStyle, cursorBlink } = useDesk.getState().preferences;
+  const { fontSize, cursorStyle, cursorBlink, smoothScroll } = useDesk.getState().preferences;
   // Panes around the terminal grid use the terminal's own background.
   document.documentElement.style.setProperty("--term-bg", theme.background ?? "");
+  document.documentElement.style.setProperty("--term-scrollbar", theme.scrollbarSliderBackground ?? "");
   for (const entry of entries.values()) {
     entry.term.options.theme = theme;
     entry.term.options.fontSize = fontSize;
     entry.term.options.cursorStyle = cursorStyle;
-    entry.term.options.cursorBlink = cursorBlink;
+    entry.term.options.cursorBlink = cursorBlink && !reduceMotion();
+    entry.term.options.smoothScrollDuration = smoothScroll && !reduceMotion() ? 100 : 0;
     refit(entry);
   }
 }

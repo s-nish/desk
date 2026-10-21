@@ -1,5 +1,5 @@
-// Terminal color presets. "desk" follows the interface theme; the rest are fixed
-// palettes. Hand-edited colors in preferences are applied on top of a preset.
+// Original terminal presets plus the new neutral collection.
+// Hand-edited colors in preferences are applied on top of a preset.
 
 import type { ITheme } from "@xterm/xterm";
 
@@ -26,7 +26,7 @@ export interface TerminalPreset {
   colors: [string, string, string, string, ...string[]];
 }
 
-export const TERMINAL_PRESETS: TerminalPreset[] = [
+const ORIGINAL_PRESETS: TerminalPreset[] = [
   { id: "desk", name: "Desk", colors: ["#000000", "#f5f5f5", "#ffffff", "#ffffff33",
     "#1c1c1f", "#f87171", "#4ade80", "#fbbf24", "#60a5fa", "#f472b6", "#2dd4bf", "#d4d4d8",
     "#5f5f66", "#fca5a5", "#86efac", "#fde68a", "#93c5fd", "#f9a8d4", "#5eead4", "#fafafa"] },
@@ -63,6 +63,26 @@ export const TERMINAL_PRESETS: TerminalPreset[] = [
   { id: "github-light", name: "GitHub Light", colors: ["#ffffff", "#24292f", "#0969da", "#0969da26",
     "#24292f", "#cf222e", "#116329", "#4d2d00", "#0969da", "#8250df", "#1b7c83", "#6e7781",
     "#57606a", "#a40e26", "#1a7f37", "#633c01", "#218bff", "#a475f9", "#3192aa", "#8c959f"] },
+];
+
+/** Tonal ANSI values stay readable without introducing decorative hues. */
+export const DARK_ANSI = [
+  "#888888", "#e0e0e0", "#c8c8c8", "#ededed", "#bcbcbc", "#d4d4d4", "#c2c2c2", "#eeeeee",
+  "#aaaaaa", "#ffffff", "#dedede", "#f5f5f5", "#d0d0d0", "#e8e8e8", "#d9d9d9", "#ffffff",
+];
+export const LIGHT_ANSI = [
+  "#202020", "#303030", "#424242", "#282828", "#484848", "#383838", "#454545", "#4c4c4c",
+  "#555555", "#171717", "#303030", "#202020", "#3b3b3b", "#282828", "#353535", "#171717",
+];
+
+export const TERMINAL_PRESETS: TerminalPreset[] = [
+  ...ORIGINAL_PRESETS,
+  { id: "desk-neutral", name: "Match Desk · Neutral", colors: ["#000000", "#fafafa", "#fafafa", "#ffffff30", ...DARK_ANSI] },
+  { id: "ink", name: "Ink", colors: ["#000000", "#fafafa", "#fafafa", "#ffffff30", ...DARK_ANSI] },
+  { id: "carbon", name: "Carbon", colors: ["#1b1b1b", "#f5f5f5", "#f5f5f5", "#ffffff30", ...DARK_ANSI] },
+  { id: "chalk", name: "Chalk", colors: ["#303030", "#f5f5f5", "#f5f5f5", "#ffffff30", ...DARK_ANSI] },
+  { id: "paper-mono", name: "Paper", colors: ["#ffffff", "#171717", "#171717", "#00000024", ...LIGHT_ANSI] },
+  { id: "silver-mono", name: "Silver", colors: ["#e8e8e8", "#171717", "#171717", "#00000024", ...LIGHT_ANSI] },
 ];
 
 export function presetTheme(preset: TerminalPreset): ITheme {

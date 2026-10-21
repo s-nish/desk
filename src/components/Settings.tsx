@@ -1,14 +1,16 @@
 import { useState } from "react";
-import { Bell, Check, Keyboard, Monitor, Palette, Plus, RotateCcw, Server, SlidersHorizontal, SquareTerminal, Users } from "lucide-react";
+import { Bell, Check, Code2, Keyboard, Monitor, Palette, Plus, RotateCcw, Server, SlidersHorizontal, SquareTerminal, Users } from "lucide-react";
 import { THEMES } from "../appearance";
 import { DEFAULT_PREFERENCES, TOOL_LABEL, useDesk } from "../store";
-import { terminalTheme } from "../terminals";
+import { terminalTheme, deskTheme as terminalThemeForDesk } from "../terminals";
 import { ANSI_KEYS, BASE_KEYS, COLOR_LABEL, TERMINAL_PRESETS, opaque, presetTheme, type ColorKey } from "../terminalThemes";
+import { EditorSettings } from "./EditorSettings";
 import { AccountRow, ConnectionRow } from "./Sidebar";
 
 const sections = [
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "terminal", label: "Terminal", icon: SquareTerminal },
+  { id: "editor", label: "Editor", icon: Code2 },
   { id: "workspace", label: "Workspace", icon: SlidersHorizontal },
   { id: "alerts", label: "Alerts", icon: Bell },
   { id: "ssh", label: "SSH", icon: Server },
@@ -37,21 +39,23 @@ export function Settings({ initial }: { initial?: string }) {
       <span className="settings-local">Made for your workflow.<br />Saved on this Mac.</span>
     </nav>
     <div className="settings-content" key={section}>
-      <div className="settings-intro"><h2>{sections.find((s) => s.id === section)?.label}</h2><p>{section === "appearance" ? "Black and white, in the shade you like." : section === "workspace" ? "Keep what you need. Give your work room to breathe." : section === "terminal" ? "Pick a color theme, then fine-tune any color." : section === "alerts" ? "Know when Claude Code or Codex finishes, or needs an answer, while you're looking at something else." : section === "ssh" ? "Saved commands that open in their own tab, with the password filled in." : section === "accounts" ? "Manage the accounts you use across your projects." : "Stay in the flow, with your hands on the keyboard."}</p></div>
+      <div className="settings-intro"><h2>{sections.find((s) => s.id === section)?.label}</h2><p>{section === "appearance" ? "Your original palettes, plus a new range of neutral shades." : section === "workspace" ? "Keep what you need. Give your work room to breathe." : section === "editor" ? "Distinct syntax colors for every file. Choose a palette that suits your work." : section === "terminal" ? "Readable output. Comfortable spacing. Your place in the scrollback." : section === "alerts" ? "Know when Claude Code or Codex finishes, or needs an answer, while you're looking at something else." : section === "ssh" ? "Saved commands that open in their own tab, with the password filled in." : section === "accounts" ? "Manage the accounts you use across your projects." : "Stay in the flow, with your hands on the keyboard."}</p></div>
       {section === "appearance" && <>
-        <h3 className="settings-label">Color theme</h3>
-        <div className="theme-grid">{THEMES.map((theme) => <button key={theme.id} className={"theme-option" + (preferences.theme === theme.id ? " is-selected" : "")} aria-pressed={preferences.theme === theme.id} onClick={() => setPreferences({ theme: theme.id })}>
+        <div className="theme-families">{([false, true] as const).map((light) => <section className="theme-family" key={String(light)} aria-label={light ? "Light themes" : "Dark themes"}>
+        <h3 className="settings-label">{light ? "Light" : "Dark"}</h3>
+        <div className="theme-grid">{THEMES.filter((theme) => theme.light === light).map((theme) => <button key={theme.id} className={"theme-option" + (preferences.theme === theme.id ? " is-selected" : "")} aria-pressed={preferences.theme === theme.id} onClick={() => setPreferences({ theme: theme.id })}>
           <span className="theme-preview" style={{ background: theme.bg, "--preview-surface": theme.surface, "--preview-accent": theme.accent } as React.CSSProperties}><span className="preview-sidebar"><i /><i /><i /></span><span className="preview-main"><i /><i /><i /><i /></span></span>
           <span className="theme-name">{theme.name}{preferences.theme === theme.id && <Check size={14} />}</span><small>{theme.description}</small>
-        </button>)}</div>
+        </button>)}</div></section>)}</div>
         <button className={"system-theme" + (preferences.theme === "system" ? " is-selected" : "")} aria-pressed={preferences.theme === "system"} onClick={() => setPreferences({ theme: "system" })}><Monitor size={16} /><span>Match system appearance</span>{preferences.theme === "system" && <Check size={14} />}</button>
         <div className="setting-row"><span><strong>Interface density</strong><small>Choose how much space your sidebar uses.</small></span><div className="segmented">{(["comfortable", "compact"] as const).map((density) => <button key={density} aria-pressed={preferences.density === density} className={preferences.density === density ? "is-on" : ""} onClick={() => setPreferences({ density })}>{density === "comfortable" ? "Comfortable" : "Compact"}</button>)}</div></div>
-        <label className="setting-row"><span><strong>Editor & terminal text</strong><small>Applies immediately to open sessions.</small></span><select aria-label="Editor and terminal text size" value={preferences.fontSize} onChange={(e) => setPreferences({ fontSize: Number(e.target.value) })}>{[11, 12, 13, 14, 15, 16, 18, 20].map((size) => <option key={size} value={size}>{size} px</option>)}</select></label>
+        <label className="setting-row"><span><strong>Editor & terminal text</strong><small>Applies immediately to open files and sessions.</small></span><select aria-label="Editor and terminal text size" value={preferences.fontSize} onChange={(e) => setPreferences({ fontSize: Number(e.target.value) })}>{[11, 12, 13, 14, 15, 16, 18, 20].map((size) => <option key={size} value={size}>{size} px</option>)}</select></label>
         <Toggle label="Colored account indicators" description="Use account colors in tabs and sidebar chips. Off keeps the interface neutral." checked={preferences.accountColors} onChange={() => setPreferences({ accountColors: !preferences.accountColors })} />
         <Toggle label="Reduce interface motion" description="Keep Desk’s controls still. System accessibility preferences are also respected." checked={preferences.reduceMotion} onChange={() => setPreferences({ reduceMotion: !preferences.reduceMotion })} />
         <button className="text-button" onClick={() => setPreferences({ theme: DEFAULT_PREFERENCES.theme, density: DEFAULT_PREFERENCES.density, fontSize: DEFAULT_PREFERENCES.fontSize, accountColors: DEFAULT_PREFERENCES.accountColors, reduceMotion: DEFAULT_PREFERENCES.reduceMotion })}>Reset appearance to defaults</button>
       </>}
       {section === "terminal" && <TerminalSettings />}
+      {section === "editor" && <EditorSettings />}
       {section === "ssh" && <SshSettings />}
       {section === "workspace" && <div className="settings-card">
         <Toggle label="Status bar" description="Show repository and account information along the bottom." checked={preferences.showStatusBar} onChange={() => setPreferences({ showStatusBar: !preferences.showStatusBar })} />
@@ -102,7 +106,7 @@ function TerminalSettings() {
     <h3 className="settings-label">Color theme</h3>
     <div className="term-presets">
       {TERMINAL_PRESETS.map((p) => {
-        const t = presetTheme(p) as Record<string, string>;
+        const t = ((p.id === "desk" || p.id === "desk-neutral") ? terminalThemeForDesk(p.id === "desk-neutral") : presetTheme(p)) as Record<string, string>;
         const selected = preferences.terminalTheme === p.id;
         return <button key={p.id} className={"term-preset" + (selected ? " is-selected" : "")} aria-pressed={selected}
           onClick={() => setPreferences({ terminalTheme: p.id, terminalColors: {} })}>
@@ -113,6 +117,7 @@ function TerminalSettings() {
         </button>;
       })}
     </div>
+    <details className="term-customize"><summary>Customize individual colors{edited ? " · Edited" : ""}</summary>
     <div className="settings-label term-custom-head">
       <span>Customize colors{edited && <em>Edited</em>}</span>
       {edited && <button className="text-button" onClick={() => setPreferences({ terminalColors: {} })}><RotateCcw size={12} />Reset to theme</button>}
@@ -125,6 +130,9 @@ function TerminalSettings() {
         </label>
       ))}
     </div>
+    </details>
+    <Toggle label="Smooth scrolling" description="A short, gentle transition when browsing output. Respects Reduce motion." checked={preferences.smoothScroll} onChange={() => setPreferences({ smoothScroll: !preferences.smoothScroll })} />
+    <p className="settings-note">20,000 lines of scrollback. ⇧Page Up / Down to browse; ⇧End or Latest output to return. New output keeps your place while you read.</p>
     <div className="setting-row"><span><strong>Cursor</strong><small>Shape of the cursor in every terminal.</small></span><div className="segmented">{(["bar", "block", "underline"] as const).map((style) => <button key={style} aria-pressed={preferences.cursorStyle === style} className={preferences.cursorStyle === style ? "is-on" : ""} onClick={() => setPreferences({ cursorStyle: style })}>{style === "bar" ? "Bar" : style === "block" ? "Block" : "Underline"}</button>)}</div></div>
     <Toggle label="Blinking cursor" description="Off keeps the cursor solid." checked={preferences.cursorBlink} onChange={() => setPreferences({ cursorBlink: !preferences.cursorBlink })} />
     <p className="settings-note">Text size is under Appearance. Changes apply to open terminals right away.</p>

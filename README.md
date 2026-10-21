@@ -4,7 +4,11 @@ A macOS workspace for Claude Code and Codex. Projects on the left, terminals in 
 
 ## Make it yours
 
-Open **Settings** from the sidebar, title bar, or **⌘,**. Choose Graphite, Midnight, Forest, Paper, or match your system appearance. Themes and text sizes apply to open terminals and editors without restarting sessions. Settings also includes comfortable/compact spacing, panel visibility, account management, and a shortcut reference. Desk’s interface accent is independent of terminal colors: choose Neutral (default), Amber, or Sage. Account color indicators are optional, and Workspace settings can hide the status bar, full paths, or account emails. Reduce interface motion is available under Appearance.
+Open **Settings** from the sidebar, title bar, or **⌘,**. The original interface palettes—including Charcoal, Dim, Midnight, Forest, Graphite Classic, and warm Paper—are available alongside the new neutral collection, for 14 choices in total. Choose a theme or match your system appearance. Settings also includes comfortable/compact spacing, panel visibility, optional account colors, account management, and a shortcut reference. Reduce motion follows both Desk and system preferences. Selected projects and open history entries use a background change without a left-edge stripe.
+
+Terminal settings offers all 12 original palettes plus six new neutral choices, individual color overrides, and smooth scrolling. Text contrast is corrected to 7:1 where xterm supports it. Browse up to 20,000 lines of history without incoming output moving you to the bottom; use **Latest output** or **⇧End** to return. **⇧Page Up / Down** browses history and **⇧Home** jumps to the oldest output. Full-screen terminal applications retain their own scrolling and navigation. Existing saved terminal palettes and custom colors remain supported.
+
+**Editor** settings offers eight independent file color themes: Match Desk, VS Code Dark, GitHub Dark, Dracula, Nord, GitHub Light, Solarized Light, and Monochrome. Preview HTML, Python, Ruby, TypeScript, SQL, or Shell before choosing. Changes apply to open files while preserving edits, undo history, and scroll position. Syntax highlighting follows filenames, with lazy-loaded support for Ruby, Java, C/C++, SQL, Shell, and many more in addition to the existing HTML, JavaScript/TypeScript, Python, Rust, Go, CSS, YAML, JSON, and Markdown support.
 
 Search projects from the sidebar. Accounts start collapsed; expand the section or individual tool groups when needed. By default only the selected project shows account chips; enable **Always show project accounts** to keep every project’s chips visible. Preferences and collapsed sections are saved on this Mac.
 
@@ -70,8 +74,9 @@ npm run test:backend
 npm run dev -- --host 127.0.0.1 --port 1421
 # In another terminal (uses an installed Chrome, isolated data, mocked IPC):
 npm run test:ui
+npm run test:appearance
 ```
 
-Set `CHROME_PATH` to use a different Chrome executable, or `DESK_TEST_URL` for a different dev-server address. The UI smoke test exercises restoration, split panes, search/replace protection, Git controls, the command palette, and quit-time persistence. Rust tests exercise real Git repositories and filesystem replacement conflicts in temporary directories.
+Set `CHROME_PATH` to use a different Chrome executable, or `DESK_TEST_URL` for a different dev-server address. The UI smoke test exercises restoration, split panes, search/replace protection, Git controls, the command palette, and quit-time persistence. Appearance checks cover theme contrast, system theme changes, live terminal palettes, scrollback, and alternate-screen navigation. Rust tests exercise real Git repositories and filesystem replacement conflicts in temporary directories.
 
 Release bundles are copied to `releases/` before build-cache cleanup. Run `npm run tauri build` to produce a new `.app` and `.dmg`; building does not install Desk.
