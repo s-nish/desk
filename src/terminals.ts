@@ -70,6 +70,11 @@ function reduceMotion() {
 const entries = new Map<string, Entry>();
 const byPty = new Map<number, string>();
 
+/** Hidden terminals get their output in larger, less frequent batches from the backend. */
+function syncBackground(entry: Entry) {
+  if (entry.ptyId !== null) void ipc.ptySetBackground(entry.ptyId, !entry.visible).catch(() => {});
+}
+
 function setBusy(entry: Entry, busy: boolean) {
   if (entry.busy === busy) return;
   entry.busy = busy;
@@ -241,6 +246,7 @@ async function start(entry: Entry) {
     });
     entry.ptyId = id;
     byPty.set(id, entry.host.dataset.terminal!);
+    if (!entry.visible) syncBackground(entry);
     entry.size = { cols, rows };
     entry.lastResize = performance.now();
     entry.hooks.onStatus?.("running", null);
@@ -283,7 +289,10 @@ export function unmountTerminal(key: string) {
 export function setTerminalVisible(key: string, visible: boolean, focus = true) {
   const entry = entries.get(key);
   if (!entry) return;
-  entry.visible = visible;
+  if (entry.visible !== visible) {
+    entry.visible = visible;
+    syncBackground(entry);
+  }
   if (visible) {
     requestAnimationFrame(() => {
       if (!entry.opened && entry.host.parentElement) mountTerminal(key, entry.hooks, entry.host.parentElement);

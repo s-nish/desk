@@ -2011,3 +2011,78 @@ body.is-resizing-rows, body.is-resizing-rows * { cursor: row-resize !important; 
 .worktree-row strong { font: 500 12px var(--font-mono); color: var(--text); }
 .worktree-row small { font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .modal-foot .btn.is-primary { display: inline-flex; align-items: center; gap: 7px; }
+
+/* Usage limits */
+
+.status-account-group { display: inline-flex; align-items: center; height: 100%; }
+.status-usage {
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 7px;
+  margin-left: -2px;
+  border-radius: var(--radius-s);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.status-usage:hover, .status-usage.is-open { background: var(--bg-hover); color: var(--text-2); }
+.usage-meter {
+  width: 28px;
+  height: 4px;
+  flex: none;
+  border-radius: 2px;
+  background: var(--line-strong);
+  overflow: hidden;
+}
+.usage-meter.is-wide { width: 100%; height: 5px; }
+.usage-meter > span { display: block; height: 100%; border-radius: inherit; background: var(--muted); }
+.usage-meter.is-high > span, .usage-meter.is-full > span { background: var(--text); }
+.usage-percent.is-high, .usage-percent.is-full, .usage-window-used.is-high, .usage-window-used.is-full { color: var(--text); font-weight: 600; }
+
+.usage-popover {
+  position: fixed;
+  bottom: calc(var(--status-h) + 6px);
+  z-index: 100;
+  width: 340px;
+  max-height: min(560px, calc(100vh - 120px));
+  overflow: auto;
+  padding: 14px 14px 12px;
+  border-radius: var(--radius-m);
+  background: var(--bg-overlay);
+  box-shadow: 0 0 0 1px var(--line-strong), 0 16px 40px #000000b3;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.usage-popover h2 { font-size: 13px; font-weight: 600; color: var(--text); margin: 0 0 10px; }
+.usage-tool + .usage-tool { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.usage-tool h3 { font-size: 11.5px; font-weight: 500; color: var(--muted); margin: 0 0 6px; }
+.usage-account { padding: 8px 10px; margin: 0 -10px; border-radius: var(--radius-s); }
+.usage-account.is-focused { background: var(--bg-raised); }
+.usage-account header { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; }
+.usage-account header strong { font-weight: 600; color: var(--text); }
+.usage-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+.usage-plan { color: var(--muted); text-transform: capitalize; }
+.usage-when { margin-left: auto; color: var(--muted-2); font-size: 11px; }
+.usage-window {
+  display: grid;
+  grid-template-columns: 56px 1fr auto;
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 3px;
+  font-variant-numeric: tabular-nums;
+}
+.usage-window + .usage-window { margin-top: 9px; }
+.usage-window-name { color: var(--muted); }
+.usage-window-used { text-align: right; color: var(--text-2); }
+.usage-window-reset { grid-column: 2 / -1; color: var(--muted-2); font-size: 11px; }
+.usage-window-reset:empty { display: none; }
+.usage-empty { margin: 0; color: var(--muted); line-height: 1.45; }
+.usage-note { margin: 12px 0 0; color: var(--muted-2); font-size: 11px; line-height: 1.45; }
+
+/* Panel toggles: the icon shows whether the panel is open, no button fill. */
+.titlebar { border-bottom: 0; box-shadow: inset 0 -1px 0 var(--line); padding-left: 88px; }
+.icon-btn.panel-toggle.is-on { background: none; color: var(--text-2); }
+.icon-btn.panel-toggle:hover { background: var(--bg-hover); }
+.usage-dot { background: var(--acct); }
+:root[data-account-colors="off"] .usage-dot { background: var(--muted); }

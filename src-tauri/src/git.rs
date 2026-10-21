@@ -10,6 +10,9 @@ fn run(root: &str, args: &[&str]) -> Result<String, String> {
         .args(["--literal-pathspecs", "-C", root])
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
+        // Status checks don't rewrite .git/index, which the file watcher would
+        // report as a change and refresh again.
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .output()
         .map_err(|e| format!("Couldn't run Git: {e}"))?;
     if !output.status.success() {

@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -15,6 +15,9 @@ use serde::Deserialize;
 /// Minimum gap between two output flushes. Keeps full-screen TUIs from
 /// flooding the IPC bridge while leaving keystroke echo instant when idle.
 const FLUSH_INTERVAL: Duration = Duration::from_millis(8);
+/// Gap for a terminal nobody can see. Its output still arrives in full, in fewer,
+/// larger pieces, so busy agents in other tabs cost far less to keep up with.
+const BACKGROUND_FLUSH_INTERVAL: Duration = Duration::from_millis(120);
 const MAX_BATCH: usize = 512 * 1024;
 
 /// Inherited variables with these prefixes are dropped. If Desk was launched from
@@ -58,6 +61,7 @@ struct Session {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     killer: Box<dyn ChildKiller + Send + Sync>,
+    background: Arc<AtomicBool>,
 }
 
 #[derive(Default)]
@@ -178,6 +182,8 @@ impl PtyManager {
         let mut reader = pty.master.try_clone_reader().map_err(|e| e.to_string())?;
         let writer = pty.master.take_writer().map_err(|e| e.to_string())?;
         let killer = child.clone_killer();
+        let background = Arc::new(AtomicBool::new(false));
+        let flush_background = Arc::clone(&background);
 
         let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
         self.sessions.lock().unwrap().insert(
@@ -187,6 +193,7 @@ impl PtyManager {
                 master: pty.master,
                 writer,
                 killer,
+                background,
             },
         );
 
@@ -220,7 +227,12 @@ impl PtyManager {
                         batch.extend_from_slice(&more);
                     }
                     // Busy stream: hold the batch until the interval elapses.
-                    let due = last_flush + FLUSH_INTERVAL;
+                    let interval = if flush_background.load(Ordering::Relaxed) {
+                        BACKGROUND_FLUSH_INTERVAL
+                    } else {
+                        FLUSH_INTERVAL
+                    };
+                    let due = last_flush + interval;
                     while batch.len() < MAX_BATCH {
                         let now = Instant::now();
                         if now >= due {
@@ -285,6 +297,13 @@ impl PtyManager {
                 pixel_height: 0,
             })
             .map_err(|e| e.to_string())
+    }
+
+    /// Hidden terminals get their output in larger, less frequent batches.
+    pub fn set_background(&self, id: u32, background: bool) {
+        if let Some(session) = self.sessions.lock().unwrap().get(&id) {
+            session.background.store(background, Ordering::Relaxed);
+        }
     }
 
     pub fn kill(&self, id: u32) {

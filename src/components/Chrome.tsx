@@ -1,14 +1,27 @@
 import { useEffect, useState } from "react";
-import { Bell, Command, GitBranch, PanelLeft, PanelRight, Settings2 } from "lucide-react";
+import { Bell, Command, GitBranch, Settings2 } from "lucide-react";
 import { homeDir } from "@tauri-apps/api/path";
 import { useShallow } from "zustand/react/shallow";
 import { TOOL_LABEL, projectAccount, shortPath, tabAccount, useDesk, focusedTabId, waitingTabs } from "../store";
 import type { Account, Project, Tool } from "../types";
 import { accountChoices } from "./Sidebar";
 import { openMenu } from "./Menu";
+import { UsageChip } from "./Usage";
 
 let home: string | null = null;
 void homeDir().then((h) => (home = h.replace(/\/$/, "")));
+
+/** A window with its side panel drawn filled while the panel is open. */
+function PanelIcon({ side, open }: { side: "left" | "right"; open: boolean }) {
+  const x = side === "left" ? 6.5 : 9.5;
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2.25" stroke="currentColor" strokeWidth="1.5" />
+      {open && <path d={side === "left" ? "M3.5 4.5h2.25v7H3.5z" : "M10.25 4.5h2.25v7h-2.25z"} fill="currentColor" opacity=".55" />}
+      <path d={`M${x} 3v10`} stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  );
+}
 
 export function TitleBar() {
   // Names the project of the tab on screen, matching the status bar.
@@ -23,12 +36,12 @@ export function TitleBar() {
     <header className="titlebar" data-tauri-drag-region>
       <div className="titlebar-left" data-tauri-drag-region>
         <button
-          className={"icon-btn" + (layout.sidebarOpen ? " is-on" : "")}
+          className={"icon-btn panel-toggle" + (layout.sidebarOpen ? " is-on" : "")}
           aria-label="Toggle projects sidebar"
           title="Projects (⌘B)"
           onClick={() => setLayout({ sidebarOpen: !layout.sidebarOpen })}
         >
-          <PanelLeft size={15} />
+          <PanelIcon side="left" open={layout.sidebarOpen} />
         </button>
       </div>
       <div className="titlebar-center" data-tauri-drag-region>
@@ -52,12 +65,12 @@ export function TitleBar() {
         <button className="icon-btn" aria-label="Open command palette" title="Command palette (⌘⇧P)" onClick={() => useDesk.getState().setCommandOpen(true)}><Command size={15} /></button>
         <button className="icon-btn" aria-label="Open settings" title="Settings (⌘,)" onClick={() => useDesk.getState().setModal({ kind: "settings" })}><Settings2 size={15} /></button>
         <button
-          className={"icon-btn" + (layout.filesOpen ? " is-on" : "")}
+          className={"icon-btn panel-toggle" + (layout.filesOpen ? " is-on" : "")}
           aria-label="Toggle files panel"
           title="Files (⌘⇧B)"
           onClick={() => setLayout({ filesOpen: !layout.filesOpen })}
         >
-          <PanelRight size={15} />
+          <PanelIcon side="right" open={layout.filesOpen} />
         </button>
       </div>
     </header>
@@ -91,6 +104,7 @@ function AccountSegment({ kind, account, project }: { kind: Tool; account: Accou
   const identity = useDesk((s) => s.identities[account.id]);
   const showEmails = useDesk((s) => s.preferences.showAccountEmails);
   return (
+    <span className="status-account-group">
     <button
       className="status-account"
       style={{ "--acct": account.color } as React.CSSProperties}
@@ -102,6 +116,8 @@ function AccountSegment({ kind, account, project }: { kind: Tool; account: Accou
       {showEmails && identity?.email && <span className="status-email">{identity.email}</span>}
       {identity && !identity.signedIn && <span className="status-email">not signed in</span>}
     </button>
+    {identity?.signedIn !== false && <UsageChip account={account} />}
+    </span>
   );
 }
 

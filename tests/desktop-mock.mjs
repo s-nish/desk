@@ -16,6 +16,15 @@ export function mockDesktop() {
       if (cmd === 'state_save') { localStorage.setItem('test-state', JSON.stringify(args.state)); return; }
       if (cmd === 'plugin:dialog|open') return ['/demo/studio'];
       if (cmd === 'accounts_detect' || cmd === 'account_usage') return [];
+      if (cmd === 'usage_limits') {
+        const soon = Date.now() + 72 * 60000, week = Date.now() + 3 * 86400000;
+        return JSON.parse(localStorage.getItem('test-limits') || 'null') ?? [
+          { tool: 'claude', dir: null, session: { used: 42, resetsAt: soon, minutes: 300 }, weekly: { used: 16, resetsAt: week, minutes: 10080 }, plan: null, updated: Date.now() - 120000 },
+          { tool: 'codex', dir: null, session: { used: 91, resetsAt: soon, minutes: 300 }, weekly: { used: 23, resetsAt: week, minutes: 10080 }, plan: 'plus', updated: Date.now() - 600000 },
+        ];
+      }
+      if (cmd === 'claude_limits_hook') return { settings: '/demo/Library/Application Support/Desk/limits/claude.settings.json', env: { DESK_LIMITS_FILE: '/demo/limits.json' } };
+      if (cmd === 'pty_set_background') return;
       if (cmd === 'fs_list_dir') return [{ name: 'a.ts', path: '/demo/studio/a.ts', isDir: false, ignored: false }, { name: 'b.ts', path: '/demo/studio/b.ts', isDir: false, ignored: false }];
       if (cmd === 'fs_list_files') return ['a.ts', 'b.ts'];
       if (cmd === 'plugin:path|resolve_directory') return '/demo';

@@ -68,6 +68,7 @@ export async function terminalSpec(tabId: string): Promise<SessionSpec> {
   const overrides = { claude: resolve("claude"), codex: resolve("codex") };
   s.patchTab(tabId, { runAs: { claude: overrides.claude.id, codex: overrides.codex.id } });
   const env = sessionEnv(s.accounts, project, overrides);
+  const claude = tab.tool === "claude" && !tab.sshId ? await claudeCommand(overrides.claude.dir, tab.cwd, env.env) : "claude";
   if (tab.sshId) {
     const connection = s.connections.find((c) => c.id === tab.sshId);
     // The session ends with the command, so Enter reconnects (and fills the password again).
@@ -77,11 +78,11 @@ export async function terminalSpec(tabId: string): Promise<SessionSpec> {
   if (tab.tool === "claude" && tab.sessionId && SAFE_ID.test(tab.sessionId)) {
     // Resume the tab's conversation once Claude Code has saved it; until then, start it under that id.
     const state = await ipc.claudeSessionState(overrides.claude.dir, tab.cwd, tab.sessionId).catch(() => "missing" as const);
-    if (state === "resumable") return { cwd: tab.cwd, command: `claude --resume ${tab.sessionId}`, ...env };
+    if (state === "resumable") return { cwd: tab.cwd, command: `${claude} --resume ${tab.sessionId}`, ...env };
     // A transcript with nothing typed into it can't be resumed or reused: start over under a new id.
     const id = state === "empty" ? uid() : tab.sessionId;
     if (id !== tab.sessionId) s.patchTab(tabId, { sessionId: id });
-    return { cwd: tab.cwd, command: `claude --session-id ${id}`, ...env };
+    return { cwd: tab.cwd, command: `${claude} --session-id ${id}`, ...env };
   }
   if (tab.tool === "codex" && tab.resume && SAFE_ID.test(tab.resume)) {
     return { cwd: tab.cwd, command: `codex resume ${tab.resume}`, ...env };
@@ -91,7 +92,41 @@ export async function terminalSpec(tabId: string): Promise<SessionSpec> {
     s.patchTab(tabId, { command: undefined });
     return { cwd: tab.cwd, command: tab.command, ...env };
   }
-  return { cwd: tab.cwd, command: COMMAND[tab.tool], ...env };
+  return { cwd: tab.cwd, command: tab.tool === "claude" ? claude : COMMAND[tab.tool], ...env };
+}
+
+/**
+ * `claude`, plus Desk's status line wrapper so the tab reports its usage limits.
+ * Adds the wrapper's variables to `env`. Falls back to plain `claude` on any error.
+ */
+async function claudeCommand(dir: string | null, cwd: string, env: Record<string, string>) {
+  if (!desk().preferences.usageLimits) return "claude";
+  try {
+    const hook = await ipc.claudeLimitsHook(dir, cwd);
+    Object.assign(env, hook.env);
+    return `claude --settings '${hook.settings.replace(/'/g, "'\\''")}'`;
+  } catch (e) {
+    console.warn("usage limits unavailable", e);
+    return "claude";
+  }
+}
+
+// Usage limits
+
+let readingLimits = false;
+
+/** Re-reads every account's usage limits. Cheap: a few small files per account. */
+export async function refreshLimits() {
+  if (readingLimits) return;
+  readingLimits = true;
+  try {
+    const { claude, codex } = accountDirs();
+    desk().setLimits(await ipc.usageLimits(claude, codex));
+  } catch (e) {
+    console.warn("usage limits", e);
+  } finally {
+    readingLimits = false;
+  }
 }
 
 /** Restarts a restored Claude Code tab as a new conversation instead of resuming. */
@@ -572,7 +607,45 @@ export async function watchProject(projectId: string) {
   desk().setBranch(projectId, await ipc.gitBranch(project.path).catch(() => null));
 }
 
+// Git refreshes follow the file watcher instead of a timer.
+
+const gitListeners = new Map<string, Set<() => void>>();
+const gitTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** Calls `fn` whenever files in `root` change, at most once a second. */
+export function onGitChange(root: string, fn: () => void) {
+  const set = gitListeners.get(root) ?? new Set();
+  set.add(fn);
+  gitListeners.set(root, set);
+  return () => { set.delete(fn); };
+}
+
+/** Recounts changed files in `root` and tells any open Git panel to refresh. */
+export function gitChanged(root: string) {
+  // One pending refresh per folder, so a build writing files nonstop can't keep postponing it.
+  if (gitTimers.has(root)) return;
+  gitTimers.set(root, setTimeout(() => {
+    gitTimers.delete(root);
+    const listeners = gitListeners.get(root);
+    // An open Git panel reads the full status and updates the count itself.
+    if (listeners?.size) listeners.forEach((fn) => fn());
+    else void ipc.gitChangeCount(root).then((n) => desk().setChangeCount(root, n)).catch(() => {});
+  }, 1000));
+}
+
+/** Worktree badges and the active project, read once (at start and when Desk comes back into focus). */
+export function refreshChangeCounts() {
+  const s = desk();
+  for (const p of s.projects.filter((p) => p.worktreeOf || p.id === s.activeProjectId)) gitChanged(p.path);
+}
+
 export function handleFsChange(root: string, paths: string[]) {
+  gitChanged(root);
+  // A commit in a worktree moves a branch in the main repository's .git, which is shared.
+  if (paths.some((p) => p.includes("/.git/"))) {
+    const main = desk().projects.find((p) => p.path === root);
+    for (const w of desk().projects.filter((p) => main && p.worktreeOf === main.id)) gitChanged(w.path);
+  }
   useTree.getState().refresh(paths);
   void handleDiskChanges(paths);
   if (paths.some((p) => p.endsWith("/.git/HEAD"))) {

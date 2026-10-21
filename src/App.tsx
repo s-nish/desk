@@ -25,6 +25,8 @@ import {
   flipSplit,
   jumpToWaiting,
   pruneWorktrees,
+  refreshChangeCounts,
+  refreshLimits,
 } from "./actions";
 import { isLightTheme, resolvedTheme } from "./appearance";
 import { updateEditorAppearance } from "./editors";
@@ -49,7 +51,8 @@ async function boot() {
   await restoreWorkspace();
   await refreshIdentities();
   void syncConnectionPasswords();
-  void pruneWorktrees();
+  void pruneWorktrees().then(refreshChangeCounts);
+  void refreshLimits();
   for (const p of useDesk.getState().projects) {
     void watchProject(p.id);
     void detectProjectAccount(p.id);
@@ -150,21 +153,6 @@ function clearVisibleAttention() {
   }
 }
 
-/** Worktrees show how many files changed, so finished work stands out in the sidebar. */
-let counting = false;
-async function refreshChangeCounts() {
-  if (document.hidden || counting) return;
-  counting = true;
-  try {
-    const s = useDesk.getState();
-    for (const p of s.projects.filter((p) => p.worktreeOf || p.id === s.activeProjectId)) {
-      const count = await ipc.gitChangeCount(p.path).catch(() => null);
-      if (count !== null) useDesk.getState().setChangeCount(p.path, count);
-    }
-  } finally {
-    counting = false;
-  }
-}
 
 /** Folders dropped anywhere become projects; files dropped on a terminal are pasted as paths. */
 async function onDrop(paths: string[], x: number, y: number) {
@@ -219,7 +207,8 @@ export function App() {
     };
     window.addEventListener("keydown", onKeyDown, true);
     const unwatch = watchAttention();
-    const counts = setInterval(() => void refreshChangeCounts(), 8000);
+    // Limits move slowly and are only re-read while Desk is on screen.
+    const limits = setInterval(() => { if (!document.hidden) void refreshLimits(); }, 60_000);
     const unlisten = [
       listen("desk-quit", () => void quit()),
       getCurrentWindow().onCloseRequested((e) => { e.preventDefault(); void quit(); }),
@@ -228,6 +217,9 @@ export function App() {
         if (!focused) return;
         void refreshIdentities();
         clearVisibleAttention();
+        // Catches anything the file watcher can't see, like staging in a worktree from outside.
+        refreshChangeCounts();
+        void refreshLimits();
       }),
       getCurrentWebview().onDragDropEvent(({ payload }) => {
         if (payload.type !== "drop") return;
@@ -242,7 +234,7 @@ export function App() {
     return () => {
       unsubscribe();
       unwatch();
-      clearInterval(counts);
+      clearInterval(limits);
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("contextmenu", noContextMenu);
       unlisten.forEach((p) => void p.then((f) => f()));

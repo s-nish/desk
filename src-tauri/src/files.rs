@@ -183,11 +183,21 @@ pub fn git_branch(root: &str) -> Option<String> {
     })
 }
 
+/// Files Git rewrites when the branch, the staged files or the commits change.
+/// They are let through so the Git panel refreshes without polling.
+fn is_git_state(rel: &Path) -> bool {
+    let Ok(inner) = rel.strip_prefix(".git") else { return false };
+    if inner.extension().is_some_and(|e| e == "lock") {
+        return false;
+    }
+    [Path::new("HEAD"), Path::new("index"), Path::new("packed-refs")].contains(&inner) || inner.starts_with("refs")
+}
+
 fn is_noisy(path: &Path, root: &Path) -> bool {
     let Ok(rel) = path.strip_prefix(root) else {
         return true;
     };
-    if rel == Path::new(".git/HEAD") {
+    if is_git_state(rel) {
         return false;
     }
     rel.components()
@@ -272,6 +282,17 @@ impl Watchers {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lets_git_state_through_the_watcher() {
+        let root = Path::new("/r");
+        for path in [".git/HEAD", ".git/index", ".git/packed-refs", ".git/refs/heads/main", "src/a.ts"] {
+            assert!(!is_noisy(&root.join(path), root), "{path}");
+        }
+        for path in [".git/index.lock", ".git/objects/ab/cd", ".git/refs/heads/main.lock", "node_modules/x/y.js"] {
+            assert!(is_noisy(&root.join(path), root), "{path}");
+        }
+    }
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("desk-files-{name}-{}", std::process::id()));

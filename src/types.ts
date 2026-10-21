@@ -135,6 +135,9 @@ export interface MenuItem {
 export interface GitChange { path: string; originalPath: string | null; index: string; worktree: string; stagedLines: [number, number] | null; unstagedLines: [number, number] | null }
 export interface GitStatus { root: string; branch: string; changes: GitChange[]; upstream: string | null; ahead: number; behind: number; lastCommit: string | null }
 export interface Worktree { path: string; branch: string | null; head: string; main: boolean; locked: boolean; prunable: boolean }
+/** Share of an allowance used, 0 to 100, and when it starts over (ms since the epoch). */
+export interface UsageWindow { used: number; resetsAt: number | null; minutes: number }
+export interface UsageLimits { tool: Tool; dir: string | null; session: UsageWindow | null; weekly: UsageWindow | null; plan: string | null; updated: number }
 export interface AgentSession { tool: Tool; dir: string | null; id: string; title: string; prompt: string | null; cwd: string; updated: number }
 export interface SearchFile { path: string; original: string; matches: { line: number; text: string }[]; count: number }
 export interface SearchResults { files: SearchFile[]; truncated: boolean; skipped: number }

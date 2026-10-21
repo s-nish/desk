@@ -1,5 +1,5 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
-import type { AgentSession, DetectedAccount, DirEntry, GitStatus, SearchResults, Worktree } from "./types";
+import type { AgentSession, DetectedAccount, DirEntry, GitStatus, SearchResults, Worktree, UsageLimits } from "./types";
 
 export interface SpawnOpts {
   cwd: string;
@@ -23,6 +23,7 @@ export const ipc = {
   ptyWriteBytes: (id: number, data: number[]) => invoke<void>("pty_write_bytes", { id, data }),
   ptyResize: (id: number, cols: number, rows: number) => invoke<void>("pty_resize", { id, cols, rows }),
   ptyKill: (id: number) => invoke<void>("pty_kill", { id }),
+  ptySetBackground: (id: number, background: boolean) => invoke<void>("pty_set_background", { id, background }),
 
   accountsDetect: () => invoke<DetectedAccount[]>("accounts_detect"),
   accountInspect: (kind: string, dir: string | null) => invoke<DetectedAccount>("account_inspect", { kind, dir }),
@@ -62,6 +63,8 @@ export const ipc = {
   gitWorktreeRemove: (root: string, path: string, force: boolean) => invoke<void>("git_worktree_remove", { root, path, force }),
   gitBranchDelete: (root: string, branch: string) => invoke<void>("git_branch_delete", { root, branch }),
   sessionsList: (project: string, claude: (string | null)[], codex: (string | null)[]) => invoke<AgentSession[]>("sessions_list", { project, claude, codex }),
+  usageLimits: (claude: (string | null)[], codex: (string | null)[]) => invoke<UsageLimits[]>("usage_limits", { claude, codex }),
+  claudeLimitsHook: (dir: string | null, cwd: string) => invoke<{ settings: string; env: Record<string, string> }>("claude_limits_hook", { dir, cwd }),
   claudeSessionState: (dir: string | null, cwd: string, id: string) => invoke<"resumable" | "empty" | "missing">("claude_session_state", { dir, cwd, id }),
   attention: (count: number, bounce: boolean) => invoke<void>("attention", { count, bounce }),
   search: (root: string, query: string, caseSensitive: boolean) => invoke<SearchResults>("project_search", { root, query, caseSensitive }),

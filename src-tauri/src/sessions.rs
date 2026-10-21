@@ -180,7 +180,8 @@ fn claude_sessions(project: &str, dir: &Option<String>) -> Vec<Session> {
 }
 
 /// Newest rollout files first. Folders are `sessions/YYYY/MM/DD`, so names sort by date.
-fn codex_files(root: &Path) -> Vec<PathBuf> {
+/// Codex session logs, newest first by the date in their path.
+pub(crate) fn codex_files(root: &Path) -> Vec<PathBuf> {
     fn sorted(dir: &Path) -> Vec<PathBuf> {
         let mut entries: Vec<PathBuf> = fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.path()).collect();
         entries.sort();

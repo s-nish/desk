@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Eye, FileText, GitBranch, GitCommitHorizontal, GitMerge, History, Minus, Plus, RefreshCw, Search, Undo2 } from "lucide-react";
 import { useDesk } from "../store";
 import { errorText, ipc } from "../ipc";
-import { mergeWorktree, openFile, rootProject } from "../actions";
+import { gitChanged, mergeWorktree, onGitChange, openFile, rootProject } from "../actions";
 import { handleDiskChanges } from "../editors";
 import { FilesPanel } from "./FilesPanel";
 import { SessionsPanel } from "./Sessions";
@@ -16,6 +16,8 @@ export function ProjectTools() {
   const project = useDesk((s) => s.projects.find((p) => p.id === s.activeProjectId));
   const panel = useDesk((s) => s.layout.panel);
   const changes = useChangeCount(project?.path);
+  // The Git tab's count for a project just switched to.
+  useEffect(() => { if (project) gitChanged(project.path); }, [project?.path]);
   const tabs = [["files", FileText, "Files"], ["search", Search, "Search"], ["git", GitBranch, "Git"], ["sessions", History, "History"]] as const;
   return <aside className="project-tools">
     <nav className="tools-nav" aria-label="Project tools">{tabs.map(([id, Icon, label]) => <button key={id} className={panel === id ? "is-active" : ""} aria-pressed={panel === id} title={id === "sessions" ? "Past Claude Code and Codex conversations" : label} onClick={() => useDesk.getState().setLayout({ panel: id })}><span className="tools-icon"><Icon size={14} />{id === "git" && changes > 0 && <span className="tools-count">{changes > 99 ? "99+" : changes}</span>}</span><span>{label}</span></button>)}</nav>
@@ -100,8 +102,11 @@ function GitPanel({ project }: { project: Project }) {
   };
   useEffect(() => {
     mounted.current = true; void refresh();
-    const timer = setInterval(() => { if (!document.hidden) void refresh(); }, 4000);
-    return () => { mounted.current = false; clearInterval(timer); generation.current++; };
+    // Refreshes when files or Git state change on disk, and when Desk comes back into focus.
+    const off = onGitChange(project.path, () => void refresh());
+    const onFocus = () => void refresh();
+    window.addEventListener("focus", onFocus);
+    return () => { mounted.current = false; off(); window.removeEventListener("focus", onFocus); generation.current++; };
   }, [project.path]);
   const run = async (task: () => Promise<unknown>) => {
     if (!status || busy) return;

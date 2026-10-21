@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowLeftRight, Columns2, Play, ArrowUpRight, Layers3, Rows2, Search, Server, Settings2, ChevronDown, FileText, FolderPlus, History, Plus, RotateCcw, SquareTerminal, TriangleAlert, X } from "lucide-react";
 import { TOOL_LABEL, projectAccount, tabAccount, useDesk, focusedTabId, type DropZone } from "../store";
-import { addProjectsFromDialog, closeOtherTabs, closeTab, connectionLabel, flipSplit, markAttention, openConnection, openInSplit, openTerminal, saveTab, startFresh, swapPanes, terminalSpec, splitWorkspace } from "../actions";
+import { addProjectsFromDialog, closeOtherTabs, closeTab, connectionLabel, flipSplit, markAttention, openConnection, openInSplit, openTerminal, refreshLimits, saveTab, startFresh, swapPanes, terminalSpec, splitWorkspace } from "../actions";
 import { isTerminalVisible, mountTerminal, setTerminalVisible, unmountTerminal } from "../terminals";
 import { RecentSessions } from "./Sessions";
 import { focusEditor, keepEditorVersion, mountEditor, reloadEditor } from "../editors";
@@ -309,7 +309,11 @@ function terminalHooks(tabId: string) {
       const t = useDesk.getState().tabs.find((x) => x.id === tabId);
       return t?.type === "terminal" && t.tool !== "shell";
     },
-    onBusy: (busy: boolean) => patch(busy ? { busy, attention: null } : { busy }),
+    onBusy: (busy: boolean) => {
+      patch(busy ? { busy, attention: null } : { busy });
+      // A finished turn is when the agent last reported its usage.
+      if (!busy) setTimeout(() => void refreshLimits(), 1500);
+    },
     onAttention: (reason: string) => markAttention(tabId, reason, isTerminalVisible(tabId)),
     onActivity: () => {
       const t = useDesk.getState().tabs.find((x) => x.id === tabId);

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { EDITOR_THEMES, type EditorThemeId } from "./editorThemes";
 import { THEMES, type ThemeId } from "./themeCatalog";
-import type { Account, DetectedAccount, FileTab, Identity, Layout, Project, SshConnection, Tab, TabTool, TerminalTab, Tool } from "./types";
+import type { Account, DetectedAccount, FileTab, Identity, Layout, Project, SshConnection, Tab, TabTool, TerminalTab, Tool, UsageLimits } from "./types";
 
 export const ACCOUNT_COLORS = ["#2dd4bf", "#f59e0b", "#60a5fa", "#fb7185", "#4ade80", "#e5e5e5"];
 
@@ -42,13 +42,15 @@ export interface Preferences {
   smoothScroll: boolean;
   /** Mark Claude Code and Codex tabs that finished or need input while out of sight. */
   agentAlerts: boolean;
+  /** Claude Code tabs report their usage limits through a status line wrapper. */
+  usageLimits: boolean;
   /** Show how many agents are waiting on the Dock icon. */
   alertBadge: boolean;
   /** Bounce the Dock icon once when an agent starts waiting and Desk is in the background. */
   alertBounce: boolean;
 }
 
-export const DEFAULT_PREFERENCES: Preferences = { theme: "black", density: "comfortable", fontSize: 14, showProjectAccounts: false, accent: "neutral", showStatusBar: true, showPaths: false, showAccountEmails: false, accountColors: false, reduceMotion: false, terminalTheme: "desk", editorTheme: "desk", terminalColors: {}, cursorStyle: "bar", cursorBlink: true, smoothScroll: true, agentAlerts: true, alertBadge: true, alertBounce: true };
+export const DEFAULT_PREFERENCES: Preferences = { theme: "black", density: "comfortable", fontSize: 14, showProjectAccounts: false, accent: "neutral", showStatusBar: true, showPaths: false, showAccountEmails: false, accountColors: false, reduceMotion: false, terminalTheme: "desk", editorTheme: "desk", terminalColors: {}, cursorStyle: "bar", cursorBlink: true, smoothScroll: true, agentAlerts: true, usageLimits: true, alertBadge: true, alertBounce: true };
 
 export type Modal =
   | { kind: "settings"; section?: string }
@@ -114,6 +116,8 @@ interface DeskState extends Persisted {
   dropZone: DropZone | null;
   /** Files with Git changes, by project folder. Fills in once its Changes panel has looked. */
   changeCounts: Record<string, number>;
+  /** Usage limits per account, keyed by `limitKey`. */
+  limits: Record<string, UsageLimits>;
 
   init(saved: Partial<Persisted> | null, detected: DetectedAccount[]): void;
   mergeDetected(detected: DetectedAccount[]): void;
@@ -136,6 +140,7 @@ interface DeskState extends Persisted {
   selectTab(tabId: string): void;
   setBranch(projectId: string, branch: string | null): void;
   setChangeCount(path: string, count: number): void;
+  setLimits(list: UsageLimits[]): void;
   setLayout(patch: Partial<Layout>): void;
   setPreferences(patch: Partial<Preferences>): void;
   setModal(modal: Modal | null): void;
@@ -220,6 +225,7 @@ export const useDesk = create<DeskState>((set, get) => ({
   toasts: [],
   dropZone: null,
   changeCounts: {},
+  limits: {},
 
   init(saved, detected) {
     const { accounts, identities } = mergeAccounts(saved?.accounts ?? [], detected);
@@ -422,6 +428,10 @@ export const useDesk = create<DeskState>((set, get) => ({
     set((s) => (s.branches[projectId] === branch ? {} : { branches: { ...s.branches, [projectId]: branch } }));
   },
 
+  setLimits(list) {
+    set({ limits: Object.fromEntries(list.map((l) => [limitKey(l.tool, l.dir), l])) });
+  },
+
   setChangeCount(path, count) {
     set((s) => (s.changeCounts[path] === count ? {} : { changeCounts: { ...s.changeCounts, [path]: count } }));
   },
@@ -509,6 +519,8 @@ export function persistedSlice(s: DeskState): Persisted & { version: number } {
 export function shortPath(path: string, home: string | null) {
   return home && path.startsWith(home) ? "~" + path.slice(home.length) : path;
 }
+
+export const limitKey = (tool: Tool, dir: string | null) => `${tool}:${dir ?? ""}`;
 
 /** Tabs whose agent finished or wants input, in tab order. */
 export function waitingTabs(s: Pick<DeskState, "tabs">) {

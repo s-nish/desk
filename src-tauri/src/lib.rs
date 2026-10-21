@@ -1,6 +1,7 @@
 mod accounts;
 mod files;
 mod git;
+mod limits;
 mod bridge;
 mod pty;
 mod search;
@@ -67,6 +68,11 @@ fn pty_spawn(
             let _ = app.emit("pty-exit", PtyExit { id, code });
         },
     )
+}
+
+#[tauri::command]
+fn pty_set_background(manager: State<'_, Arc<PtyManager>>, id: u32, background: bool) {
+    manager.set_background(id, background);
 }
 
 #[tauri::command]
@@ -309,6 +315,17 @@ async fn claude_session_state(dir: Option<String>, cwd: String, id: String) -> &
         .unwrap_or("missing")
 }
 
+#[tauri::command]
+async fn usage_limits(claude: Vec<Option<String>>, codex: Vec<Option<String>>) -> Vec<limits::Limits> {
+    tauri::async_runtime::spawn_blocking(move || limits::list(claude, codex))
+        .await
+        .unwrap_or_default()
+}
+#[tauri::command]
+fn claude_limits_hook(dir: Option<String>, cwd: String) -> Result<limits::ClaudeHook, String> {
+    limits::claude_hook(dir, &cwd)
+}
+
 /// Dock badge with the number of agents waiting, and one bounce for a new one.
 #[tauri::command]
 fn attention(app: AppHandle, count: u32, bounce: bool) {
@@ -456,6 +473,9 @@ pub fn run() {
             pty_write_bytes,
             pty_resize,
             pty_kill,
+            pty_set_background,
+            usage_limits,
+            claude_limits_hook,
             accounts_detect,
             account_inspect,
             account_create,

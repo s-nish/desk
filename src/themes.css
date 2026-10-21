@@ -61,7 +61,7 @@
 }
 
 /* A quiet frame, with legible labels at every level. */
-.titlebar { box-shadow: inset 0 1px 0 var(--glass-edge); }
+.titlebar { box-shadow: inset 0 1px 0 var(--glass-edge), inset 0 -1px 0 var(--line); }
 .title-project { font-size: 13px; font-weight: 600; }
 .sidebar-brand { padding: 24px 18px 22px; gap: 12px; }
 .sidebar-brand strong { font-size: 17px; letter-spacing: -.6px; }
