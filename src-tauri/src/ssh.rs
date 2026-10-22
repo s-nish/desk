@@ -7,39 +7,9 @@
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-/// Windows: ssh runs this batch file, which hands the prompt to the PowerShell
-/// helper below. Same rules as the macOS helper: the saved password answers the
-/// first password prompt of the session, anything else is asked in the terminal.
-#[cfg(windows)]
-const ASKPASS_CMD: &str = "@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%~dp0ssh-askpass.ps1\" %*\r\n";
-
-#[cfg(windows)]
-const ASKPASS_PS1: &str = r#"# Written by Desk. Answers ssh's password prompt with the connection's saved password.
-param([string]$Prompt = 'Password: ')
-$lower = $Prompt.ToLower()
-if ($lower.Contains('password') -and $env:DESK_SSH_SECRET -and (Test-Path -LiteralPath $env:DESK_SSH_SECRET)) {
-  $state = Join-Path $env:TEMP 'desk-askpass'
-  New-Item -ItemType Directory -Force -Path $state | Out-Null
-  $marker = Join-Path $state "$env:DESK_SSH_SESSION"
-  if (-not (Test-Path -LiteralPath $marker)) {
-    New-Item -ItemType File -Path $marker | Out-Null
-    $hex = (Get-Content -Raw -LiteralPath $env:DESK_SSH_SECRET).Trim()
-    $bytes = [byte[]]::new($hex.Length / 2)
-    for ($i = 0; $i -lt $bytes.Length; $i++) { $bytes[$i] = [Convert]::ToByte($hex.Substring($i * 2, 2), 16) }
-    [Console]::Error.WriteLine("$Prompt(saved password)")
-    [Console]::Out.WriteLine([Text.Encoding]::UTF8.GetString($bytes))
-    exit 0
-  }
-}
-$label = $Prompt.Trim().TrimEnd(':')
-if ($lower -match 'password|passphrase|pin|code|token|otp') {
-  $secure = Read-Host -Prompt $label -AsSecureString
-  $answer = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
-} else {
-  $answer = Read-Host -Prompt $label
-}
-[Console]::Out.WriteLine($answer)
-"#;
+/// Windows: ssh runs Desk.exe itself as the askpass helper (see `askpass_main`).
+/// A batch or script launcher would go through cmd.exe, which re-parses the
+/// prompt text (partly chosen by the server) as a command line.
 
 /// ssh runs this for every prompt while a saved connection starts. The saved
 /// password answers the first password prompt of each ssh process. Any other prompt
@@ -142,14 +112,101 @@ pub fn delete_password(id: &str) -> Result<(), String> {
 /// Writes the askpass helper (owner-only) and returns its path. Rewritten every
 /// time so an old or modified copy never lingers.
 #[cfg(windows)]
-pub fn askpass_path(dir: &Path) -> Result<PathBuf, String> {
-    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    for (name, content) in [("ssh-askpass.ps1", ASKPASS_PS1), ("ssh-askpass.cmd", ASKPASS_CMD)] {
-        let tmp = dir.join(format!(".{name}.tmp"));
-        std::fs::write(&tmp, content).map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, dir.join(name)).map_err(|e| e.to_string())?;
+pub fn askpass_path(_dir: &Path) -> Result<PathBuf, String> {
+    std::env::current_exe().map_err(|e| e.to_string())
+}
+
+/// When ssh runs Desk.exe as its askpass helper (one argument, the prompt, and
+/// the saved-connection variables set), answers and returns the exit code
+/// instead of starting the app. Same rules as the macOS helper: the saved
+/// password answers the first password prompt of the session; anything else
+/// (host keys, one-time codes, a retry) is asked in the terminal.
+#[cfg(windows)]
+pub fn askpass_main() -> Option<i32> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let session = std::env::var("DESK_SSH_SESSION").ok()?;
+    if args.len() != 1 || std::env::var_os("SSH_ASKPASS").is_none() {
+        return None;
     }
-    Ok(dir.join("ssh-askpass.cmd"))
+    let prompt = &args[0];
+    let lower = prompt.to_lowercase();
+    if lower.contains("password") {
+        if let Some(password) = saved_password_once(&session) {
+            console_write(&format!("{prompt}(saved password)\r\n"));
+            println!("{password}");
+            return Some(0);
+        }
+    }
+    let hide = ["password", "passphrase", "pin", "code", "token", "otp"].iter().any(|w| lower.contains(w));
+    match console_read(prompt, hide) {
+        Some(answer) => {
+            println!("{answer}");
+            Some(0)
+        }
+        None => Some(1),
+    }
+}
+
+/// The saved password, the first time this session asks. A marker folder per
+/// session makes it single-use, so a wrong saved password is never retried.
+#[cfg(windows)]
+fn saved_password_once(session: &str) -> Option<String> {
+    if !session.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let secret = std::env::var("DESK_SSH_SECRET").ok()?;
+    let hex = std::fs::read_to_string(&secret).ok()?;
+    let state = std::env::temp_dir().join("desk-askpass");
+    std::fs::create_dir_all(&state).ok()?;
+    std::fs::create_dir(state.join(session)).ok()?;
+    let hex = hex.trim();
+    let bytes: Option<Vec<u8>> = (0..hex.len() / 2).map(|i| u8::from_str_radix(hex.get(i * 2..i * 2 + 2)?, 16).ok()).collect();
+    String::from_utf8(bytes?).ok()
+}
+
+#[cfg(windows)]
+mod console {
+    use std::ffi::c_void;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        pub fn AttachConsole(process: u32) -> i32;
+        pub fn GetConsoleMode(handle: *mut c_void, mode: *mut u32) -> i32;
+        pub fn SetConsoleMode(handle: *mut c_void, mode: u32) -> i32;
+    }
+    pub const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+    pub const ENABLE_ECHO_INPUT: u32 = 0x0004;
+}
+
+/// Desk.exe has no console of its own; this borrows ssh's (the terminal tab's).
+#[cfg(windows)]
+fn console_write(text: &str) {
+    use std::io::Write;
+    unsafe { console::AttachConsole(console::ATTACH_PARENT_PROCESS) };
+    if let Ok(mut out) = std::fs::OpenOptions::new().write(true).open("CONOUT$") {
+        let _ = out.write_all(text.as_bytes());
+    }
+}
+
+#[cfg(windows)]
+fn console_read(prompt: &str, hide: bool) -> Option<String> {
+    use std::io::BufRead;
+    use std::os::windows::io::AsRawHandle;
+    console_write(prompt);
+    let input = std::fs::OpenOptions::new().read(true).write(true).open("CONIN$").ok()?;
+    let handle = input.as_raw_handle();
+    let mut mode = 0u32;
+    let has_mode = unsafe { console::GetConsoleMode(handle, &mut mode) } != 0;
+    if hide && has_mode {
+        unsafe { console::SetConsoleMode(handle, mode & !console::ENABLE_ECHO_INPUT) };
+    }
+    let mut line = String::new();
+    let read = std::io::BufReader::new(&input).read_line(&mut line);
+    if hide && has_mode {
+        unsafe { console::SetConsoleMode(handle, mode) };
+        console_write("\r\n");
+    }
+    read.ok().filter(|n| *n > 0)?;
+    Some(line.trim_end_matches(['\r', '\n']).to_string())
 }
 
 #[cfg(unix)]

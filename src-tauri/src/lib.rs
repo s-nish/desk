@@ -455,6 +455,12 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     Menu::with_items(app, &[&app_menu, &edit, &window])
 }
 
+/// Windows: ssh runs Desk.exe as its password helper; see `ssh::askpass_main`.
+#[cfg(windows)]
+pub fn askpass_main() -> Option<i32> {
+    ssh::askpass_main()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let ptys = Arc::new(PtyManager::default());
