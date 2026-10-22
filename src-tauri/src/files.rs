@@ -76,7 +76,7 @@ pub fn list_dir(path: &str) -> Result<Vec<Entry>, String> {
             let is_dir = fs::metadata(&path).map(|m| m.is_dir()).unwrap_or(false);
             Some(Entry {
                 ignored: !visible.contains(&path),
-                path: path.to_string_lossy().into_owned(),
+                path: crate::platform::slash(&path),
                 name,
                 is_dir,
             })
@@ -104,7 +104,7 @@ pub fn list_files(root: &str) -> Vec<String> {
             e.path()
                 .strip_prefix(root_path)
                 .ok()
-                .map(|p| p.to_string_lossy().into_owned())
+                .map(crate::platform::slash)
         })
         .take(QUICK_OPEN_LIMIT)
         .collect()
@@ -260,7 +260,7 @@ impl Watchers {
                     let paths: Vec<String> = batch
                         .into_iter()
                         .filter(|p| !is_noisy(p, &root_path))
-                        .map(|p| p.to_string_lossy().into_owned())
+                        .map(crate::platform::slash)
                         .collect();
                     if !paths.is_empty() {
                         emit(&root_for_thread, paths);

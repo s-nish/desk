@@ -1,3 +1,4 @@
+import { keys } from "../platform";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowLeftRight, Columns2, Play, ArrowUpRight, Layers3, Rows2, Search, Server, Settings2, ChevronDown, FileText, FolderPlus, History, Plus, RotateCcw, SquareTerminal, TriangleAlert, X } from "lucide-react";
 import { TOOL_LABEL, projectAccount, tabAccount, useDesk, focusedTabId, type DropZone } from "../store";
@@ -40,7 +41,7 @@ export function newTabMenu(project: Project): MenuItem[] {
       onSelect: () => openTerminal(project.id, kind),
     };
   });
-  items.push({ label: "Shell", hint: "⌘J", icon: <SquareTerminal size={14} />, onSelect: () => openTerminal(project.id, "shell") });
+  items.push({ label: "Shell", hint: keys("⌘J"), icon: <SquareTerminal size={14} />, onSelect: () => openTerminal(project.id, "shell") });
   const { connections } = useDesk.getState();
   if (connections.length) {
     items.push({ separator: true });
@@ -95,11 +96,11 @@ function TabBar({ project }: { project: Project }) {
         })}
       </div>
       <div className="tabbar-actions">
-        <button className="icon-btn" aria-label="Toggle split panes" title="Split workspace (⌘\\)" onClick={splitWorkspace}><Columns2 size={15} /></button>
+        <button className="icon-btn" aria-label="Toggle split panes" title={`Split workspace (${keys("⌘\\")})`} onClick={splitWorkspace}><Columns2 size={15} /></button>
         <button
           className="new-tab"
           aria-label={`New Claude Code tab in ${project.name}`}
-          title={`New Claude Code tab in ${project.name} (⌘T)`}
+          title={`New Claude Code tab in ${project.name} (${keys("⌘T")})`}
           onClick={() => openTerminal(project.id, "claude")}
         >
           <Plus size={14} />
@@ -203,7 +204,7 @@ function tabMenu(tab: Tab): MenuItem[] {
     { label: "Open to the right", icon: <Columns2 size={14} />, disabled: s.tabs.length < 2 || (split && shown), onSelect: () => openInSplit(tab.id, "right") },
     { label: "Open below", icon: <Rows2 size={14} />, disabled: s.tabs.length < 2 || (split && shown), onSelect: () => openInSplit(tab.id, "bottom") },
     { separator: true },
-    { label: "Close", hint: "⌘W", icon: <X size={14} />, onSelect: () => closeTab(tab.id) },
+    { label: "Close", hint: keys("⌘W"), icon: <X size={14} />, onSelect: () => closeTab(tab.id) },
     { label: "Close other tabs", disabled: s.tabs.length < 2, onSelect: () => closeOtherTabs(tab.id, "others") },
     { label: "Close tabs to the right", disabled: s.tabs[s.tabs.length - 1]?.id === tab.id, onSelect: () => closeOtherTabs(tab.id, "right") },
   ];
@@ -289,7 +290,7 @@ function PaneHead({ tab, side, focused, row }: { tab: Tab; side: "primary" | "se
     {focused && <span className="split-pane-focus">Focused</span>}
     <span className="split-pane-actions">
       <button className="icon-btn" aria-label="Swap panes" title="Swap panes" onClick={swapPanes}><ArrowLeftRight size={12} /></button>
-      <button className="icon-btn" aria-label={row ? "Stack panes" : "Place panes side by side"} title={row ? "Stack panes (⌘⌥\\)" : "Side by side (⌘⌥\\)"} onClick={flipSplit}>{row ? <Rows2 size={12} /> : <Columns2 size={12} />}</button>
+      <button className="icon-btn" aria-label={row ? "Stack panes" : "Place panes side by side"} title={`${row ? "Stack panes" : "Side by side"} (${keys("⌘⌥\\")})`} onClick={flipSplit}>{row ? <Rows2 size={12} /> : <Columns2 size={12} />}</button>
       <button className="icon-btn" aria-label="Close this pane" title="Close this pane (the tab stays open)" onClick={close}><X size={12} /></button>
     </span>
   </div>;
@@ -419,12 +420,12 @@ function Launcher({ project }: { project: Project }) {
     const id = identities[a.id];
     return {
       tool: kind,
-      key: i === 0 ? "⌘D" : "⌘E",
+      key: keys(i === 0 ? "⌘D" : "⌘E"),
       detail: `${a.name}${id?.email ? `, ${id.email}` : id?.signedIn ? "" : ", not signed in"}`,
       color: a.color,
     };
   });
-  tiles.push({ tool: "shell", key: "⌘J", detail: "Your login shell in this folder", color: "var(--muted)" });
+  tiles.push({ tool: "shell", key: keys("⌘J"), detail: "Your login shell in this folder", color: "var(--muted)" });
 
   return (
     <div className="launcher">
@@ -446,7 +447,7 @@ function Launcher({ project }: { project: Project }) {
           ))}
         </div>
         <RecentSessions project={project} />
-        <div className="launcher-actions"><button onClick={() => useDesk.getState().setQuickOpen(true)}><Search size={14} />Open a file<kbd>⌘P</kbd></button><button onClick={() => useDesk.getState().setModal({ kind: "settings" })}><Settings2 size={14} />Customize Desk<kbd>⌘,</kbd></button></div>
+        <div className="launcher-actions"><button onClick={() => useDesk.getState().setQuickOpen(true)}><Search size={14} />Open a file<kbd>{keys("⌘P")}</kbd></button><button onClick={() => useDesk.getState().setModal({ kind: "settings" })}><Settings2 size={14} />Customize Desk<kbd>{keys("⌘,")}</kbd></button></div>
       </div>
     </div>
   );
@@ -467,7 +468,7 @@ function Welcome() {
         </button>
         <p className="launcher-hint">Or drop a project folder anywhere in this window.</p>
         <div className="welcome-features"><div><SquareTerminal size={17} /><strong>Your tools, together</strong><span>Claude Code, Codex, and your shell.</span></div><div><Layers3 size={17} /><strong>A place for every project</strong><span>Separate accounts. Persistent sessions.</span></div></div>
-        <div className="launcher-actions"><button onClick={() => useDesk.getState().setModal({ kind: "settings" })}><Settings2 size={14} />Make Desk yours<kbd>⌘,</kbd></button></div>
+        <div className="launcher-actions"><button onClick={() => useDesk.getState().setModal({ kind: "settings" })}><Settings2 size={14} />Make Desk yours<kbd>{keys("⌘,")}</kbd></button></div>
       </div>
     </div>
   );

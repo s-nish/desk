@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowLeftRight, CircleCheck, Eye, EyeOff, KeyRound, Server, X } from "lucide-react";
+import { HelpGuide } from "./Help";
 import { ACCOUNT_COLORS, TOOL_LABEL, uid, useDesk, type Modal } from "../store";
 import { connectionLabel, createAccount, openConnection, parseSsh, refreshIdentities, saveConnection, signInSpec } from "../actions";
 import { disposeTerminal, mountTerminal, setTerminalVisible } from "../terminals";
@@ -17,6 +18,8 @@ export function ModalLayer() {
       return <Shell title="Review changes" wide review><Review root={modal.root} path={modal.path} staged={modal.staged} /></Shell>;
     case "worktree":
       return <WorktreeDialog projectId={modal.projectId} />;
+    case "help":
+      return <HelpGuide />;
     case "settings":
       return <Shell title="Settings" wide settings><Settings initial={modal.section} /></Shell>;
     case "ssh":

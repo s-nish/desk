@@ -329,7 +329,7 @@ pub fn worktree_path(top: &str, branch: &str) -> Result<String, String> {
     let repo = top.file_name().ok_or("Repository has no folder name")?.to_string_lossy();
     let parent = top.parent().ok_or("Repository has no parent folder")?;
     let slug = branch.replace('/', "-");
-    Ok(parent.join(format!("{repo}.worktrees")).join(slug).to_string_lossy().into_owned())
+    Ok(crate::platform::slash(parent.join(format!("{repo}.worktrees")).join(slug)))
 }
 
 /// Creates a worktree on a new branch from `base` (or checks out an existing

@@ -72,8 +72,8 @@ fn ends(path: &Path) -> Option<(Vec<String>, Vec<String>)> {
 
 /// Whether `cwd` is the project, a folder inside it, or one of its Desk worktrees.
 fn belongs(cwd: &str, project: &str) -> bool {
-    let project = project.trim_end_matches('/');
-    cwd == project || cwd.starts_with(&format!("{project}/")) || cwd.starts_with(&format!("{project}.worktrees/"))
+    use crate::platform::{has_prefix, same_path};
+    same_path(cwd, project) || has_prefix(cwd, project, "/") || has_prefix(cwd, project, ".worktrees/")
 }
 
 /// One line of text for the list: whitespace collapsed, at most 160 characters.
@@ -119,7 +119,7 @@ fn claude_session(path: &Path, project: &str, dir: &Option<String>) -> Option<Se
         }
         let Ok(record) = serde_json::from_str::<Value>(line) else { continue };
         if cwd.is_none() {
-            cwd = record.get("cwd").and_then(Value::as_str).map(str::to_string);
+            cwd = record.get("cwd").and_then(Value::as_str).map(crate::platform::slash);
         }
         if prompt.is_none() {
             prompt = claude_prompt(&record);
@@ -244,7 +244,7 @@ fn codex_sessions(project: &str, dir: &Option<String>) -> Vec<Session> {
         // longer than the read window, so fall back to the id in the file name.
         let meta = head.first().and_then(|l| serde_json::from_str::<Value>(l).ok());
         let cwd = meta.as_ref().and_then(|m| m.pointer("/payload/cwd")).and_then(Value::as_str).map(str::to_string);
-        let Some(cwd) = cwd.or_else(|| first_cwd(&path)) else { continue };
+        let Some(cwd) = cwd.or_else(|| first_cwd(&path)).map(crate::platform::slash) else { continue };
         if !belongs(&cwd, project) {
             continue;
         }

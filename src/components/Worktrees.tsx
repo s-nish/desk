@@ -1,3 +1,4 @@
+import { toSlash } from "../platform";
 import { useEffect, useState } from "react";
 import { FolderGit2, GitBranchPlus, Plus } from "lucide-react";
 import { TOOL_LABEL, useDesk } from "../store";
@@ -8,7 +9,7 @@ import { Shell } from "./Modals";
 import type { TabTool, Worktree } from "../types";
 
 let home = "";
-void homeDir().then((h) => (home = h.replace(/\/$/, ""))).catch(() => {});
+void homeDir().then((h) => (home = toSlash(h))).catch(() => {});
 const tilde = (p: string) => (home && p.startsWith(home + "/") ? "~" + p.slice(home.length) : p);
 
 const OPEN_WITH: (TabTool | null)[] = ["claude", "codex", "shell", null];

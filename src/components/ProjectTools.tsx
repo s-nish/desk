@@ -1,3 +1,4 @@
+import { keys, modKey } from "../platform";
 import { useEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Eye, FileText, GitBranch, GitCommitHorizontal, GitMerge, History, Minus, Plus, RefreshCw, Search, Undo2 } from "lucide-react";
 import { useDesk } from "../store";
@@ -170,8 +171,8 @@ function GitPanel({ project }: { project: Project }) {
       <div className="commit-box">
         <textarea aria-label="Commit message" placeholder={commitAll ? `Message for all ${unstaged.length} changes` : "Commit message"} value={message} disabled={busy}
           onChange={(e) => setMessage(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && e.metaKey) { e.preventDefault(); commit(); } }} />
-        <button className="btn is-primary" disabled={busy || !message.trim() || !commitCount} onClick={commit} title="⌘↵">
+          onKeyDown={(e) => { if (e.key === "Enter" && modKey(e)) { e.preventDefault(); commit(); } }} />
+        <button className="btn is-primary" disabled={busy || !message.trim() || !commitCount} onClick={commit} title={keys("⌘↵")}>
           {busy ? "Working…" : commitCount ? `Commit ${commitAll ? "all " : ""}${commitCount} file${commitCount === 1 ? "" : "s"}` : "Nothing to commit"}
         </button>
         <small className="settings-note">{commitAll ? "Nothing is staged, so every change is included." : "Only staged files are committed."} Unsaved editor changes aren't included. Nothing is pushed.</small>

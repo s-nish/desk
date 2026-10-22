@@ -2,6 +2,7 @@
 
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { ipc, errorText } from "./ipc";
+import { andThen, isWindows, shellWord, toSlash } from "./platform";
 import { ACCOUNT_COLORS, TOOL_LABEL, accountId, projectAccount, sessionEnv, uid, useDesk, focusedTabId } from "./store";
 import { disposeTerminal } from "./terminals";
 import { disposeEditor, focusEditor, handleDiskChanges, openEditor, saveEditor, revealEditorLine } from "./editors";
@@ -72,7 +73,7 @@ export async function terminalSpec(tabId: string): Promise<SessionSpec> {
   if (tab.sshId) {
     const connection = s.connections.find((c) => c.id === tab.sshId);
     // The session ends with the command, so Enter reconnects (and fills the password again).
-    if (!connection) return { cwd: tab.cwd, command: "printf '%s\\n' 'This saved connection was deleted from Desk.'; exit 1", keepShell: false, ...env };
+    if (!connection) return { cwd: tab.cwd, command: isWindows ? "Write-Output 'This saved connection was deleted from Desk.'; exit 1" : "printf '%s\\n' 'This saved connection was deleted from Desk.'; exit 1", keepShell: false, ...env };
     return { cwd: tab.cwd, command: connection.command, ssh: connection.password ? connection.id : null, keepShell: false, ...env };
   }
   if (tab.tool === "claude" && tab.sessionId && SAFE_ID.test(tab.sessionId)) {
@@ -104,7 +105,7 @@ async function claudeCommand(dir: string | null, cwd: string, env: Record<string
   try {
     const hook = await ipc.claudeLimitsHook(dir, cwd);
     Object.assign(env, hook.env);
-    return `claude --settings '${hook.settings.replace(/'/g, "'\\''")}'`;
+    return `claude --settings ${shellWord(hook.settings)}`;
   } catch (e) {
     console.warn("usage limits unavailable", e);
     return "claude";
@@ -296,14 +297,14 @@ export function mergeWorktree(project: Project) {
     body: `Desk opens a shell in ${parent.name} and runs git merge ${project.branch} there.${switches ? ` It first switches ${parent.name} to ${project.base}.` : ""} Commit your work in the worktree first. If there are conflicts, resolve them in that shell.`,
     confirm: "Open merge",
     onConfirm: () => {
-      openTerminal(parent.id, "shell", { command: `${switches ? `git switch ${shellWord(project.base!)} && ` : ""}git merge --no-ff --no-edit ${shellWord(project.branch!)}` });
+      openTerminal(parent.id, "shell", { command: (() => {
+        const merge = `git merge --no-ff --no-edit ${shellWord(project.branch!)}`;
+        return switches ? andThen(`git switch ${shellWord(project.base!)}`, merge) : merge;
+      })() });
     },
   });
 }
 
-function shellWord(word: string) {
-  return /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`;
-}
 
 /** Removes the worktree folder (asking first if it has uncommitted work) and, optionally, its branch. */
 export function removeWorktree(project: Project) {
@@ -569,7 +570,7 @@ export async function addProjectPaths(paths: string[]) {
 export async function addProjectsFromDialog() {
   const picked = await openDialog({ directory: true, multiple: true, title: "Add project folders" });
   if (!picked) return;
-  await addProjectPaths(Array.isArray(picked) ? picked : [picked]);
+  await addProjectPaths((Array.isArray(picked) ? picked : [picked]).map(toSlash));
 }
 
 export function removeProject(projectId: string) {

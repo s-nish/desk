@@ -18,8 +18,8 @@
   --radius-s: 6px;
   --radius-m: 8px;
   --radius-l: 12px;
-  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
-  --font-mono: "SF Mono", "JetBrains Mono", Menlo, monospace;
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  --font-mono: "SF Mono", "JetBrains Mono", Menlo, "Cascadia Mono", Consolas, monospace;
   --titlebar-h: 40px;
   --tabbar-h: 36px;
   --status-h: 26px;
@@ -2086,3 +2086,72 @@ body.is-resizing-rows, body.is-resizing-rows * { cursor: row-resize !important; 
 .icon-btn.panel-toggle:hover { background: var(--bg-hover); }
 .usage-dot { background: var(--acct); }
 :root[data-account-colors="off"] .usage-dot { background: var(--muted); }
+
+/* Windows: no traffic lights on the left, Windows-style controls on the right. */
+:root[data-platform="windows"] .titlebar { padding-left: 10px; padding-right: 0; }
+.win-controls { display: flex; align-self: stretch; margin-left: 6px; }
+.win-btn {
+  width: 46px;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: var(--text-2);
+}
+.win-btn:hover { background: var(--bg-hover); color: var(--text); }
+.win-btn:active { background: var(--bg-press); }
+/* Windows users expect a red close button on hover. */
+.win-btn.is-close:hover { background: #c42b1c; color: #ffffff; }
+
+/* First-run tour */
+
+.tour { position: fixed; inset: 0; z-index: 140; pointer-events: none; }
+.tour-ring {
+  position: fixed;
+  border-radius: 10px;
+  box-shadow: 0 0 0 2px var(--text), 0 0 0 9999px #00000080;
+  transition: left .2s ease, top .2s ease, width .2s ease, height .2s ease;
+}
+.tour-card {
+  position: fixed;
+  pointer-events: auto;
+  padding: 14px 16px 12px;
+  border-radius: var(--radius-m);
+  background: var(--bg-overlay);
+  box-shadow: 0 0 0 1px var(--line-strong), 0 16px 40px #000000b3;
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.tour-count { color: var(--muted-2); font-size: 11px; }
+.tour-card h3 { margin: 2px 0 4px; font-size: 14px; font-weight: 600; color: var(--text); }
+.tour-card p { margin: 0 0 12px; }
+.tour-card footer { display: flex; align-items: center; gap: 6px; }
+.tour-card footer > span { flex: 1; }
+@media (prefers-reduced-motion: reduce) { .tour-ring { transition: none; } }
+
+/* Getting started guide */
+
+.help { max-height: min(70vh, 640px); overflow: auto; font-size: 13px; line-height: 1.55; color: var(--text-2); }
+.help-lead { margin: 0 0 16px; color: var(--text); }
+.help section + section { margin-top: 18px; }
+.help h3 { margin: 0 0 6px; font-size: 13px; font-weight: 600; color: var(--text); }
+.help p { margin: 0 0 8px; }
+.help code { font-family: var(--font-mono); font-size: 12px; }
+.help-steps, .help-list { margin: 0; padding-left: 20px; display: grid; gap: 8px; }
+.help-note { color: var(--muted); font-size: 12px; }
+.help-command {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 6px 6px 6px 10px;
+  border-radius: var(--radius-s);
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+}
+.help-command code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; color: var(--text); }
+.help-shortcuts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 24px; }
+.help-shortcuts > div { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); }
+.help-shortcuts kbd { font-family: var(--font-ui); font-size: 11.5px; color: var(--text-2); white-space: nowrap; }
+.help .modal-foot { margin-top: 20px; }
+.tour-card footer .text-button { margin: 0; padding: 0; height: 32px; display: inline-flex; align-items: center; }

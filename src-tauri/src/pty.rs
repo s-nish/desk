@@ -57,6 +57,8 @@ pub struct SpawnOpts {
 
 struct Session {
     /// The terminal device the session's programs see (e.g. /dev/ttys012).
+    /// Only the macOS bridge uses it; Windows terminals have no device name.
+    #[cfg_attr(not(unix), allow(dead_code))]
     tty: Option<String>,
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
@@ -86,6 +88,16 @@ pub fn connection_script(opts: &SpawnOpts, command: &str) -> Result<String, Stri
     Ok(format!("{}\n{command}", crate::ssh::askpass_exports(id, session)?))
 }
 
+#[cfg(windows)]
+pub fn user_shell() -> String {
+    // PowerShell 7 when installed, otherwise the Windows PowerShell every PC has.
+    let found = std::env::var_os("PATH").and_then(|path| {
+        std::env::split_paths(&path).map(|dir| dir.join("pwsh.exe")).find(|p| p.is_file())
+    });
+    found.map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|| "powershell.exe".into())
+}
+
+#[cfg(not(windows))]
 pub fn user_shell() -> String {
     std::env::var("SHELL")
         .ok()
@@ -93,6 +105,7 @@ pub fn user_shell() -> String {
         .unwrap_or_else(|| "/bin/zsh".into())
 }
 
+#[cfg(not(windows))]
 fn single_quote(s: &str) -> Result<String, String> {
     if s.contains('\'') {
         return Err(format!("value contains a single quote: {s}"));
@@ -100,8 +113,16 @@ fn single_quote(s: &str) -> Result<String, String> {
     Ok(format!("'{s}'"))
 }
 
+/// On Windows the account variables are set on the process itself; PowerShell
+/// profiles rarely touch them, so the command runs as written.
+#[cfg(windows)]
+pub fn command_script(_opts: &SpawnOpts, command: &str) -> Result<String, String> {
+    Ok(command.to_string())
+}
+
 /// Builds the `-c` script for command tabs. Account variables are applied with
 /// `env` after the user's rc files run, so an rc file can't silently override them.
+#[cfg(not(windows))]
 pub fn command_script(opts: &SpawnOpts, command: &str) -> Result<String, String> {
     let mut parts = vec!["env".to_string()];
     for key in &opts.unset {
@@ -119,11 +140,28 @@ pub fn command_script(opts: &SpawnOpts, command: &str) -> Result<String, String>
 pub fn build_command(opts: &SpawnOpts) -> Result<CommandBuilder, String> {
     let shell = user_shell();
     let mut cmd = CommandBuilder::new(&shell);
-    cmd.arg("-l");
-    cmd.arg("-i");
-    if let Some(command) = opts.command.as_deref().filter(|c| !c.trim().is_empty()) {
-        cmd.arg("-c");
-        cmd.arg(if opts.keep_shell { command_script(opts, command)? } else { connection_script(opts, command)? });
+    let command = opts.command.as_deref().filter(|c| !c.trim().is_empty());
+    #[cfg(windows)]
+    {
+        // Bypass lets npm's PowerShell shims (claude.ps1, codex.ps1) run under the
+        // default "Restricted" policy, for this process only.
+        cmd.args(["-NoLogo", "-ExecutionPolicy", "Bypass"]);
+        if let Some(command) = command {
+            if opts.keep_shell {
+                cmd.arg("-NoExit");
+            }
+            cmd.arg("-Command");
+            cmd.arg(if opts.keep_shell { command_script(opts, command)? } else { connection_script(opts, command)? });
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        cmd.arg("-l");
+        cmd.arg("-i");
+        if let Some(command) = command {
+            cmd.arg("-c");
+            cmd.arg(if opts.keep_shell { command_script(opts, command)? } else { connection_script(opts, command)? });
+        }
     }
 
     let cwd = std::path::Path::new(&opts.cwd);
@@ -142,6 +180,8 @@ pub fn build_command(opts: &SpawnOpts) -> Result<CommandBuilder, String> {
     for (key, value) in &opts.env {
         cmd.env(key, value);
     }
+    // Claude Code on Windows picks its own shell (Git Bash); SHELL would mislead it.
+    #[cfg(not(windows))]
     cmd.env("SHELL", &shell);
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
@@ -189,7 +229,10 @@ impl PtyManager {
         self.sessions.lock().unwrap().insert(
             id,
             Session {
+                #[cfg(unix)]
                 tty: pty.master.tty_name().map(|p| p.to_string_lossy().into_owned()),
+                #[cfg(not(unix))]
+                tty: None,
                 master: pty.master,
                 writer,
                 killer,
@@ -271,6 +314,7 @@ impl PtyManager {
 
     /// Types into the session whose terminal device is `tty` (used by the local
     /// bridge, so tools like Speaky can send dictated prompts to a Desk tab).
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub fn write_tty(&self, tty: &str, data: &[u8]) -> Result<(), String> {
         let mut sessions = self.sessions.lock().unwrap();
         let session = sessions
@@ -281,6 +325,7 @@ impl PtyManager {
         session.writer.flush().map_err(|e| e.to_string())
     }
 
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub fn ttys(&self) -> Vec<String> {
         self.sessions.lock().unwrap().values().filter_map(|s| s.tty.clone()).collect()
     }
@@ -323,13 +368,14 @@ impl PtyManager {
 /// foreground job (e.g. `claude`) and to the shell, never SIGKILL, so tools get
 /// to flush their session files and exit on their own.
 fn hang_up(mut session: Session) {
+    #[cfg(unix)]
     if let Some(pgid) = session.master.process_group_leader().filter(|p| *p > 0) {
         unsafe { libc::kill(-pgid, libc::SIGHUP) };
     }
     let _ = session.killer.kill();
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 

@@ -5,6 +5,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { X } from "lucide-react";
 import { useDesk, focusedTabId, waitingTabs } from "./store";
 import { ipc, errorText } from "./ipc";
+import { asMacChord, isWindows, shellWord, toSlash, type KeyLike } from "./platform";
 import { flushWorkspace, persistWorkspace } from "./persistence";
 import {
   activeProject,
@@ -39,6 +40,7 @@ import { ModalLayer } from "./components/Modals";
 import { QuickOpen } from "./components/QuickOpen";
 import { CommandPalette } from "./components/CommandPalette";
 import { MenuLayer } from "./components/Menu";
+import { Tour, useTour } from "./components/Help";
 
 async function boot() {
   const [diskSaved, detected] = await Promise.all([ipc.stateLoad().catch(() => null), ipc.accountsDetect().catch(() => [])]);
@@ -59,9 +61,6 @@ async function boot() {
   }
 }
 
-function shellQuote(path: string) {
-  return /^[\w@%+=:,./-]+$/.test(path) ? path : `'${path.replace(/'/g, `'\\''`)}'`;
-}
 
 function cycleTab(step: number) {
   const s = useDesk.getState();
@@ -79,13 +78,31 @@ function cycleProject(step: number) {
   s.selectProject(s.projects[(i + step + s.projects.length) % s.projects.length].id);
 }
 
-function inEditor(e: KeyboardEvent) {
+function inEditor(e: KeyLike) {
   return !!(e.target as HTMLElement | null)?.closest?.(".cm-editor");
 }
 
-function onKeyDown(e: KeyboardEvent) {
+/**
+ * WebView2 (Windows) keeps browser shortcuts: F5 or Ctrl+R would reload Desk's
+ * interface and orphan running terminals, Ctrl+P would print. Terminals and the
+ * editor handle these keys themselves, so they're only blocked elsewhere.
+ */
+function blockBrowserKeys(e: KeyboardEvent) {
+  if (!isWindows || (e.target as HTMLElement | null)?.closest?.(".term-host, .cm-editor")) return false;
+  const key = e.key.toLowerCase();
+  const browser = e.key === "F5" || e.key === "F3" || e.key === "F7" || (e.ctrlKey && !e.altKey && !e.shiftKey && ["r", "p", "f", "g", "u", "j", "h"].includes(key))
+    || (e.ctrlKey && e.shiftKey && key === "r");
+  if (browser) e.preventDefault();
+  return browser;
+}
+
+function onKeyDown(event: KeyboardEvent) {
+  if (blockBrowserKeys(event)) return;
   const s = useDesk.getState();
   if (s.modal) return;
+  // Windows shortcuts arrive as the macOS ones they stand for.
+  const e = asMacChord(event);
+  if (!e) return;
   if ((s.commandOpen || s.quickOpen) && !(e.metaKey && e.key.toLowerCase() === "p")) return;
   const project = activeProject();
   const tab = activeTab();
@@ -126,8 +143,8 @@ function onKeyDown(e: KeyboardEvent) {
   } else handled = false;
 
   if (handled) {
-    e.preventDefault();
-    e.stopPropagation();
+    event.preventDefault();
+    event.stopPropagation();
   }
 }
 
@@ -158,7 +175,7 @@ function clearVisibleAttention() {
 async function onDrop(paths: string[], x: number, y: number) {
   const target = document.elementFromPoint(x, y)?.closest<HTMLElement>(".term-host");
   if (target?.dataset.terminal) {
-    pasteIntoTerminal(target.dataset.terminal, paths.map(shellQuote).join(" ") + " ");
+    pasteIntoTerminal(target.dataset.terminal, paths.map((p) => shellWord(toSlash(p))).join(" ") + " ");
     return;
   }
   const added = await addProjectPaths(paths);
@@ -224,7 +241,7 @@ export function App() {
       getCurrentWebview().onDragDropEvent(({ payload }) => {
         if (payload.type !== "drop") return;
         const ratio = window.devicePixelRatio || 1;
-        void onDrop(payload.paths, payload.position.x / ratio, payload.position.y / ratio);
+        void onDrop(payload.paths.map(toSlash), payload.position.x / ratio, payload.position.y / ratio);
       }),
     ];
     const noContextMenu = (e: MouseEvent) => {
@@ -240,6 +257,13 @@ export function App() {
       unlisten.forEach((p) => void p.then((f) => f()));
     };
   }, []);
+
+  // The tour starts once, the first time Desk opens.
+  useEffect(() => {
+    if (!loaded || useDesk.getState().preferences.tourDone) return;
+    const timer = setTimeout(() => useTour.getState().start(), 700);
+    return () => clearTimeout(timer);
+  }, [loaded]);
 
   if (!loaded) return <div className="app is-booting" />;
 
@@ -270,6 +294,7 @@ export function App() {
       <QuickOpen />
       <CommandPalette />
       <MenuLayer />
+      <Tour />
       <div className="toasts" aria-live="polite">
         {toasts.map((t) => (
           <div key={t.id} className={"toast is-" + t.tone}>

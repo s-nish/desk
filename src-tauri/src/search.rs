@@ -115,12 +115,7 @@ pub fn search(root: &str, query: &str, case_sensitive: bool) -> Result<Results, 
             })
             .collect();
         result.files.push(SearchFile {
-            path: entry
-                .path()
-                .strip_prefix(&root)
-                .unwrap()
-                .to_string_lossy()
-                .into_owned(),
+            path: crate::platform::slash(entry.path().strip_prefix(&root).unwrap()),
             original: file.content,
             matches,
             count,

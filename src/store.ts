@@ -44,19 +44,22 @@ export interface Preferences {
   agentAlerts: boolean;
   /** Claude Code tabs report their usage limits through a status line wrapper. */
   usageLimits: boolean;
+  /** The first-run tour was finished or skipped. */
+  tourDone: boolean;
   /** Show how many agents are waiting on the Dock icon. */
   alertBadge: boolean;
   /** Bounce the Dock icon once when an agent starts waiting and Desk is in the background. */
   alertBounce: boolean;
 }
 
-export const DEFAULT_PREFERENCES: Preferences = { theme: "black", density: "comfortable", fontSize: 14, showProjectAccounts: false, accent: "neutral", showStatusBar: true, showPaths: false, showAccountEmails: false, accountColors: false, reduceMotion: false, terminalTheme: "desk", editorTheme: "desk", terminalColors: {}, cursorStyle: "bar", cursorBlink: true, smoothScroll: true, agentAlerts: true, usageLimits: true, alertBadge: true, alertBounce: true };
+export const DEFAULT_PREFERENCES: Preferences = { theme: "black", density: "comfortable", fontSize: 14, showProjectAccounts: false, accent: "neutral", showStatusBar: true, showPaths: false, showAccountEmails: false, accountColors: false, reduceMotion: false, terminalTheme: "desk", editorTheme: "desk", terminalColors: {}, cursorStyle: "bar", cursorBlink: true, smoothScroll: true, agentAlerts: true, usageLimits: true, tourDone: false, alertBadge: true, alertBounce: true };
 
 export type Modal =
   | { kind: "settings"; section?: string }
   | { kind: "ssh"; id: string | null; from?: "settings" }
   | { kind: "diff"; root: string; path: string; staged: boolean }
   | { kind: "worktree"; projectId: string }
+  | { kind: "help" }
   | { kind: "addAccount"; tool: Tool }
   | { kind: "signin"; accountId: string }
   | {

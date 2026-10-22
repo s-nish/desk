@@ -40,6 +40,17 @@ fi
 exit 0
 "#;
 
+/// Windows: saves the limits and prints nothing. Used only for accounts without
+/// a status line of their own, so nothing the user set up is replaced.
+const WRAPPER_PS1: &str = r#"# Written by Desk. Saves the usage limits Claude Code reports to its status line.
+$data = [Console]::In.ReadToEnd()
+if ($env:DESK_LIMITS_FILE -and $data.Contains('"rate_limits"')) {
+  $tmp = "$env:DESK_LIMITS_FILE.$PID"
+  [IO.File]::WriteAllText($tmp, $data)
+  Move-Item -Force -LiteralPath $tmp -Destination $env:DESK_LIMITS_FILE
+}
+"#;
+
 #[derive(Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Window {
@@ -216,10 +227,22 @@ fn write_if_changed(path: &Path, content: &str) -> Result<(), String> {
 pub fn claude_hook(dir: Option<String>, cwd: &str) -> Result<ClaudeHook, String> {
     let base = limits_dir();
     fs::create_dir_all(&base).map_err(|e| e.to_string())?;
-    let wrapper = base.join("statusline.sh");
-    write_if_changed(&wrapper, WRAPPER)?;
-
     let own = own_status_line(&dir, cwd);
+    // A Windows status line may be written for Git Bash, cmd or PowerShell, so
+    // Desk can't safely run it from a wrapper. It's left alone, without limits.
+    if cfg!(windows) && own.is_some() {
+        return Err("This Claude account has its own status line, which Desk leaves as it is.".into());
+    }
+    let command = if cfg!(windows) {
+        let path = base.join("statusline.ps1");
+        write_if_changed(&path, WRAPPER_PS1)?;
+        format!("powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"{}\"", crate::platform::slash(&path))
+    } else {
+        let path = base.join("statusline.sh");
+        write_if_changed(&path, WRAPPER)?;
+        format!("/bin/sh '{}'", path.to_string_lossy().replace('\'', r"'\''"))
+    };
+
     let own_command = own
         .as_ref()
         .filter(|s| s.get("type").and_then(Value::as_str).unwrap_or("command") == "command")
@@ -229,7 +252,7 @@ pub fn claude_hook(dir: Option<String>, cwd: &str) -> Result<ClaudeHook, String>
     // Keeps the account's own options (padding and the like).
     let mut status_line = own.unwrap_or_else(|| json!({ "padding": 0 }));
     status_line["type"] = json!("command");
-    status_line["command"] = json!(format!("/bin/sh '{}'", wrapper.to_string_lossy().replace('\'', r"'\''")));
+    status_line["command"] = json!(command);
 
     let key = claude_project_key(&claude_dir(&dir).to_string_lossy());
     let settings = base.join(format!("claude{key}.settings.json"));
@@ -240,7 +263,7 @@ pub fn claude_hook(dir: Option<String>, cwd: &str) -> Result<ClaudeHook, String>
     if let Some(command) = own_command {
         env.insert("DESK_STATUSLINE".to_string(), command);
     }
-    Ok(ClaudeHook { settings: settings.to_string_lossy().into_owned(), env })
+    Ok(ClaudeHook { settings: crate::platform::slash(&settings), env })
 }
 
 #[cfg(test)]

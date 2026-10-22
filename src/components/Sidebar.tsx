@@ -1,3 +1,4 @@
+import { keys } from "../platform";
 import { useState } from "react";
 import { Search, Settings2, ChevronDown, Copy, Ellipsis, Eye, Folder, FolderOpen, FolderSearch, GitBranch, GitBranchPlus, GitMerge, KeyRound, LogIn, Palette, Pencil, Plug, Plus, Server, SquareTerminal, Trash2 } from "lucide-react";
 import { ACCOUNT_COLORS, TOOL_LABEL, projectAccount, projectTree, useDesk } from "../store";
@@ -14,7 +15,7 @@ export function Sidebar() {
       <Projects />
       <Connections />
       <Accounts />
-      <button className="settings-link" onClick={() => useDesk.getState().setModal({ kind: "settings" })}><Settings2 size={16} /><span>Settings</span><kbd>⌘,</kbd></button>
+      <button className="settings-link" onClick={() => useDesk.getState().setModal({ kind: "settings" })}><Settings2 size={16} /><span>Settings</span><kbd>{keys("⌘,")}</kbd></button>
     </aside>
   );
 }
@@ -142,10 +143,10 @@ function ProjectRow({ project, index }: { project: Project; index: number }) {
 
   const menu = (at: { x: number; y: number } | Element) =>
     openMenu(at, [
-      { label: "New Claude Code tab", hint: "⌘D", icon: <SquareTerminal size={14} />, onSelect: () => openTerminal(project.id, "claude") },
-      { label: "New Codex tab", hint: "⌘E", icon: <SquareTerminal size={14} />, onSelect: () => openTerminal(project.id, "codex") },
-      { label: "New shell tab", hint: "⌘J", icon: <SquareTerminal size={14} />, onSelect: () => openTerminal(project.id, "shell") },
-      { label: "New worktree…", hint: "⌘⇧T", icon: <GitBranchPlus size={14} />, onSelect: () => useDesk.getState().setModal({ kind: "worktree", projectId: project.id }) },
+      { label: "New Claude Code tab", hint: keys("⌘D"), icon: <SquareTerminal size={14} />, onSelect: () => openTerminal(project.id, "claude") },
+      { label: "New Codex tab", hint: keys("⌘E"), icon: <SquareTerminal size={14} />, onSelect: () => openTerminal(project.id, "codex") },
+      { label: "New shell tab", hint: keys("⌘J"), icon: <SquareTerminal size={14} />, onSelect: () => openTerminal(project.id, "shell") },
+      { label: "New worktree…", hint: keys("⌘⇧T"), icon: <GitBranchPlus size={14} />, onSelect: () => useDesk.getState().setModal({ kind: "worktree", projectId: project.id }) },
       { separator: true },
       { label: "Claude Code account", disabled: true },
       ...accountChoices(project, "claude", false),
@@ -234,7 +235,7 @@ function Projects() {
     <section className="side-section projects">
       <header className="side-header">
         <h2>Projects <span className="section-count">{projects.filter((p) => !p.worktreeOf).length}</span></h2>
-        <button className="icon-btn" aria-label="Add project folder" title="Add project folder (⌘O)" onClick={() => void addProjectsFromDialog()}>
+        <button className="icon-btn" aria-label="Add project folder" title={`Add project folder (${keys("⌘O")})`} onClick={() => void addProjectsFromDialog()}>
           <Plus size={15} />
         </button>
       </header>

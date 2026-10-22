@@ -1,3 +1,4 @@
+import { MONO_FONT, isWindows } from "./platform";
 // xterm.js instances live outside React so switching projects or tabs never
 // tears down a running session. React components only mount and unmount hosts.
 
@@ -116,7 +117,7 @@ listen<{ id: number; code: number | null }>("pty-exit", ({ payload }) => {
 
 function create(key: string, hooks: TerminalHooks): Entry {
   const term = new Terminal({
-    fontFamily: '"SF Mono", "JetBrains Mono", Menlo, monospace',
+    fontFamily: MONO_FONT,
     fontSize: useDesk.getState().preferences.fontSize,
     lineHeight: 1.4,
     letterSpacing: 0,
@@ -184,6 +185,17 @@ function create(key: string, hooks: TerminalHooks): Entry {
     return true;
   });
   term.attachCustomKeyEventHandler((e) => {
+    // Windows terminals copy with Ctrl+C when text is selected (otherwise it interrupts)
+    // and paste with Ctrl+V. Returning false lets the browser's own paste event through.
+    if (isWindows && e.type === "keydown" && e.ctrlKey && !e.altKey && !e.metaKey) {
+      const key = e.key.toLowerCase();
+      if (key === "c" && (e.shiftKey || term.hasSelection())) {
+        if (term.hasSelection()) void navigator.clipboard.writeText(term.getSelection());
+        if (!e.shiftKey) term.clearSelection();
+        return false;
+      }
+      if (key === "v") return false;
+    }
     // Shift navigation browses normal scrollback without sending keys to the shell.
     // Full-screen applications keep their own navigation and mouse behavior.
     if (e.type === "keydown" && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && term.buffer.active.type === "normal") {

@@ -2,6 +2,8 @@ mod accounts;
 mod files;
 mod git;
 mod limits;
+mod platform;
+#[cfg(unix)]
 mod bridge;
 mod pty;
 mod search;
@@ -15,6 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use serde::Serialize;
 use serde_json::Value;
 use tauri::ipc::{Channel, InvokeResponseBody};
+#[cfg(target_os = "macos")]
 use tauri::menu::{AboutMetadata, Menu, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
 
@@ -327,10 +330,14 @@ fn claude_limits_hook(dir: Option<String>, cwd: String) -> Result<limits::Claude
 }
 
 /// Dock badge with the number of agents waiting, and one bounce for a new one.
+/// Windows has no badge count; there the taskbar button flashes instead.
 #[tauri::command]
 fn attention(app: AppHandle, count: u32, bounce: bool) {
     let Some(window) = app.get_webview_window("main") else { return };
+    #[cfg(target_os = "macos")]
     let _ = window.set_badge_count((count > 0).then_some(count as i64));
+    #[cfg(not(target_os = "macos"))]
+    let _ = count;
     if bounce {
         let _ = window.request_user_attention(Some(tauri::UserAttentionType::Informational));
     }
@@ -361,18 +368,14 @@ async fn project_replace(
     .map_err(|e| e.to_string())?
 }
 
-// macOS integration
+// Opening links and files
 
 #[tauri::command]
 fn open_external(url: String) -> Result<(), String> {
     if !(url.starts_with("http://") || url.starts_with("https://")) {
         return Err("Only web links can be opened".into());
     }
-    std::process::Command::new("/usr/bin/open")
-        .arg(url)
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    platform::open_url(&url)
 }
 
 // Saved SSH connections
@@ -400,16 +403,12 @@ async fn ssh_has_password(id: String) -> bool {
 
 #[tauri::command]
 fn reveal_in_finder(path: String) -> Result<(), String> {
-    std::process::Command::new("/usr/bin/open")
-        .arg("-R")
-        .arg(path)
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    platform::reveal(&path)
 }
 
 /// Standard macOS menus. Close Window is left out on purpose: Cmd+W closes the
 /// current tab inside Desk instead of the whole window.
+#[cfg(target_os = "macos")]
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let about = AboutMetadata {
         name: Some("Desk".into()),
@@ -459,13 +458,17 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let ptys = Arc::new(PtyManager::default());
+    #[cfg(unix)]
     bridge::start(Arc::clone(&ptys));
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // Windows draws its own controls in the title bar and needs no menu bar.
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(build_menu);
+    let app = builder
         .plugin(tauri_plugin_dialog::init())
         .manage(ptys)
         .manage(files::Watchers::default())
         .manage(QuitState::default())
-        .menu(build_menu)
         .invoke_handler(tauri::generate_handler![
             workspace_exit,
             pty_spawn,

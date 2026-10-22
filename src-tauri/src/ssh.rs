@@ -3,13 +3,49 @@
 //! When a saved connection starts, ssh asks Desk's askpass helper, which reads
 //! that file.
 
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+
+/// Windows: ssh runs this batch file, which hands the prompt to the PowerShell
+/// helper below. Same rules as the macOS helper: the saved password answers the
+/// first password prompt of the session, anything else is asked in the terminal.
+#[cfg(windows)]
+const ASKPASS_CMD: &str = "@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%~dp0ssh-askpass.ps1\" %*\r\n";
+
+#[cfg(windows)]
+const ASKPASS_PS1: &str = r#"# Written by Desk. Answers ssh's password prompt with the connection's saved password.
+param([string]$Prompt = 'Password: ')
+$lower = $Prompt.ToLower()
+if ($lower.Contains('password') -and $env:DESK_SSH_SECRET -and (Test-Path -LiteralPath $env:DESK_SSH_SECRET)) {
+  $state = Join-Path $env:TEMP 'desk-askpass'
+  New-Item -ItemType Directory -Force -Path $state | Out-Null
+  $marker = Join-Path $state "$env:DESK_SSH_SESSION"
+  if (-not (Test-Path -LiteralPath $marker)) {
+    New-Item -ItemType File -Path $marker | Out-Null
+    $hex = (Get-Content -Raw -LiteralPath $env:DESK_SSH_SECRET).Trim()
+    $bytes = [byte[]]::new($hex.Length / 2)
+    for ($i = 0; $i -lt $bytes.Length; $i++) { $bytes[$i] = [Convert]::ToByte($hex.Substring($i * 2, 2), 16) }
+    [Console]::Error.WriteLine("$Prompt(saved password)")
+    [Console]::Out.WriteLine([Text.Encoding]::UTF8.GetString($bytes))
+    exit 0
+  }
+}
+$label = $Prompt.Trim().TrimEnd(':')
+if ($lower -match 'password|passphrase|pin|code|token|otp') {
+  $secure = Read-Host -Prompt $label -AsSecureString
+  $answer = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
+} else {
+  $answer = Read-Host -Prompt $label
+}
+[Console]::Out.WriteLine($answer)
+"#;
 
 /// ssh runs this for every prompt while a saved connection starts. The saved
 /// password answers the first password prompt of each ssh process. Any other prompt
 /// (host key confirmation, one-time codes) and any retry after a wrong password is
 /// asked in the terminal, so a bad saved password is never sent repeatedly.
+#[cfg(unix)]
 const ASKPASS: &str = r#"#!/bin/sh
 # Written by Desk. Answers ssh's password prompt with the connection's saved password.
 prompt=${1:-"Password: "}
@@ -58,6 +94,8 @@ fn support_dir() -> Result<PathBuf, String> {
 fn secrets_dir() -> Result<PathBuf, String> {
     let dir = support_dir()?.join("ssh-passwords");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    // On Windows the folder sits in the user's own AppData, which only they can read.
+    #[cfg(unix)]
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
     Ok(dir)
 }
@@ -75,17 +113,18 @@ pub fn has_password(id: &str) -> bool {
 /// The file is created owner-only before anything is written to it.
 pub fn save_password(id: &str, password: &str) -> Result<(), String> {
     use std::io::Write;
+    #[cfg(unix)]
     use std::os::unix::fs::OpenOptionsExt;
     if password.is_empty() {
         return Err("The password is empty.".into());
     }
     let path = secret_path(id)?;
     let tmp = path.with_extension("tmp");
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options
         .open(&tmp)
         .map_err(|e| e.to_string())?;
     file.write_all(hex(password.as_bytes()).as_bytes()).map_err(|e| e.to_string())?;
@@ -102,6 +141,18 @@ pub fn delete_password(id: &str) -> Result<(), String> {
 
 /// Writes the askpass helper (owner-only) and returns its path. Rewritten every
 /// time so an old or modified copy never lingers.
+#[cfg(windows)]
+pub fn askpass_path(dir: &Path) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    for (name, content) in [("ssh-askpass.ps1", ASKPASS_PS1), ("ssh-askpass.cmd", ASKPASS_CMD)] {
+        let tmp = dir.join(format!(".{name}.tmp"));
+        std::fs::write(&tmp, content).map_err(|e| e.to_string())?;
+        std::fs::rename(&tmp, dir.join(name)).map_err(|e| e.to_string())?;
+    }
+    Ok(dir.join("ssh-askpass.cmd"))
+}
+
+#[cfg(unix)]
 pub fn askpass_path(dir: &Path) -> Result<PathBuf, String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let path = dir.join("ssh-askpass");
@@ -120,6 +171,13 @@ pub fn askpass_exports(id: &str, session: u64) -> Result<String, String> {
         let s = p.to_string_lossy().into_owned();
         if s.contains('\'') { Err("Desk's support folder path contains a quote.".to_string()) } else { Ok(format!("'{s}'")) }
     };
+    #[cfg(windows)]
+    return Ok(format!(
+        "$env:SSH_ASKPASS={}; $env:SSH_ASKPASS_REQUIRE='force'; $env:DESK_SSH_SECRET={}; $env:DESK_SSH_SESSION='{session}'",
+        quote(&askpass)?,
+        quote(&secret)?
+    ));
+    #[cfg(not(windows))]
     Ok(format!(
         "export SSH_ASKPASS={} SSH_ASKPASS_REQUIRE=force DESK_SSH_SECRET={} DESK_SSH_SESSION='{session}'",
         quote(&askpass)?,
@@ -127,7 +185,7 @@ pub fn askpass_exports(id: &str, session: u64) -> Result<String, String> {
     ))
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 

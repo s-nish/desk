@@ -1,3 +1,4 @@
+import { MONO_FONT } from "./platform";
 // CodeMirror views, kept alive per file tab so undo history and scroll survive tab switches.
 
 import { basicSetup } from "codemirror";
@@ -108,7 +109,7 @@ const colorMode = new Compartment();
 const theme = EditorView.theme(
   {
     "&": { height: "100%", backgroundColor: "var(--bg)", color: "var(--text)", fontSize: "var(--code-size)" },
-    ".cm-scroller": { fontFamily: '"SF Mono", "JetBrains Mono", Menlo, monospace', lineHeight: "1.6" },
+    ".cm-scroller": { fontFamily: MONO_FONT, lineHeight: "1.6" },
     ".cm-content": { caretColor: "var(--accent)", padding: "8px 0" },
     ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--accent)", borderLeftWidth: "2px" },
     "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": { backgroundColor: "var(--selection) !important" },

@@ -1,5 +1,9 @@
+import { keys } from "../platform";
+import { toSlash } from "../platform";
 import { useEffect, useState } from "react";
-import { Bell, Command, GitBranch, Settings2 } from "lucide-react";
+import { Bell, CircleHelp, Command, GitBranch, Settings2, SquareSlash } from "lucide-react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { isWindows } from "../platform";
 import { homeDir } from "@tauri-apps/api/path";
 import { useShallow } from "zustand/react/shallow";
 import { TOOL_LABEL, projectAccount, shortPath, tabAccount, useDesk, focusedTabId, waitingTabs } from "../store";
@@ -9,7 +13,7 @@ import { openMenu } from "./Menu";
 import { UsageChip } from "./Usage";
 
 let home: string | null = null;
-void homeDir().then((h) => (home = h.replace(/\/$/, "")));
+void homeDir().then((h) => (home = toSlash(h)));
 
 /** A window with its side panel drawn filled while the panel is open. */
 function PanelIcon({ side, open }: { side: "left" | "right"; open: boolean }) {
@@ -38,7 +42,7 @@ export function TitleBar() {
         <button
           className={"icon-btn panel-toggle" + (layout.sidebarOpen ? " is-on" : "")}
           aria-label="Toggle projects sidebar"
-          title="Projects (⌘B)"
+          title={`Projects (${keys("⌘B")})`}
           onClick={() => setLayout({ sidebarOpen: !layout.sidebarOpen })}
         >
           <PanelIcon side="left" open={layout.sidebarOpen} />
@@ -62,18 +66,48 @@ export function TitleBar() {
       </div>
       <div className="titlebar-right" data-tauri-drag-region>
         <WaitingButton />
-        <button className="icon-btn" aria-label="Open command palette" title="Command palette (⌘⇧P)" onClick={() => useDesk.getState().setCommandOpen(true)}><Command size={15} /></button>
-        <button className="icon-btn" aria-label="Open settings" title="Settings (⌘,)" onClick={() => useDesk.getState().setModal({ kind: "settings" })}><Settings2 size={15} /></button>
+        <button className="icon-btn help-button" aria-label="Getting started guide" title="Getting started" onClick={() => useDesk.getState().setModal({ kind: "help" })}><CircleHelp size={15} /></button>
+        <button className="icon-btn" aria-label="Open command palette" title={`Command palette (${keys("⌘⇧P")})`} onClick={() => useDesk.getState().setCommandOpen(true)}>{isWindows ? <SquareSlash size={15} /> : <Command size={15} />}</button>
+        <button className="icon-btn" aria-label="Open settings" title={`Settings (${keys("⌘,")})`} onClick={() => useDesk.getState().setModal({ kind: "settings" })}><Settings2 size={15} /></button>
         <button
           className={"icon-btn panel-toggle" + (layout.filesOpen ? " is-on" : "")}
           aria-label="Toggle files panel"
-          title="Files (⌘⇧B)"
+          title={`Files (${keys("⌘⇧B")})`}
           onClick={() => setLayout({ filesOpen: !layout.filesOpen })}
         >
           <PanelIcon side="right" open={layout.filesOpen} />
         </button>
+        {isWindows && <WindowControls />}
       </div>
     </header>
+  );
+}
+
+/** Minimize, maximize and close, drawn like Windows' own, since Desk hides the system title bar there. */
+function WindowControls() {
+  const [maximized, setMaximized] = useState(false);
+  useEffect(() => {
+    const win = getCurrentWindow();
+    const sync = () => void win.isMaximized().then(setMaximized).catch(() => {});
+    sync();
+    const off = win.onResized(sync);
+    return () => void off.then((f) => f());
+  }, []);
+  const win = () => getCurrentWindow();
+  return (
+    <div className="win-controls">
+      <button className="win-btn" aria-label="Minimize" title="Minimize" onClick={() => void win().minimize()}>
+        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5.5h10" stroke="currentColor" /></svg>
+      </button>
+      <button className="win-btn" aria-label={maximized ? "Restore" : "Maximize"} title={maximized ? "Restore" : "Maximize"} onClick={() => void win().toggleMaximize()}>
+        {maximized
+          ? <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M2.5 2.5V.5h7v7h-2" stroke="currentColor" /><rect x=".5" y="2.5" width="7" height="7" stroke="currentColor" /></svg>
+          : <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true"><rect x=".5" y=".5" width="9" height="9" stroke="currentColor" /></svg>}
+      </button>
+      <button className="win-btn is-close" aria-label="Close" title="Close" onClick={() => void win().close()}>
+        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M.5.5l9 9M9.5.5l-9 9" stroke="currentColor" /></svg>
+      </button>
+    </div>
   );
 }
 
@@ -86,7 +120,7 @@ function WaitingButton() {
     <button
       className="waiting-button"
       aria-label={`${waiting.length} agent${waiting.length > 1 ? "s" : ""} waiting`}
-      title="Agents waiting for you (⌘⇧A)"
+      title={`Agents waiting for you (${keys("⌘⇧A")})`}
       onClick={(e) => openMenu(e.currentTarget, waiting.map((t) => ({
         label: `${TOOL_LABEL[t.tool]} in ${projects.find((p) => p.id === t.projectId)?.name ?? "a project"}`,
         hint: t.attention ?? "",

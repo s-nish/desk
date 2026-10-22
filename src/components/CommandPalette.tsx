@@ -1,8 +1,10 @@
+import { keys } from "../platform";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Command, Search } from "lucide-react";
 import { useDesk, TOOL_LABEL, focusedTabId } from "../store";
 import { activeProject, addProjectsFromDialog, closeTab, connectionLabel, flipSplit, jumpToWaiting, openConnection, openTerminal, saveTab, splitWorkspace } from "../actions";
 import { fuzzyScore } from "./QuickOpen";
+import { useTour } from "./Help";
 import { THEMES } from "../appearance";
 
 interface Action { id: string; label: string; group: string; shortcut?: string; run: () => void }
@@ -29,27 +31,29 @@ function Palette() {
   const actions = useMemo(() => {
     const s = useDesk.getState();
     const items: Action[] = [
-      { id: "add-project", label: "Add project folder", group: "Workspace", shortcut: "⌘O", run: () => void addProjectsFromDialog() },
-      { id: "settings", label: "Open settings", group: "Preferences", shortcut: "⌘,", run: () => s.setModal({ kind: "settings" }) },
-      { id: "sidebar", label: "Toggle projects sidebar", group: "View", shortcut: "⌘B", run: () => s.setLayout({ sidebarOpen: !useDesk.getState().layout.sidebarOpen }) },
+      { id: "add-project", label: "Add project folder", group: "Workspace", shortcut: keys("⌘O"), run: () => void addProjectsFromDialog() },
+      { id: "help", label: "Getting started guide", group: "Help", run: () => s.setModal({ kind: "help" }) },
+      { id: "tour", label: "Show the tour", group: "Help", run: () => useTour.getState().start() },
+      { id: "settings", label: "Open settings", group: "Preferences", shortcut: keys("⌘,"), run: () => s.setModal({ kind: "settings" }) },
+      { id: "sidebar", label: "Toggle projects sidebar", group: "View", shortcut: keys("⌘B"), run: () => s.setLayout({ sidebarOpen: !useDesk.getState().layout.sidebarOpen }) },
       { id: "files", label: "Show file explorer", group: "View", run: () => s.setLayout({ filesOpen: true, panel: "files" }) },
     ];
     if (activeProject()) items.push(
-      { id: "open-file", label: "Open file", group: "Workspace", shortcut: "⌘P", run: () => s.setQuickOpen(true) },
-      { id: "search", label: "Search and replace in project", group: "Workspace", shortcut: "⌘⇧F", run: () => s.setLayout({ filesOpen: true, panel: "search" }) },
+      { id: "open-file", label: "Open file", group: "Workspace", shortcut: keys("⌘P"), run: () => s.setQuickOpen(true) },
+      { id: "search", label: "Search and replace in project", group: "Workspace", shortcut: keys("⌘⇧F"), run: () => s.setLayout({ filesOpen: true, panel: "search" }) },
       { id: "git", label: "Review Git changes", group: "Source control", run: () => s.setLayout({ filesOpen: true, panel: "git" }) },
-      { id: "worktree", label: "New worktree…", group: "Source control", shortcut: "⌘⇧T", run: () => { const project = activeProject(); if (project) s.setModal({ kind: "worktree", projectId: project.id }); } },
+      { id: "worktree", label: "New worktree…", group: "Source control", shortcut: keys("⌘⇧T"), run: () => { const project = activeProject(); if (project) s.setModal({ kind: "worktree", projectId: project.id }); } },
       { id: "sessions", label: "Resume a past conversation", group: "Terminal", run: () => s.setLayout({ filesOpen: true, panel: "sessions" }) },
-      ...(["claude", "codex", "shell"] as const).map((tool) => ({ id: `new-${tool}`, label: `New ${TOOL_LABEL[tool]} session`, group: "Terminal", shortcut: { claude: "⌘D", codex: "⌘E", shell: "⌘J" }[tool], run: () => { const project = activeProject(); if (project) openTerminal(project.id, tool); } })),
+      ...(["claude", "codex", "shell"] as const).map((tool) => ({ id: `new-${tool}`, label: `New ${TOOL_LABEL[tool]} session`, group: "Terminal", shortcut: keys({ claude: "⌘D", codex: "⌘E", shell: "⌘J" }[tool]), run: () => { const project = activeProject(); if (project) openTerminal(project.id, tool); } })),
     );
     if (focusedId) items.push(
-      { id: "split", label: "Toggle split panes", group: "View", shortcut: "⌘\\", run: splitWorkspace },
-      { id: "split-dir", label: "Split side by side or stacked", group: "View", shortcut: "⌘⌥\\", run: flipSplit },
-      { id: "close", label: "Close current tab", group: "Workspace", shortcut: "⌘W", run: () => closeTab(focusedId) },
+      { id: "split", label: "Toggle split panes", group: "View", shortcut: keys("⌘\\"), run: splitWorkspace },
+      { id: "split-dir", label: "Split side by side or stacked", group: "View", shortcut: keys("⌘⌥\\"), run: flipSplit },
+      { id: "close", label: "Close current tab", group: "Workspace", shortcut: keys("⌘W"), run: () => closeTab(focusedId) },
     );
-    if (tabs.find((t) => t.id === focusedId)?.type === "file") items.push({ id: "save", label: "Save current file", group: "Editor", shortcut: "⌘S", run: () => void saveTab(focusedId!) });
-    if (s.tabs.some((t) => t.type === "terminal" && t.attention)) items.unshift({ id: "waiting", label: "Jump to next waiting agent", group: "Terminal", shortcut: "⌘⇧A", run: jumpToWaiting });
-    items.push({ id: "ssh-new", label: "New SSH connection", group: "SSH", shortcut: "⌘⇧N", run: () => s.setModal({ kind: "ssh", id: null }) });
+    if (tabs.find((t) => t.id === focusedId)?.type === "file") items.push({ id: "save", label: "Save current file", group: "Editor", shortcut: keys("⌘S"), run: () => void saveTab(focusedId!) });
+    if (s.tabs.some((t) => t.type === "terminal" && t.attention)) items.unshift({ id: "waiting", label: "Jump to next waiting agent", group: "Terminal", shortcut: keys("⌘⇧A"), run: jumpToWaiting });
+    items.push({ id: "ssh-new", label: "New SSH connection", group: "SSH", shortcut: keys("⌘⇧N"), run: () => s.setModal({ kind: "ssh", id: null }) });
     items.push(...s.connections.map((c) => ({ id: `ssh-${c.id}`, label: `Connect: ${c.name} (${connectionLabel(c)})`, group: "SSH", run: () => openConnection(c.id) })));
     items.push(...projects.map((p) => ({ id: `project-${p.id}`, label: `Switch project: ${p.name}`, group: "Projects", run: () => s.selectProject(p.id) })));
     items.push(...tabs.map((t) => ({ id: `tab-${t.id}`, label: `${(t.type === "terminal" && t.sshId ? s.connections.find((c) => c.id === t.sshId)?.name : t.title) || (t.type === "terminal" ? TOOL_LABEL[t.tool] : "File")} · ${projects.find((p) => p.id === t.projectId)?.name ?? ""}`, group: "Open tabs", run: () => s.selectTab(t.id) })));
@@ -69,7 +73,7 @@ function Palette() {
     }}>
       <div className="qo-input"><Search size={16} /><input ref={input} role="combobox" aria-label="Search commands" aria-expanded="true" aria-controls="command-results" aria-activedescendant={results[selected] ? `command-${results[selected].id}` : undefined} placeholder="What would you like to do?" value={query} onChange={(e) => { setQuery(e.target.value); setIndex(0); }} /><kbd>esc</kbd></div>
       <div className="qo-list" id="command-results" role="listbox" ref={list}>{results.map((action, i) => <div key={action.id} id={`command-${action.id}`} role="option" aria-selected={i === selected} className={"qo-item" + (i === selected ? " is-active" : "")} onMouseMove={() => setIndex(i)} onMouseDown={(e) => e.preventDefault()} onClick={() => choose(action)}><Command size={13} /><span className="qo-name">{action.label}</span><span className="qo-dir">{action.group}</span>{action.shortcut && <kbd>{action.shortcut}</kbd>}</div>)}{!results.length && <p className="qo-note">No matching commands.</p>}</div>
-      <footer className="palette-foot"><span>↑↓ navigate</span><span>↵ run command</span><kbd>⌘⇧P</kbd></footer>
+      <footer className="palette-foot"><span>↑↓ navigate</span><span>↵ run command</span><kbd>{keys("⌘⇧P")}</kbd></footer>
     </div>
   </div>;
 }
