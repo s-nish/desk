@@ -18,7 +18,8 @@ export function toSlash(path: string) {
 /** Quotes a word for the shell a terminal runs: zsh/bash on macOS, PowerShell on Windows. */
 export function shellWord(word: string) {
   if (/^[\w@%+=:,./-]+$/.test(word)) return word;
-  return isWindows ? `'${word.replace(/'/g, "''")}'` : `'${word.replace(/'/g, `'\\''`)}'`;
+  // PowerShell also ends a quoted string at the curly single quotes ‘ ’ ‚ ‛; each is doubled like '.
+  return isWindows ? `'${word.replace(/['‘’‚‛]/g, (q) => q + q)}'` : `'${word.replace(/'/g, `'\\''`)}'`;
 }
 
 /** Runs `second` only if `first` succeeded, in the terminal's shell (Windows PowerShell 5 has no `&&`). */
