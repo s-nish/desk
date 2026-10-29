@@ -48,9 +48,17 @@ export interface Preferences {
   alertBadge: boolean;
   /** Bounce the Dock icon once when an agent starts waiting and Desk is in the background. */
   alertBounce: boolean;
+  /** Claude Code and Codex in terminal tabs, or drawn as a chat. Both run the same CLIs. */
+  uiMode: "terminal" | "chat";
+  /** Highlight color for toggles, selection and focus; "neutral" follows the theme. */
+  accentColor: "neutral" | "sand" | "sage" | "sky" | "rose" | "amber" | "coral";
+  corners: "sharp" | "soft" | "round";
+  chatFontSize: number;
+  chatWidth: "narrow" | "comfortable" | "wide";
+  chatToolsOpen: boolean;
 }
 
-export const DEFAULT_PREFERENCES: Preferences = { theme: "black", density: "comfortable", fontSize: 14, showProjectAccounts: false, accent: "neutral", showStatusBar: true, showPaths: false, showAccountEmails: false, accountColors: false, reduceMotion: false, terminalTheme: "desk", editorTheme: "desk", terminalColors: {}, cursorStyle: "bar", cursorBlink: true, smoothScroll: true, agentAlerts: true, usageLimits: true, alertBadge: true, alertBounce: true };
+export const DEFAULT_PREFERENCES: Preferences = { theme: "black", density: "comfortable", fontSize: 14, showProjectAccounts: false, accent: "neutral", showStatusBar: true, showPaths: false, showAccountEmails: false, accountColors: false, reduceMotion: false, terminalTheme: "desk", editorTheme: "desk", terminalColors: {}, cursorStyle: "bar", cursorBlink: true, smoothScroll: true, agentAlerts: true, usageLimits: true, alertBadge: true, alertBounce: true, uiMode: "terminal", accentColor: "neutral", corners: "soft", chatFontSize: 14, chatWidth: "comfortable", chatToolsOpen: false };
 
 export type Modal =
   | { kind: "settings"; section?: string }
@@ -205,6 +213,18 @@ function mergeAccounts(accounts: Account[], detected: DetectedAccount[]) {
   return { accounts: out, identities };
 }
 
+/** The chat view shows terminal tabs (SSH included) in its own tab strip; chat.ts sets this. */
+export const chatView: { showTerminal: ((tabId: string) => void) | null } = { showTerminal: null };
+
+/** Makes an opened or picked tab visible: a terminal joins the chat view's tabs; anything
+ * else (a file) is only shown in the terminal view, so that view comes back. */
+function showTabs(tab: Tab | undefined) {
+  const s = useDesk.getState();
+  if (s.preferences.uiMode !== "chat" || !tab) return;
+  if (tab.type === "terminal" && chatView.showTerminal) chatView.showTerminal(tab.id);
+  else s.setPreferences({ uiMode: "terminal" });
+}
+
 export const useDesk = create<DeskState>((set, get) => ({
   loaded: false,
   accounts: [],
@@ -354,6 +374,7 @@ export const useDesk = create<DeskState>((set, get) => ({
   },
 
   addTab(tab) {
+    showTabs(tab);
     set((s) => {
       // Keep each project's tabs next to each other in the shared tab bar.
       const tabs = [...s.tabs];
@@ -400,6 +421,7 @@ export const useDesk = create<DeskState>((set, get) => ({
   },
 
   selectTab(tabId) {
+    showTabs(get().tabs.find((t) => t.id === tabId));
     set((s) => {
       const tab = s.tabs.find((t) => t.id === tabId);
       if (!tab) return {};

@@ -14,6 +14,12 @@ export const THEMES = [
   { id: "midnight", name: "Midnight", description: "A little deeper after dark", bg: "#0e1524", surface: "#121c2e", accent: "#91baff", light: false },
   { id: "forest", name: "Forest", description: "A calmer kind of workspace", bg: "#101a17", surface: "#15211c", accent: "#a6d8b5", light: false },
   { id: "paper-warm", name: "Paper", description: "Light, warm, and clear", bg: "#faf9f6", surface: "#f3f2ed", accent: "#52633d", light: true },
+  { id: "slate", name: "Slate", description: "Cool blue-grey, easy on the eyes", bg: "#15191f", surface: "#1b2027", accent: "#c9d6e6", light: false },
+  { id: "espresso", name: "Espresso", description: "Warm roast browns", bg: "#1a1613", surface: "#211c18", accent: "#ead6bd", light: false },
+  { id: "ocean", name: "Ocean", description: "Deep teal, calm water", bg: "#0c1a1c", surface: "#112225", accent: "#a0d9d3", light: false },
+  { id: "rosewood", name: "Rosewood", description: "Dark wood with a blush", bg: "#1b1416", surface: "#231a1d", accent: "#efbcc6", light: false },
+  { id: "sepia", name: "Sepia", description: "Old paper, brown ink", bg: "#f6efe2", surface: "#ede4d3", accent: "#6b4e2e", light: true },
+  { id: "glacier", name: "Glacier", description: "Crisp, cool and bright", bg: "#f4f7fa", surface: "#e9eef3", accent: "#2d4a63", light: true },
 ] as const;
 
 export type ThemeId = (typeof THEMES)[number]["id"];

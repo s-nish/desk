@@ -171,3 +171,56 @@
 .editor-color-preview .cm-content { padding: 16px !important; }
 .editor-themes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .editor-theme-note { display: block; font-size: 11px; color: var(--muted); padding: 4px 2px; line-height: 1.5; }
+
+/* More palettes */
+:root[data-theme="slate"] {
+  --bg: #15191f; --surface: #1b2027; --bg-raised: #222831; --bg-hover: #272e38; --bg-press: #303844; --bg-overlay: #1f252d;
+  --line: #2a313c; --line-strong: #414b59; --text: #e8edf3; --text-2: #c3ccd8; --muted: #95a1b1; --muted-2: #8793a3;
+  --accent: #c9d6e6; --accent-ink: #18212d; --selection: #8fb0d640;
+}
+:root[data-theme="espresso"] {
+  --bg: #1a1613; --surface: #211c18; --bg-raised: #2a231e; --bg-hover: #302822; --bg-press: #3a3029; --bg-overlay: #251f1a;
+  --line: #352c25; --line-strong: #52453a; --text: #f1e8de; --text-2: #d6c8b8; --muted: #ab9c8b; --muted-2: #9c8d7c;
+  --accent: #ead6bd; --accent-ink: #2a1d10; --selection: #d9b98a40;
+  --syntax-keyword: #e8a87c; --syntax-string: #c9d18c; --syntax-number: #e7c07a; --syntax-function: #f1d6ad; --syntax-type: #a9c7a0;
+}
+:root[data-theme="ocean"] {
+  --bg: #0c1a1c; --surface: #112225; --bg-raised: #172c30; --bg-hover: #1c3439; --bg-press: #243f45; --bg-overlay: #142729;
+  --line: #213a3e; --line-strong: #375a60; --text: #e3f1ef; --text-2: #bcd6d3; --muted: #8fb0ac; --muted-2: #81a29e;
+  --accent: #a0d9d3; --accent-ink: #0d2826; --selection: #72c7bd40;
+  --syntax-keyword: #f0a59c; --syntax-string: #a8dcb0; --syntax-number: #e9c98b; --syntax-function: #8fd0f0; --syntax-type: #a0d9d3;
+}
+:root[data-theme="rosewood"] {
+  --bg: #1b1416; --surface: #231a1d; --bg-raised: #2c2125; --bg-hover: #33262b; --bg-press: #3d2e33; --bg-overlay: #261d20;
+  --line: #382a2f; --line-strong: #574149; --text: #f4e7ea; --text-2: #dcc6cc; --muted: #b1979e; --muted-2: #a2888f;
+  --accent: #efbcc6; --accent-ink: #3a1720; --selection: #e5a0ae40;
+  --syntax-keyword: #f0a0b3; --syntax-string: #d9c79a; --syntax-number: #f2b88a; --syntax-function: #c8b7f0; --syntax-type: #a7d1b8;
+}
+:root[data-theme="sepia"] {
+  color-scheme: light;
+  --bg: #f6efe2; --surface: #ede4d3; --bg-raised: #fbf6ec; --bg-hover: #e6dcc8; --bg-press: #ddd1ba; --bg-overlay: #faf4e8;
+  --line: #ddd0b8; --line-strong: #c4b394; --text: #3b2f22; --text-2: #574634; --muted: #7a6650; --muted-2: #87725b;
+  --accent: #6b4e2e; --accent-ink: #fbf6ec; --selection: #c8a46a45; --danger: #a8352b;
+  --syntax-keyword: #9c3d2e; --syntax-string: #5d6b25; --syntax-number: #8a4f9a; --syntax-function: #8b5a14; --syntax-type: #2f6a63;
+}
+:root[data-theme="glacier"] {
+  color-scheme: light;
+  --bg: #f4f7fa; --surface: #e9eef3; --bg-raised: #ffffff; --bg-hover: #e1e8ef; --bg-press: #d6dfe8; --bg-overlay: #f9fbfd;
+  --line: #d4dde6; --line-strong: #b1bfcc; --text: #1b2733; --text-2: #354453; --muted: #586878; --muted-2: #657585;
+  --accent: #2d4a63; --accent-ink: #ffffff; --selection: #7fa5c845; --danger: #b2303a;
+  --syntax-keyword: #a3324a; --syntax-string: #1f6a52; --syntax-number: #7046a0; --syntax-function: #1f5b93; --syntax-type: #8a5a12;
+}
+
+/* Accent colors: toggles, selection rings, focus and the send button */
+:root[data-accent-color="sand"] { --ui-accent: #d9bc8c; --ui-accent-ink: #231a0b; }
+:root[data-accent-color="sage"] { --ui-accent: #9cc9a6; --ui-accent-ink: #11261a; }
+:root[data-accent-color="sky"] { --ui-accent: #8fbbea; --ui-accent-ink: #0f2033; }
+:root[data-accent-color="rose"] { --ui-accent: #eba3b3; --ui-accent-ink: #34121c; }
+:root[data-accent-color="amber"] { --ui-accent: #f2b457; --ui-accent-ink: #2d1c04; }
+:root[data-accent-color="coral"] { --ui-accent: #ef8f76; --ui-accent-ink: #34130a; }
+:root[data-color-scheme="light"][data-accent-color="sand"] { --ui-accent: #9a7337; --ui-accent-ink: #ffffff; }
+:root[data-color-scheme="light"][data-accent-color="sage"] { --ui-accent: #3f7a4f; --ui-accent-ink: #ffffff; }
+:root[data-color-scheme="light"][data-accent-color="sky"] { --ui-accent: #2f6aa8; --ui-accent-ink: #ffffff; }
+:root[data-color-scheme="light"][data-accent-color="rose"] { --ui-accent: #b04562; --ui-accent-ink: #ffffff; }
+:root[data-color-scheme="light"][data-accent-color="amber"] { --ui-accent: #a86a06; --ui-accent-ink: #ffffff; }
+:root[data-color-scheme="light"][data-accent-color="coral"] { --ui-accent: #c04a2c; --ui-accent-ink: #ffffff; }

@@ -1,9 +1,11 @@
-import { useState } from "react";
-import { Search, Settings2, ChevronDown, Copy, Ellipsis, Eye, Folder, FolderOpen, FolderSearch, GitBranch, GitBranchPlus, GitMerge, KeyRound, LogIn, Palette, Pencil, Plug, Plus, Server, SquareTerminal, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Search, Settings2, ChevronDown, ChevronRight, Copy, Ellipsis, Eye, Folder, FolderOpen, FolderSearch, GitBranch, GitBranchPlus, GitMerge, KeyRound, LogIn, Palette, Pencil, Plug, Plus, Server, SquareTerminal, Trash2 } from "lucide-react";
 import { ACCOUNT_COLORS, TOOL_LABEL, projectAccount, projectTree, useDesk } from "../store";
-import { addProjectsFromDialog, chooseProjectAccount, connectionLabel, deleteConnection, mergeWorktree, openConnection, openTerminal, removeAccount, removeProject, removeWorktree, saveConnection } from "../actions";
+import { addProjectsFromDialog, chooseProjectAccount, resumeSession, connectionLabel, deleteConnection, mergeWorktree, openConnection, openTerminal, removeAccount, removeProject, removeWorktree, saveConnection } from "../actions";
 import { ipc } from "../ipc";
 import { DeskLogo } from "./DeskLogo";
+import { ToolGlyph, shortTime, useExpanded } from "./Chat";
+import { loadSessions, useChats } from "../chat";
 import { openMenu } from "./Menu";
 import type { Account, MenuItem, Project, SshConnection, Tool } from "../types";
 
@@ -223,6 +225,38 @@ function ProjectRow({ project, index }: { project: Project; index: number }) {
   );
 }
 
+/** The project's past conversations, folded away until opened. Clicking one resumes it in a tab. */
+function ProjectSessions({ project }: { project: Project }) {
+  const [open, setOpen] = useExpanded(project.id);
+  const sessions = useChats((s) => s.sessions[project.path]);
+  const tabs = useDesk((s) => s.tabs);
+  const running = tabs.flatMap((t) => (t.type === "terminal" && t.status !== "exited" ? [t.sessionId, t.resume] : []));
+  const [all, setAll] = useState(false);
+  useEffect(() => { if (open || !sessions) void loadSessions(project); }, [open, project.path]); // eslint-disable-line react-hooks/exhaustive-deps
+  const list = sessions ?? [];
+  const shown = all ? list : list.slice(0, 6);
+  return (
+    <div className="project-sessions">
+      <button className="project-sessions-toggle" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <ChevronRight size={12} className={"chat-project-caret" + (open ? " is-open" : "")} />
+        <span>Conversations</span>
+        {sessions && <span className="section-count">{list.length}</span>}
+      </button>
+      {open && <div className="project-sessions-list">
+        {shown.map((s) => (
+          <button key={s.tool + s.id} className={"chat-row" + (running.includes(s.id) ? " is-active" : "")} title={`${s.title}\n${TOOL_LABEL[s.tool]}, click to resume in a tab`} onClick={() => resumeSession(s, project.id)}>
+            <ToolGlyph tool={s.tool} />
+            <span className="chat-row-title">{s.title}</span>
+            <span className="chat-row-time">{shortTime(s.updated)}</span>
+          </button>
+        ))}
+        {list.length > 6 && <button className="chat-more" onClick={() => setAll(!all)}>{all ? "Show less" : `Show ${list.length - 6} more`}</button>}
+        {sessions && !list.length && <p className="chat-none">No conversations yet</p>}
+      </div>}
+    </div>
+  );
+}
+
 function Projects() {
   const projects = useDesk((s) => s.projects);
   const [query, setQuery] = useState("");
@@ -243,6 +277,7 @@ function Projects() {
         {tree.map(({ root, worktrees }) => (
           <div key={root.id} className={"project-group" + (worktrees.length ? " has-worktrees" : "")}>
             <ProjectRow project={root} index={projects.indexOf(root)} />
+            <ProjectSessions project={root} />
             {worktrees.length > 0 && <div className="worktree-list">{worktrees.map((w) => <WorktreeRow key={w.id} project={w} />)}</div>}
           </div>
         ))}
@@ -429,7 +464,7 @@ export function ConnectionRow({ connection, from }: { connection: SshConnection;
   );
 }
 
-function Connections() {
+export function Connections() {
   const connections = useDesk((s) => s.connections);
   const open = useDesk((s) => s.layout.sshOpen);
   const setLayout = useDesk((s) => s.setLayout);

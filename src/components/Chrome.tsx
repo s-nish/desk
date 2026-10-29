@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Bell, Command, GitBranch, Settings2 } from "lucide-react";
+import { Bell, Command, GitBranch, MessagesSquare, Settings2, SquareTerminal } from "lucide-react";
 import { homeDir } from "@tauri-apps/api/path";
 import { useShallow } from "zustand/react/shallow";
 import { TOOL_LABEL, projectAccount, shortPath, tabAccount, useDesk, focusedTabId, waitingTabs } from "../store";
@@ -62,6 +62,7 @@ export function TitleBar() {
       </div>
       <div className="titlebar-right" data-tauri-drag-region>
         <WaitingButton />
+        <ViewSwitch />
         <button className="icon-btn" aria-label="Open command palette" title="Command palette (⌘⇧P)" onClick={() => useDesk.getState().setCommandOpen(true)}><Command size={15} /></button>
         <button className="icon-btn" aria-label="Open settings" title="Settings (⌘,)" onClick={() => useDesk.getState().setModal({ kind: "settings" })}><Settings2 size={15} /></button>
         <button
@@ -74,6 +75,18 @@ export function TitleBar() {
         </button>
       </div>
     </header>
+  );
+}
+
+/** Flips between terminal tabs and the chat view. */
+function ViewSwitch() {
+  const mode = useDesk((s) => s.preferences.uiMode);
+  const set = (uiMode: "terminal" | "chat") => useDesk.getState().setPreferences({ uiMode });
+  return (
+    <div className="view-switch" role="radiogroup" aria-label="Agent view">
+      <button role="radio" aria-checked={mode === "terminal"} className={mode === "terminal" ? "is-on" : ""} title="Terminal view" onClick={() => set("terminal")}><SquareTerminal size={13} /></button>
+      <button role="radio" aria-checked={mode === "chat"} className={mode === "chat" ? "is-on" : ""} title="Chat view" onClick={() => set("chat")}><MessagesSquare size={13} /></button>
+    </div>
   );
 }
 

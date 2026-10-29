@@ -17,7 +17,7 @@ try {
   await page.getByRole('heading', { name: 'studio', exact: true }).waitFor();
   assert.equal(await page.locator('.project.is-active').evaluate(el => getComputedStyle(el).boxShadow), 'none');
   await page.getByRole('button', { name: 'Open settings' }).click();
-  assert.equal(await page.locator('.theme-option').count(), 14);
+  assert.equal(await page.locator('.theme-option').count(), 20);
   const contrastResults = [];
   for (const name of ['Black', 'Obsidian', 'Graphite', 'Dim Soft', 'Light', 'Porcelain', 'Silver', 'Mist']) {
     await page.locator('.theme-option').filter({ has: page.locator('.theme-name', { hasText: new RegExp(`^${name}$`) }) }).click();

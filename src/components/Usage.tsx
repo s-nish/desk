@@ -61,13 +61,18 @@ export function UsageChip({ account }: { account: Account }) {
   const ref = useRef<HTMLButtonElement>(null);
   if (!enabled) return null;
   const windows = [limits?.session, limits?.weekly].filter(Boolean).map((w) => effective(w!, now));
-  // The 5-hour window unless the weekly one is closer to running out.
-  const shown = windows.reduce<UsageWindow | null>((a, w) => (!a || w.used > a.used + 0.5 ? w : a), null);
-  const label = shown ? `${TOOL_LABEL[account.kind]} ${windowName(shown).toLowerCase()} usage ${Math.round(shown.used)}%` : `${TOOL_LABEL[account.kind]} usage limits`;
+  const short = (w: UsageWindow) => (w.minutes === 10080 ? "wk" : w.minutes % 60 === 0 ? `${w.minutes / 60}h` : `${w.minutes}m`);
+  const label = windows.length ? `${TOOL_LABEL[account.kind]} usage: ${windows.map((w) => `${windowName(w).toLowerCase()} ${Math.round(w.used)}%`).join(", ")}` : `${TOOL_LABEL[account.kind]} usage limits`;
   return (
     <>
-      <button ref={ref} className={"status-usage" + (open ? " is-open" : "")} aria-label={label} aria-expanded={open} title={shown ? `${windowName(shown)} limit: ${Math.round(shown.used)}% used` : "Usage limits"} onClick={() => { setOpen(!open); if (!open) void refreshLimits(); }}>
-        {shown ? <><Meter used={shown.used} /><span className={"usage-percent" + level(shown.used)}>{Math.round(shown.used)}%</span></> : <Gauge size={12} />}
+      <button ref={ref} className={"status-usage" + (open ? " is-open" : "")} aria-label={label} aria-expanded={open} title={windows.length ? windows.map((w) => `${windowName(w)} limit: ${Math.round(w.used)}% used${w.resetsAt ? `, ${resetText(w.resetsAt, now).toLowerCase()}` : ""}`).join("\n") : "Usage limits"} onClick={() => { setOpen(!open); if (!open) void refreshLimits(); }}>
+        {windows.length ? windows.map((w) => (
+          <span key={w.minutes} className="usage-pair">
+            <span className="usage-window-tag">{short(w)}</span>
+            <Meter used={w.used} />
+            <span className={"usage-percent" + level(w.used)}>{Math.round(w.used)}%</span>
+          </span>
+        )) : <Gauge size={12} />}
       </button>
       {open && <UsagePopover anchor={ref} focus={account} onClose={() => setOpen(false)} />}
     </>

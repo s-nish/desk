@@ -23,6 +23,16 @@ export const ipc = {
   ptyWriteBytes: (id: number, data: number[]) => invoke<void>("pty_write_bytes", { id, data }),
   ptyResize: (id: number, cols: number, rows: number) => invoke<void>("pty_resize", { id, cols, rows }),
   ptyKill: (id: number) => invoke<void>("pty_kill", { id }),
+  chatSpawn(opts: { cwd: string; args: string[]; env: Record<string, string>; unset: string[]; stdin: boolean }, onLine: (line: string) => void): Promise<number> {
+    const channel = new Channel<string>();
+    channel.onmessage = onLine;
+    return invoke("chat_spawn", { opts, onLine: channel });
+  },
+  chatWrite: (id: number, line: string) => invoke<void>("chat_write", { id, line }),
+  chatKill: (id: number) => invoke<void>("chat_kill", { id }),
+  codexModels: (dir: string | null) => invoke<{ id: string; label: string; description?: string; efforts?: string[]; defaultEffort?: string }[]>("codex_models", { dir }),
+  chatHistory: (tool: string, dir: string | null, cwd: string, id: string) =>
+    invoke<{ records: Record<string, unknown>[]; truncated: boolean }>("chat_history", { tool, dir, cwd, id }),
   ptySetBackground: (id: number, background: boolean) => invoke<void>("pty_set_background", { id, background }),
 
   accountsDetect: () => invoke<DetectedAccount[]>("accounts_detect"),

@@ -32,6 +32,8 @@ import { isLightTheme, resolvedTheme } from "./appearance";
 import { updateEditorAppearance } from "./editors";
 import { clearTerminal, pasteIntoTerminal, updateTerminalAppearance } from "./terminals";
 import { Sidebar } from "./components/Sidebar";
+import { ChatSidebar, ChatView } from "./components/Chat";
+import { closeChat, closeStripTab, newChat, showStripTab, useChats } from "./chat";
 import { Workspace } from "./components/Workspace";
 import { ProjectTools } from "./components/ProjectTools";
 import { Splitter, StatusBar, TitleBar } from "./components/Chrome";
@@ -72,6 +74,14 @@ function cycleTab(step: number) {
   selectTab(tabs[(i + step + tabs.length) % tabs.length].id);
 }
 
+/** Ctrl+Tab in the chat view: through its own tabs. */
+function cycleStrip(step: number) {
+  const { strip, termId, activeId } = useChats.getState();
+  if (!strip.length) return;
+  const i = strip.indexOf(termId ? `t:${termId}` : `c:${activeId}`);
+  showStripTab(strip[(i + step + strip.length) % strip.length]);
+}
+
 function cycleProject(step: number) {
   const s = useDesk.getState();
   if (!s.projects.length) return;
@@ -92,8 +102,16 @@ function onKeyDown(e: KeyboardEvent) {
   const cmd = e.metaKey && !e.ctrlKey;
   let handled = true;
 
-  if (e.ctrlKey && !e.metaKey && e.key === "Tab") cycleTab(e.shiftKey ? -1 : 1);
+  const chat = s.preferences.uiMode === "chat";
+  if (e.ctrlKey && !e.metaKey && e.key === "Tab") { if (chat) cycleStrip(e.shiftKey ? -1 : 1); else cycleTab(e.shiftKey ? -1 : 1); }
   else if (!cmd) handled = false;
+  // In chat view ⌘W closes the chat, and keys that act on the hidden tabs do nothing.
+  else if (chat && e.key === "w" && !e.shiftKey) {
+    const { activeId, termId } = useChats.getState();
+    if (termId) { closeStripTab(`t:${termId}`); closeTab(termId); }
+    else if (activeId) closeChat(activeId);
+  }
+  else if (chat && (e.code === "Backslash" || e.code === "BracketLeft" || e.code === "BracketRight" || (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) || (!e.shiftKey && (e.key === "k" || e.key === "s")))) handled = true;
   else if (e.key.toLowerCase() === "p" && e.shiftKey) s.setCommandOpen(!s.commandOpen);
   else if (e.key.toLowerCase() === "f" && e.shiftKey) s.setLayout({ filesOpen: true, panel: "search" });
   // ⌥ changes the typed character on macOS, so match the physical key.
@@ -103,6 +121,8 @@ function onKeyDown(e: KeyboardEvent) {
   else if (e.key.toLowerCase() === "a" && e.shiftKey) jumpToWaiting();
   else if (e.key.toLowerCase() === "t" && e.shiftKey && project) s.setModal({ kind: "worktree", projectId: project.id });
   else if (e.key === ",") s.setModal({ kind: "settings" });
+  // In chat view the same keys start chats; ⌘J still opens a shell tab.
+  else if (chat && project && !e.shiftKey && !e.altKey && (e.key === "n" || e.key === "t" || (e.key === "d" && !inEditor(e)) || e.key === "e")) newChat(project.id, e.key === "e" ? "codex" : e.key === "n" ? undefined : "claude");
   else if (e.key === "t" && !e.shiftKey && project) openTerminal(project.id, "claude");
   // ⌘D/⌘E/⌘J open Claude Code, Codex or a shell in the selected project. In the
   // editor ⌘D keeps its "select next occurrence" meaning.
@@ -178,6 +198,10 @@ export function App() {
       document.documentElement.dataset.accent = preferences.accent;
       document.documentElement.dataset.accountColors = preferences.accountColors ? "on" : "off";
       document.documentElement.dataset.motion = preferences.reduceMotion ? "reduced" : "system";
+      document.documentElement.dataset.accentColor = preferences.accentColor;
+      document.documentElement.dataset.corners = preferences.corners;
+      document.documentElement.style.setProperty("--chat-font", `${preferences.chatFontSize}px`);
+      document.documentElement.style.setProperty("--chat-width", { narrow: "680px", comfortable: "820px", wide: "1040px" }[preferences.chatWidth]);
       document.documentElement.style.setProperty("--code-size", `${preferences.fontSize}px`);
       updateTerminalAppearance();
       updateEditorAppearance();
@@ -250,12 +274,12 @@ export function App() {
         {layout.sidebarOpen && (
           <>
             <div className="col" style={{ width: layout.sidebarWidth }}>
-              <Sidebar />
+              {preferences.uiMode === "chat" ? <ChatSidebar /> : <Sidebar />}
             </div>
             <Splitter value={layout.sidebarWidth} side="left" min={190} max={420} onChange={(v) => setLayout({ sidebarWidth: v })} />
           </>
         )}
-        <Workspace />
+        {preferences.uiMode === "chat" ? <ChatView /> : <Workspace />}
         {layout.filesOpen && (
           <>
             <Splitter value={layout.filesWidth} side="right" min={200} max={520} onChange={(v) => setLayout({ filesWidth: v })} />

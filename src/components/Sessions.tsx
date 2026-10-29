@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowUpRight, Columns2, Copy, Ellipsis, FolderTree, MessagesSquare, Play, RefreshCw, Search } from "lucide-react";
 import { TOOL_LABEL, useDesk } from "../store";
-import { accountDirs, openInSplit, resumeSession } from "../actions";
+import { accountDirs, openInSplit, resumeSession, searchConversations } from "../actions";
 import { ipc } from "../ipc";
 import { openMenu } from "./Menu";
 import type { AgentSession, Project, Tool } from "../types";
@@ -144,7 +144,7 @@ export function SessionsPanel({ project }: { project: Project }) {
     <div className="tool-panel">
       <header className="side-header"><h2>History</h2><button className="icon-btn" aria-label="Refresh conversations" disabled={loading} onClick={refresh}><RefreshCw size={13} className={loading ? "is-spinning" : ""} /></button></header>
       <div className="tool-inputs">
-        <label className="panel-search"><Search size={13} /><input aria-label="Search conversations" placeholder="Search conversations…" value={query} onChange={(e) => setQuery(e.target.value)} /></label>
+        <label className="panel-search sessions-search"><Search size={13} /><input aria-label="Search conversations" placeholder="Search conversations…" value={query} onChange={(e) => setQuery(e.target.value)} /></label>
         <div className="segmented is-small" role="radiogroup" aria-label="Show conversations from">
           {(["all", "claude", "codex"] as const).map((t) => (
             <button key={t} role="radio" aria-checked={tool === t} className={tool === t ? "is-on" : ""} onClick={() => setTool(t)}>
@@ -179,7 +179,10 @@ export function RecentSessions({ project }: { project: Project }) {
   if (!recent.length) return null;
   return (
     <section className="recent-sessions">
-      <h2 className="launch-section-title">Continue a conversation</h2>
+      <div className="recent-head">
+        <h2 className="launch-section-title">Continue a conversation</h2>
+        <button className="text-button" onClick={searchConversations}><Search size={13} />Search all {list!.length}</button>
+      </div>
       <div className="recent-list">
         {recent.map((s) => {
           const folder = where(s, project);

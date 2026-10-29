@@ -18,7 +18,9 @@ function setZone(zone: DropZone | null) {
 }
 
 /** Pointer dragging works in the desktop webview without intercepting file drops. */
-export function useTabReorder(scroller: RefObject<HTMLDivElement | null>) {
+export function useTabReorder(scroller: RefObject<HTMLDivElement | null>, move?: (id: string, before: string | null) => void) {
+  const moveTo = useRef(move);
+  moveTo.current = move;
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [landing, setLanding] = useState<{ before: string | null } | null>(null);
   const gesture = useRef<{ id: string; pointerId: number; startX: number; startY: number; x: number; y: number; dragging: boolean } | null>(null);
@@ -54,7 +56,7 @@ export function useTabReorder(scroller: RefObject<HTMLDivElement | null>) {
         });
         next = { before: before?.dataset.tabId ?? null };
         setZone(null);
-      } else setZone(zoneAt(drag.x, drag.y));
+      } else if (!moveTo.current) setZone(zoneAt(drag.x, drag.y));
       if ((target.current === null) !== (next === null) || target.current?.before !== next?.before) {
         target.current = next;
         setLanding(next);
@@ -84,8 +86,8 @@ export function useTabReorder(scroller: RefObject<HTMLDivElement | null>) {
       }
       const box = scroller.current?.getBoundingClientRect();
       if (drag.dragging && target.current && box && e.clientY >= box.top && e.clientY <= box.bottom && e.clientX >= box.left - 24 && e.clientX <= box.right + 24) {
-        useDesk.getState().moveTab(drag.id, target.current.before);
-      } else if (drag.dragging) {
+        (moveTo.current ?? useDesk.getState().moveTab)(drag.id, target.current.before);
+      } else if (drag.dragging && !moveTo.current) {
         const zone = zoneAt(e.clientX, e.clientY);
         if (zone) openInSplit(drag.id, zone);
       }

@@ -210,7 +210,7 @@ function tabMenu(tab: Tab): MenuItem[] {
 }
 
 /** Terminal titles often start with spinner glyphs; keep the readable part. */
-function cleanTitle(title: string) {
+export function cleanTitle(title: string) {
   return title.replace(/^[^\p{L}\p{N}]+/u, "").trim();
 }
 
@@ -322,7 +322,7 @@ function terminalHooks(tabId: string) {
   };
 }
 
-function TerminalPane({ tab, visible, focused }: { tab: TerminalTab; visible: boolean; focused: boolean }) {
+export function TerminalPane({ tab, visible, focused }: { tab: TerminalTab; visible: boolean; focused: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const project = useDesk((s) => s.projects.find((p) => p.id === tab.projectId));
   const accounts = useDesk((s) => s.accounts);

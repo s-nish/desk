@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Bell, Check, Code2, Keyboard, Monitor, Palette, Plus, RotateCcw, Server, SlidersHorizontal, SquareTerminal, Users } from "lucide-react";
+import { Fragment, useState } from "react";
+import { Bell, Check, Code2, Keyboard, MessagesSquare, Monitor, Palette, PanelsTopLeft, Plus, RotateCcw, Server, SquareTerminal, Users } from "lucide-react";
 import { THEMES } from "../appearance";
 import { DEFAULT_PREFERENCES, TOOL_LABEL, useDesk } from "../store";
 import { terminalTheme, deskTheme as terminalThemeForDesk } from "../terminals";
@@ -8,15 +8,46 @@ import { EditorSettings } from "./EditorSettings";
 import { AccountRow, ConnectionRow } from "./Sidebar";
 
 const sections = [
-  { id: "appearance", label: "Appearance", icon: Palette },
-  { id: "terminal", label: "Terminal", icon: SquareTerminal },
-  { id: "editor", label: "Editor", icon: Code2 },
-  { id: "workspace", label: "Workspace", icon: SlidersHorizontal },
-  { id: "alerts", label: "Alerts", icon: Bell },
-  { id: "ssh", label: "SSH", icon: Server },
-  { id: "accounts", label: "Accounts", icon: Users },
-  { id: "shortcuts", label: "Shortcuts", icon: Keyboard },
+  { id: "appearance", label: "Appearance", icon: Palette, group: "Personalize" },
+  { id: "chat", label: "Chat", icon: MessagesSquare, group: "Personalize" },
+  { id: "terminal", label: "Terminal", icon: SquareTerminal, group: "Personalize" },
+  { id: "editor", label: "Editor", icon: Code2, group: "Personalize" },
+  { id: "workspace", label: "Layout", icon: PanelsTopLeft, group: "Workspace" },
+  { id: "alerts", label: "Alerts", icon: Bell, group: "Workspace" },
+  { id: "accounts", label: "Accounts", icon: Users, group: "Connections" },
+  { id: "ssh", label: "SSH", icon: Server, group: "Connections" },
+  { id: "shortcuts", label: "Shortcuts", icon: Keyboard, group: "Help" },
 ] as const;
+
+const INTRO: Record<string, string> = {
+  appearance: "Themes, accent color and the shape of things.",
+  chat: "How conversations look when Claude Code and Codex run as a chat.",
+  terminal: "Readable output. Comfortable spacing. Your place in the scrollback.",
+  editor: "Distinct syntax colors for every file. Choose a palette that suits your work.",
+  workspace: "Keep what you need. Give your work room to breathe.",
+  alerts: "Know when Claude Code or Codex finishes, or needs an answer, while you're looking at something else.",
+  accounts: "Manage the accounts you use across your projects.",
+  ssh: "Saved commands that open in their own tab, with the password filled in.",
+  shortcuts: "Stay in the flow, with your hands on the keyboard.",
+};
+
+export const ACCENTS = [
+  { id: "neutral", name: "Neutral", color: "var(--text)" },
+  { id: "sand", name: "Sand", color: "#d9bc8c" },
+  { id: "sage", name: "Sage", color: "#9cc9a6" },
+  { id: "sky", name: "Sky", color: "#8fbbea" },
+  { id: "rose", name: "Rose", color: "#eba3b3" },
+  { id: "amber", name: "Amber", color: "#f2b457" },
+  { id: "coral", name: "Coral", color: "#ef8f76" },
+] as const;
+
+function Choice<T extends string | number>({ label, value, options, onChange }: { label: string; value: T; options: readonly (readonly [T, string])[]; onChange: (v: T) => void }) {
+  return <div className="segmented" role="radiogroup" aria-label={label}>{options.map(([v, text]) => <button key={String(v)} role="radio" aria-checked={value === v} className={value === v ? "is-on" : ""} onClick={() => onChange(v)}>{text}</button>)}</div>;
+}
+
+function Row({ label, description, children }: { label: string; description?: string; children: React.ReactNode }) {
+  return <div className="setting-row"><span><strong>{label}</strong>{description && <small>{description}</small>}</span>{children}</div>;
+}
 
 function Toggle({ label, description, checked, onChange }: { label: string; description: string; checked: boolean; onChange: () => void }) {
   return <button className="setting-row" role="switch" aria-checked={checked} onClick={onChange}>
@@ -35,30 +66,53 @@ export function Settings({ initial }: { initial?: string }) {
   const accounts = useDesk((s) => s.accounts);
   return <div className="settings-layout">
     <nav className="settings-nav" aria-label="Settings sections">
-      {sections.map(({ id, label, icon: Icon }) => <button key={id} aria-label={label} aria-current={section === id ? "page" : undefined} className={section === id ? "is-active" : ""} onClick={() => setSection(id)}><Icon size={16} /><span>{label}</span></button>)}
-      <span className="settings-local">Made for your workflow.<br />Saved on this Mac.</span>
+      {sections.map(({ id, label, icon: Icon, group }, i) => <Fragment key={id}>
+        {group !== sections[i - 1]?.group && <span className="settings-nav-group">{group}</span>}
+        <button aria-label={label} aria-current={section === id ? "page" : undefined} className={section === id ? "is-active" : ""} onClick={() => setSection(id)}><span className="settings-nav-icon"><Icon size={14} strokeWidth={1.8} /></span><span>{label}</span></button>
+      </Fragment>)}
+      <span className="settings-local">Saved on this Mac.</span>
     </nav>
     <div className="settings-content" key={section}>
-      <div className="settings-intro"><h2>{sections.find((s) => s.id === section)?.label}</h2><p>{section === "appearance" ? "Your original palettes, plus a new range of neutral shades." : section === "workspace" ? "Keep what you need. Give your work room to breathe." : section === "editor" ? "Distinct syntax colors for every file. Choose a palette that suits your work." : section === "terminal" ? "Readable output. Comfortable spacing. Your place in the scrollback." : section === "alerts" ? "Know when Claude Code or Codex finishes, or needs an answer, while you're looking at something else." : section === "ssh" ? "Saved commands that open in their own tab, with the password filled in." : section === "accounts" ? "Manage the accounts you use across your projects." : "Stay in the flow, with your hands on the keyboard."}</p></div>
+      <div className="settings-intro"><h2>{sections.find((s) => s.id === section)?.label}</h2><p>{INTRO[section]}</p></div>
       {section === "appearance" && <>
-        <div className="theme-families">{([false, true] as const).map((light) => <section className="theme-family" key={String(light)} aria-label={light ? "Light themes" : "Dark themes"}>
-        <h3 className="settings-label">{light ? "Light" : "Dark"}</h3>
-        <div className="theme-grid">{THEMES.filter((theme) => theme.light === light).map((theme) => <button key={theme.id} className={"theme-option" + (preferences.theme === theme.id ? " is-selected" : "")} aria-pressed={preferences.theme === theme.id} onClick={() => setPreferences({ theme: theme.id })}>
-          <span className="theme-preview" style={{ background: theme.bg, "--preview-surface": theme.surface, "--preview-accent": theme.accent } as React.CSSProperties}><span className="preview-sidebar"><i /><i /><i /></span><span className="preview-main"><i /><i /><i /><i /></span></span>
-          <span className="theme-name">{theme.name}{preferences.theme === theme.id && <Check size={14} />}</span><small>{theme.description}</small>
-        </button>)}</div></section>)}</div>
-        <button className={"system-theme" + (preferences.theme === "system" ? " is-selected" : "")} aria-pressed={preferences.theme === "system"} onClick={() => setPreferences({ theme: "system" })}><Monitor size={16} /><span>Match system appearance</span>{preferences.theme === "system" && <Check size={14} />}</button>
-        <div className="setting-row"><span><strong>Interface density</strong><small>Choose how much space your sidebar uses.</small></span><div className="segmented">{(["comfortable", "compact"] as const).map((density) => <button key={density} aria-pressed={preferences.density === density} className={preferences.density === density ? "is-on" : ""} onClick={() => setPreferences({ density })}>{density === "comfortable" ? "Comfortable" : "Compact"}</button>)}</div></div>
-        <label className="setting-row"><span><strong>Editor & terminal text</strong><small>Applies immediately to open files and sessions.</small></span><select aria-label="Editor and terminal text size" value={preferences.fontSize} onChange={(e) => setPreferences({ fontSize: Number(e.target.value) })}>{[11, 12, 13, 14, 15, 16, 18, 20].map((size) => <option key={size} value={size}>{size} px</option>)}</select></label>
-        <Toggle label="Colored account indicators" description="Use account colors in tabs and sidebar chips. Off keeps the interface neutral." checked={preferences.accountColors} onChange={() => setPreferences({ accountColors: !preferences.accountColors })} />
-        <Toggle label="Reduce interface motion" description="Keep Desk’s controls still. System accessibility preferences are also respected." checked={preferences.reduceMotion} onChange={() => setPreferences({ reduceMotion: !preferences.reduceMotion })} />
-        <button className="text-button" onClick={() => setPreferences({ theme: DEFAULT_PREFERENCES.theme, density: DEFAULT_PREFERENCES.density, fontSize: DEFAULT_PREFERENCES.fontSize, accountColors: DEFAULT_PREFERENCES.accountColors, reduceMotion: DEFAULT_PREFERENCES.reduceMotion })}>Reset appearance to defaults</button>
+        <h3 className="settings-label">Theme</h3>
+        <div className="settings-card theme-card">
+          {([false, true] as const).map((light) => <section className="theme-family" key={String(light)} aria-label={light ? "Light themes" : "Dark themes"}>
+            <span className="theme-family-name">{light ? "Light" : "Dark"}</span>
+            <div className="theme-grid">{THEMES.filter((theme) => theme.light === light).map((theme) => <button key={theme.id} className={"theme-option" + (preferences.theme === theme.id ? " is-selected" : "")} aria-pressed={preferences.theme === theme.id} title={theme.description} onClick={() => setPreferences({ theme: theme.id })}>
+              <span className="theme-preview" style={{ background: theme.bg, "--preview-surface": theme.surface, "--preview-accent": theme.accent } as React.CSSProperties}><span className="preview-sidebar"><i /><i /><i /></span><span className="preview-main"><i /><i /><b /></span></span>
+              <span className="theme-name">{theme.name}{preferences.theme === theme.id && <Check size={13} />}</span>
+            </button>)}</div>
+          </section>)}
+          <button className={"system-theme" + (preferences.theme === "system" ? " is-selected" : "")} aria-pressed={preferences.theme === "system"} onClick={() => setPreferences({ theme: "system" })}><Monitor size={15} /><span>Match system appearance</span>{preferences.theme === "system" && <Check size={14} />}</button>
+        </div>
+        <h3 className="settings-label">Accent</h3>
+        <div className="settings-card">
+          <Row label="Accent color" description="Used for toggles, selection, the send button and focus rings. Neutral follows the theme.">
+            <div className="accent-swatches" role="radiogroup" aria-label="Accent color">{ACCENTS.map((a) => <button key={a.id} role="radio" aria-checked={preferences.accentColor === a.id} aria-label={a.name} title={a.name} className={"accent-swatch" + (preferences.accentColor === a.id ? " is-on" : "")} style={{ "--swatch": a.color } as React.CSSProperties} onClick={() => setPreferences({ accentColor: a.id })}><i /></button>)}</div>
+          </Row>
+          <Row label="Corners" description="How rounded buttons, rows, tabs and panels are."><Choice label="Corners" value={preferences.corners} options={[["sharp", "Sharp"], ["soft", "Soft"], ["round", "Round"]]} onChange={(corners) => setPreferences({ corners })} /></Row>
+          <Row label="Interface density" description="How much space the sidebar uses."><Choice label="Interface density" value={preferences.density} options={[["comfortable", "Comfortable"], ["compact", "Compact"]]} onChange={(density) => setPreferences({ density })} /></Row>
+          <Row label="Editor & terminal text" description="Applies immediately to open files and sessions."><select aria-label="Editor and terminal text size" value={preferences.fontSize} onChange={(e) => setPreferences({ fontSize: Number(e.target.value) })}>{[11, 12, 13, 14, 15, 16, 18, 20].map((size) => <option key={size} value={size}>{size} px</option>)}</select></Row>
+          <Toggle label="Colored account indicators" description="Use account colors in tabs and sidebar chips. Off keeps the interface neutral." checked={preferences.accountColors} onChange={() => setPreferences({ accountColors: !preferences.accountColors })} />
+          <Toggle label="Reduce interface motion" description="Keep Desk’s controls still. System accessibility preferences are also respected." checked={preferences.reduceMotion} onChange={() => setPreferences({ reduceMotion: !preferences.reduceMotion })} />
+        </div>
+        <button className="text-button" onClick={() => setPreferences({ theme: DEFAULT_PREFERENCES.theme, density: DEFAULT_PREFERENCES.density, fontSize: DEFAULT_PREFERENCES.fontSize, accountColors: DEFAULT_PREFERENCES.accountColors, reduceMotion: DEFAULT_PREFERENCES.reduceMotion, accentColor: DEFAULT_PREFERENCES.accentColor, corners: DEFAULT_PREFERENCES.corners })}><RotateCcw size={12} />Reset appearance</button>
+      </>}
+      {section === "chat" && <>
+        <div className="settings-card">
+          <Row label="Agent view" description="Terminal shows Claude Code and Codex as their own command line. Chat draws the same conversation as messages. Both run the same CLI with the same accounts and history; nothing goes through a proxy."><Choice label="Agent view" value={preferences.uiMode} options={[["terminal", "Terminal"], ["chat", "Chat"]]} onChange={(uiMode) => setPreferences({ uiMode })} /></Row>
+          <Row label="Message text" description="Size of messages and replies."><select aria-label="Message text size" value={preferences.chatFontSize} onChange={(e) => setPreferences({ chatFontSize: Number(e.target.value) })}>{[13, 14, 15, 16, 17].map((size) => <option key={size} value={size}>{size} px</option>)}</select></Row>
+          <Row label="Reading width" description="How wide the conversation runs on a big window."><Choice label="Reading width" value={preferences.chatWidth} options={[["narrow", "Narrow"], ["comfortable", "Comfortable"], ["wide", "Wide"]]} onChange={(chatWidth) => setPreferences({ chatWidth })} /></Row>
+          <Toggle label="Show tool output open" description="Commands and file reads show their output without a click." checked={preferences.chatToolsOpen} onChange={() => setPreferences({ chatToolsOpen: !preferences.chatToolsOpen })} />
+        </div>
+        <p className="settings-note">In chat view, SSH connections and terminal tabs open as tabs next to your chats. Type / in a chat for commands, including /model and /effort.</p>
       </>}
       {section === "terminal" && <TerminalSettings />}
       {section === "editor" && <EditorSettings />}
       {section === "ssh" && <SshSettings />}
       {section === "workspace" && <div className="settings-card">
-        <Toggle label="Status bar" description="Show repository and account information along the bottom." checked={preferences.showStatusBar} onChange={() => setPreferences({ showStatusBar: !preferences.showStatusBar })} />
+                <Toggle label="Status bar" description="Show repository and account information along the bottom." checked={preferences.showStatusBar} onChange={() => setPreferences({ showStatusBar: !preferences.showStatusBar })} />
         <Toggle label="Full paths in window chrome" description="Show folder and file paths in the title and status bars." checked={preferences.showPaths} onChange={() => setPreferences({ showPaths: !preferences.showPaths })} />
         <Toggle label="Claude Code usage limits" description="Show how much of each Claude account's 5-hour and weekly limit is used, next to the account in the status bar. Claude Code tabs start with a small status line wrapper that saves the numbers in Desk's folder and then runs your own status line. Codex limits always show; Codex records them itself." checked={preferences.usageLimits} onChange={() => setPreferences({ usageLimits: !preferences.usageLimits })} />
         <Toggle label="Account emails in status bar" description="Show email addresses beside account names." checked={preferences.showAccountEmails} onChange={() => setPreferences({ showAccountEmails: !preferences.showAccountEmails })} />

@@ -3,6 +3,7 @@ mod files;
 mod git;
 mod limits;
 mod bridge;
+mod chat;
 mod pty;
 mod search;
 mod sessions;
@@ -102,6 +103,35 @@ fn pty_resize(
 #[tauri::command]
 fn pty_kill(manager: State<'_, Arc<PtyManager>>, id: u32) {
     manager.kill(id);
+}
+
+// Chat mode
+
+#[tauri::command]
+fn chat_spawn(chats: State<'_, Arc<chat::ChatManager>>, opts: chat::ChatOpts, on_line: Channel<String>) -> Result<u32, String> {
+    chats.spawn(opts, move |line| {
+        let _ = on_line.send(line);
+    })
+}
+
+#[tauri::command]
+fn chat_write(chats: State<'_, Arc<chat::ChatManager>>, id: u32, line: String) -> Result<(), String> {
+    chats.write(id, &line)
+}
+
+#[tauri::command]
+fn chat_kill(chats: State<'_, Arc<chat::ChatManager>>, id: u32) {
+    chats.kill(id);
+}
+
+#[tauri::command]
+async fn chat_history(tool: String, dir: Option<String>, cwd: String, id: String) -> Value {
+    tauri::async_runtime::spawn_blocking(move || chat::history(&tool, dir, &cwd, &id)).await.unwrap_or(Value::Null)
+}
+
+#[tauri::command]
+fn codex_models(dir: Option<String>) -> Value {
+    chat::codex_models(dir)
 }
 
 // Accounts
@@ -463,6 +493,7 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(ptys)
+        .manage(Arc::new(chat::ChatManager::default()))
         .manage(files::Watchers::default())
         .manage(QuitState::default())
         .menu(build_menu)
@@ -474,6 +505,11 @@ pub fn run() {
             pty_resize,
             pty_kill,
             pty_set_background,
+            chat_spawn,
+            chat_write,
+            chat_kill,
+            chat_history,
+            codex_models,
             usage_limits,
             claude_limits_hook,
             accounts_detect,
@@ -528,7 +564,10 @@ pub fn run() {
             api.prevent_exit();
             let _ = handle.emit("desk-quit", ());
         }
-        RunEvent::Exit => handle.state::<Arc<PtyManager>>().kill_all(),
+        RunEvent::Exit => {
+            handle.state::<Arc<PtyManager>>().kill_all();
+            handle.state::<Arc<chat::ChatManager>>().kill_all();
+        }
         _ => {}
     });
 }

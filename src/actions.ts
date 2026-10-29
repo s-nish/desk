@@ -6,6 +6,7 @@ import { ACCOUNT_COLORS, TOOL_LABEL, accountId, projectAccount, sessionEnv, uid,
 import { disposeTerminal } from "./terminals";
 import { disposeEditor, focusEditor, handleDiskChanges, openEditor, saveEditor, revealEditorLine } from "./editors";
 import { useTree } from "./tree";
+import { openSession } from "./chat";
 import type { Account, AgentSession, FileTab, Project, SshConnection, TabTool, TerminalTab, Tool, Worktree } from "./types";
 import type { DropZone } from "./store";
 import type { SessionSpec } from "./terminals";
@@ -175,6 +176,11 @@ export function projectForPath(path: string): Project | undefined {
 /** Opens a past conversation in a new tab, or shows the tab already running it. */
 export function resumeSession(session: AgentSession, fallbackProjectId: string) {
   const s = desk();
+  if (s.preferences.uiMode === "chat") {
+    const project = projectForPath(session.cwd) ?? s.projects.find((p) => p.id === fallbackProjectId);
+    if (project) openSession(session, rootProject(project));
+    return;
+  }
   const open = s.tabs.find((t) => t.type === "terminal" && (t.sessionId === session.id || t.resume === session.id) && t.status !== "exited");
   if (open) {
     s.selectTab(open.id);
@@ -188,6 +194,18 @@ export function resumeSession(session: AgentSession, fallbackProjectId: string) 
     cwd: session.cwd,
     ...(session.tool === "claude" ? { sessionId: session.id } : { resume: session.id }),
   });
+}
+
+/** Shows past conversations with the search box focused: the sidebar's in chat view, History otherwise. */
+export function searchConversations() {
+  const s = desk();
+  if (s.preferences.uiMode === "chat") {
+    if (!s.layout.sidebarOpen) s.setLayout({ sidebarOpen: true });
+    requestAnimationFrame(() => document.querySelector<HTMLInputElement>(".chat-side-search input")?.focus());
+    return;
+  }
+  s.setLayout({ filesOpen: true, panel: "sessions" });
+  requestAnimationFrame(() => requestAnimationFrame(() => document.querySelector<HTMLInputElement>(".sessions-search input")?.focus()));
 }
 
 /** Every Claude Code and Codex account folder, for listing past conversations. */

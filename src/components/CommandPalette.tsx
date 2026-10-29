@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Command, Search } from "lucide-react";
 import { useDesk, TOOL_LABEL, focusedTabId } from "../store";
-import { activeProject, addProjectsFromDialog, closeTab, connectionLabel, flipSplit, jumpToWaiting, openConnection, openTerminal, saveTab, splitWorkspace } from "../actions";
+import { activeProject, addProjectsFromDialog, searchConversations, closeTab, connectionLabel, flipSplit, jumpToWaiting, openConnection, openTerminal, saveTab, splitWorkspace } from "../actions";
 import { fuzzyScore } from "./QuickOpen";
 import { THEMES } from "../appearance";
 
@@ -39,7 +39,8 @@ function Palette() {
       { id: "search", label: "Search and replace in project", group: "Workspace", shortcut: "⌘⇧F", run: () => s.setLayout({ filesOpen: true, panel: "search" }) },
       { id: "git", label: "Review Git changes", group: "Source control", run: () => s.setLayout({ filesOpen: true, panel: "git" }) },
       { id: "worktree", label: "New worktree…", group: "Source control", shortcut: "⌘⇧T", run: () => { const project = activeProject(); if (project) s.setModal({ kind: "worktree", projectId: project.id }); } },
-      { id: "sessions", label: "Resume a past conversation", group: "Terminal", run: () => s.setLayout({ filesOpen: true, panel: "sessions" }) },
+      { id: "sessions", label: "Search past conversations", group: "Terminal", run: () => searchConversations() },
+      { id: "ui-mode", label: useDesk.getState().preferences.uiMode === "chat" ? "Switch to terminal view" : "Switch to chat view", group: "View", run: () => s.setPreferences({ uiMode: useDesk.getState().preferences.uiMode === "chat" ? "terminal" : "chat" }) },
       ...(["claude", "codex", "shell"] as const).map((tool) => ({ id: `new-${tool}`, label: `New ${TOOL_LABEL[tool]} session`, group: "Terminal", shortcut: { claude: "⌘D", codex: "⌘E", shell: "⌘J" }[tool], run: () => { const project = activeProject(); if (project) openTerminal(project.id, tool); } })),
     );
     if (focusedId) items.push(

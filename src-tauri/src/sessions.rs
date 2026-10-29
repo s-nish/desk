@@ -15,9 +15,9 @@ use crate::accounts::claude_project_key;
 
 /// How much of each end of a transcript is read.
 const WINDOW: u64 = 64 * 1024;
-const MAX_SESSIONS: usize = 60;
+const MAX_SESSIONS: usize = 300;
 /// Codex keeps one folder of sessions for every project; only the newest are checked.
-const MAX_CODEX_FILES: usize = 600;
+const MAX_CODEX_FILES: usize = 2000;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -108,7 +108,25 @@ fn claude_prompt(record: &Value) -> Option<String> {
     tidy(text)
 }
 
-fn claude_session(path: &Path, project: &str, dir: &Option<String>) -> Option<Session> {
+/// A title record: one the user set by hand wins over the one Claude Code wrote.
+fn claude_title(line: &str, custom: &mut Option<String>, ai: &mut Option<String>, last: &mut Option<String>) {
+    if !line.contains("\"custom-title\"") && !line.contains("\"ai-title\"") && !line.contains("\"last-prompt\"") {
+        return;
+    }
+    let Ok(record) = serde_json::from_str::<Value>(line) else { return };
+    let text = |key: &str| record.get(key).and_then(Value::as_str).and_then(tidy);
+    match record.get("type").and_then(Value::as_str) {
+        Some("custom-title") if custom.is_none() => *custom = text("customTitle"),
+        Some("ai-title") if ai.is_none() => *ai = text("aiTitle"),
+        Some("last-prompt") if last.is_none() => *last = text("lastPrompt"),
+        _ => {}
+    }
+}
+
+/// `exact` is set when the transcript sits in the project's own folder. Its recorded
+/// cwd is then not required: transcripts copied from another machine or user name
+/// keep their old path, and very long ones may not mention it near the start.
+fn claude_session(path: &Path, project: &str, dir: &Option<String>, exact: bool) -> Option<Session> {
     let id = path.file_stem()?.to_string_lossy().into_owned();
     let (head, tail) = ends(path)?;
     let mut cwd = None;
@@ -125,28 +143,18 @@ fn claude_session(path: &Path, project: &str, dir: &Option<String>) -> Option<Se
             prompt = claude_prompt(&record);
         }
     }
-    let cwd = cwd?;
-    if !belongs(&cwd, project) {
-        return None;
-    }
-    let mut title = None;
-    let mut last_prompt = None;
-    for line in tail.iter().rev() {
-        if title.is_some() {
-            break;
-        }
-        if !line.contains("\"ai-title\"") && !line.contains("\"last-prompt\"") {
-            continue;
-        }
-        let Ok(record) = serde_json::from_str::<Value>(line) else { continue };
-        match record.get("type").and_then(Value::as_str) {
-            Some("ai-title") => title = record.get("aiTitle").and_then(Value::as_str).and_then(tidy),
-            Some("last-prompt") if last_prompt.is_none() => last_prompt = record.get("lastPrompt").and_then(Value::as_str).and_then(tidy),
-            _ => {}
-        }
+    let cwd = match cwd {
+        Some(cwd) if belongs(&cwd, project) => cwd,
+        _ if exact => project.trim_end_matches('/').to_string(),
+        _ => return None,
+    };
+    let (mut custom, mut ai, mut last_prompt) = (None, None, None);
+    // Later records win, so the tail is read newest first, then the head.
+    for line in tail.iter().rev().chain(head.iter().rev()) {
+        claude_title(line, &mut custom, &mut ai, &mut last_prompt);
     }
     // A session with nothing typed into it has nothing to resume.
-    let title = title.or_else(|| prompt.clone()).or(last_prompt)?;
+    let title = custom.or(ai).or_else(|| prompt.clone()).or(last_prompt)?;
     Some(Session {
         tool: "claude",
         dir: dir.clone(),
@@ -162,7 +170,7 @@ fn claude_sessions(project: &str, dir: &Option<String>) -> Vec<Session> {
     let root = dir.as_ref().map(PathBuf::from).unwrap_or_else(|| home().join(".claude")).join("projects");
     let key = claude_project_key(project);
     // Subfolders and `<project>.worktrees/…` folders encode to names that start with the key.
-    let mut files: Vec<(u64, PathBuf)> = Vec::new();
+    let mut files: Vec<(u64, PathBuf, bool)> = Vec::new();
     for folder in fs::read_dir(&root).into_iter().flatten().flatten() {
         let name = folder.file_name().to_string_lossy().into_owned();
         if name != key && !name.starts_with(&format!("{key}-")) {
@@ -171,12 +179,12 @@ fn claude_sessions(project: &str, dir: &Option<String>) -> Vec<Session> {
         for file in fs::read_dir(folder.path()).into_iter().flatten().flatten() {
             let path = file.path();
             if path.extension().is_some_and(|x| x == "jsonl") {
-                files.push((modified_ms(&path), path));
+                files.push((modified_ms(&path), path, name == key));
             }
         }
     }
     files.sort_by(|a, b| b.0.cmp(&a.0));
-    files.iter().filter_map(|(_, p)| claude_session(p, project, dir)).take(MAX_SESSIONS).collect()
+    files.iter().filter_map(|(_, p, exact)| claude_session(p, project, dir, *exact)).take(MAX_SESSIONS).collect()
 }
 
 /// Newest rollout files first. Folders are `sessions/YYYY/MM/DD`, so names sort by date.
@@ -362,6 +370,17 @@ mod tests {
         // A Desk worktree of the project counts.
         write(&claude.join("projects").join(claude_project_key("/p/app.worktrees/fix")).join("wt.jsonl"), &[r#"{"type":"user","cwd":"/p/app.worktrees/fix","message":{"content":"in the worktree"}}"#.into()]);
 
+        // Copied from another machine: the old cwd is kept, but the folder is the project's.
+        write(&claude.join("projects").join(&key).join("moved.jsonl"), &[
+            r#"{"type":"custom-title","customTitle":"api work"}"#.into(),
+            r#"{"type":"ai-title","aiTitle":"Client API"}"#.into(),
+            r#"{"type":"user","cwd":"/old/home/app","message":{"content":"from before"}}"#.into(),
+        ]);
+        // No cwd near the start at all, only a title.
+        write(&claude.join("projects").join(&key).join("long.jsonl"), &[r#"{"type":"ai-title","aiTitle":"Long one"}"#.into(), r#"{"type":"file-history-snapshot"}"#.into()]);
+        // A moved transcript in a subfolder's folder is not trusted by name alone.
+        write(&claude.join("projects").join(format!("{key}-sub")).join("movedsub.jsonl"), &[r#"{"type":"user","cwd":"/old/app/sub","message":{"content":"elsewhere"}}"#.into()]);
+
         let cid = "019a0000-0000-7000-8000-00000000abcd";
         write(&codex.join("sessions/2026/10/19").join(format!("rollout-2026-10-19T10-00-00-{cid}.jsonl")), &[
             format!(r#"{{"type":"session_meta","payload":{{"id":"{cid}","cwd":"{project}/src"}}}}"#),
@@ -375,7 +394,10 @@ mod tests {
         let dir = |p: &Path| Some(p.to_string_lossy().into_owned());
         let sessions = list(project, vec![dir(&claude)], vec![dir(&codex)]);
         let titles: Vec<&str> = sessions.iter().map(|s| s.title.as_str()).collect();
-        assert_eq!(sessions.len(), 3, "{titles:?}");
+        assert_eq!(sessions.len(), 5, "{titles:?}");
+        let moved = sessions.iter().find(|s| s.id == "moved").unwrap();
+        assert_eq!((moved.title.as_str(), moved.prompt.as_deref(), moved.cwd.as_str()), ("api work", Some("from before"), project));
+        assert!(titles.contains(&"Long one") && !titles.contains(&"elsewhere"));
         let login = sessions.iter().find(|s| s.id == id).unwrap();
         assert_eq!(login.title, "Login bug fix");
         assert_eq!(login.prompt.as_deref(), Some("Fix the login bug"));
