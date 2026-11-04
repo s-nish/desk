@@ -158,6 +158,11 @@ fn account_create(kind: String, name: String) -> Result<String, String> {
     accounts::create(&kind, &name)
 }
 
+#[tauri::command]
+async fn tool_installed(bins: Vec<String>) -> bool {
+    tauri::async_runtime::spawn_blocking(move || accounts::tool_installed(bins)).await.unwrap_or(false)
+}
+
 // Persisted app state (projects, accounts, layout). The frontend owns its shape.
 
 #[tauri::command]
@@ -515,6 +520,7 @@ pub fn run() {
             accounts_detect,
             account_inspect,
             account_create,
+            tool_installed,
             account_usage,
             state_load,
             state_save,

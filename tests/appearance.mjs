@@ -17,9 +17,9 @@ try {
   await page.getByRole('heading', { name: 'studio', exact: true }).waitFor();
   assert.equal(await page.locator('.project.is-active').evaluate(el => getComputedStyle(el).boxShadow), 'none');
   await page.getByRole('button', { name: 'Open settings' }).click();
-  assert.equal(await page.locator('.theme-option').count(), 20);
+  assert.equal(await page.locator('.theme-option').count(), 28);
   const contrastResults = [];
-  for (const name of ['Black', 'Obsidian', 'Graphite', 'Dim Soft', 'Light', 'Porcelain', 'Silver', 'Mist']) {
+  for (const name of ['Electric', 'Ember', 'Aurora', 'Electric Light', 'Ember Light', 'Aurora Light', 'Snow', 'Onyx', 'Black', 'Obsidian', 'Graphite', 'Dim Soft', 'Light', 'Porcelain', 'Silver', 'Mist']) {
     await page.locator('.theme-option').filter({ has: page.locator('.theme-name', { hasText: new RegExp(`^${name}$`) }) }).click();
     const result = await page.evaluate(() => {
       const css = getComputedStyle(document.documentElement);
@@ -102,7 +102,7 @@ try {
   assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= 960 && bounds.y + bounds.height <= 600);
   await screenshot('minimum-size');
   assert.deepEqual(errors, []);
-  console.log('PASS: eight theme contrast checks, persistence, system appearance, 18 terminal presets, real terminal wheel/keyboard scrollback, incoming output, return to latest, alternate screen, live theme changes, minimum window size.');
+  console.log('PASS: sixteen theme contrast checks, persistence, system appearance, 18 terminal presets, real terminal wheel/keyboard scrollback, incoming output, return to latest, alternate screen, live theme changes, minimum window size.');
   console.table(contrastResults);
 } catch (e) {
   await screenshot('failure');

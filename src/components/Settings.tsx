@@ -1,7 +1,10 @@
 import { Fragment, useState } from "react";
-import { Bell, Check, Code2, Keyboard, MessagesSquare, Monitor, Palette, PanelsTopLeft, Plus, RotateCcw, Server, SquareTerminal, Users } from "lucide-react";
+import { Bell, Check, Code2, Gauge, Keyboard, MessagesSquare, Monitor, Palette, PanelsTopLeft, Plus, RotateCcw, Server, SquareTerminal, Users } from "lucide-react";
 import { THEMES } from "../appearance";
-import { DEFAULT_PREFERENCES, TOOL_LABEL, useDesk } from "../store";
+import { AGENTS, DEFAULT_PREFERENCES, TOOL_LABEL, useDesk } from "../store";
+import { UsageSettings } from "./Usage";
+import { ToolLogo } from "./ToolLogo";
+import { multiAccount } from "../actions";
 import { terminalTheme, deskTheme as terminalThemeForDesk } from "../terminals";
 import { ANSI_KEYS, BASE_KEYS, COLOR_LABEL, TERMINAL_PRESETS, opaque, presetTheme, type ColorKey } from "../terminalThemes";
 import { EditorSettings } from "./EditorSettings";
@@ -15,6 +18,7 @@ const sections = [
   { id: "workspace", label: "Layout", icon: PanelsTopLeft, group: "Workspace" },
   { id: "alerts", label: "Alerts", icon: Bell, group: "Workspace" },
   { id: "accounts", label: "Accounts", icon: Users, group: "Connections" },
+  { id: "usage", label: "Usage", icon: Gauge, group: "Connections" },
   { id: "ssh", label: "SSH", icon: Server, group: "Connections" },
   { id: "shortcuts", label: "Shortcuts", icon: Keyboard, group: "Help" },
 ] as const;
@@ -26,7 +30,8 @@ const INTRO: Record<string, string> = {
   editor: "Distinct syntax colors for every file. Choose a palette that suits your work.",
   workspace: "Keep what you need. Give your work room to breathe.",
   alerts: "Know when Claude Code or Codex finishes, or needs an answer, while you're looking at something else.",
-  accounts: "Manage the accounts you use across your projects.",
+  accounts: "Claude Code, Codex, Gemini CLI, Cursor Agent and Grok accounts, used across your projects.",
+  usage: "How much of each plan's limits you've used, or have left, and when they reset.",
   ssh: "Saved commands that open in their own tab, with the password filled in.",
   shortcuts: "Stay in the flow, with your hands on the keyboard.",
 };
@@ -95,9 +100,10 @@ export function Settings({ initial }: { initial?: string }) {
           <Row label="Interface density" description="How much space the sidebar uses."><Choice label="Interface density" value={preferences.density} options={[["comfortable", "Comfortable"], ["compact", "Compact"]]} onChange={(density) => setPreferences({ density })} /></Row>
           <Row label="Editor & terminal text" description="Applies immediately to open files and sessions."><select aria-label="Editor and terminal text size" value={preferences.fontSize} onChange={(e) => setPreferences({ fontSize: Number(e.target.value) })}>{[11, 12, 13, 14, 15, 16, 18, 20].map((size) => <option key={size} value={size}>{size} px</option>)}</select></Row>
           <Toggle label="Colored account indicators" description="Use account colors in tabs and sidebar chips. Off keeps the interface neutral." checked={preferences.accountColors} onChange={() => setPreferences({ accountColors: !preferences.accountColors })} />
+          <Toggle label="Animated background" description="Let the pixel waves on Home and in the sidebar roll gently, on every theme. Off shows them still. Also in the sidebar footer." checked={preferences.animatedBackground} onChange={() => setPreferences({ animatedBackground: !preferences.animatedBackground })} />
           <Toggle label="Reduce interface motion" description="Keep Desk’s controls still. System accessibility preferences are also respected." checked={preferences.reduceMotion} onChange={() => setPreferences({ reduceMotion: !preferences.reduceMotion })} />
         </div>
-        <button className="text-button" onClick={() => setPreferences({ theme: DEFAULT_PREFERENCES.theme, density: DEFAULT_PREFERENCES.density, fontSize: DEFAULT_PREFERENCES.fontSize, accountColors: DEFAULT_PREFERENCES.accountColors, reduceMotion: DEFAULT_PREFERENCES.reduceMotion, accentColor: DEFAULT_PREFERENCES.accentColor, corners: DEFAULT_PREFERENCES.corners })}><RotateCcw size={12} />Reset appearance</button>
+        <button className="text-button" onClick={() => setPreferences({ theme: DEFAULT_PREFERENCES.theme, density: DEFAULT_PREFERENCES.density, fontSize: DEFAULT_PREFERENCES.fontSize, accountColors: DEFAULT_PREFERENCES.accountColors, reduceMotion: DEFAULT_PREFERENCES.reduceMotion, animatedBackground: DEFAULT_PREFERENCES.animatedBackground, accentColor: DEFAULT_PREFERENCES.accentColor, corners: DEFAULT_PREFERENCES.corners })}><RotateCcw size={12} />Reset appearance</button>
       </>}
       {section === "chat" && <>
         <div className="settings-card">
@@ -119,7 +125,6 @@ export function Settings({ initial }: { initial?: string }) {
         <Toggle label="Projects sidebar" description="Your projects and accounts, within reach." checked={layout.sidebarOpen} onChange={() => setLayout({ sidebarOpen: !layout.sidebarOpen })} />
         <Toggle label="Files panel" description="Browse the selected project's files." checked={layout.filesOpen} onChange={() => setLayout({ filesOpen: !layout.filesOpen })} />
         <Toggle label="Expand accounts" description="Show account groups in the sidebar." checked={layout.accountsOpen} onChange={() => setLayout({ accountsOpen: !layout.accountsOpen })} />
-        <Toggle label="Always show project accounts" description="When off, only the selected project shows its accounts." checked={preferences.showProjectAccounts} onChange={() => setPreferences({ showProjectAccounts: !preferences.showProjectAccounts })} />
       </div>}
       {section === "alerts" && <>
         <div className="settings-card">
@@ -129,7 +134,8 @@ export function Settings({ initial }: { initial?: string }) {
         </div>
         <p className="settings-note">Desk watches the terminal: an agent that was printing and goes quiet for a few seconds has finished. A terminal bell or a notification from the agent also counts. Press ⌘⇧A to jump to the next waiting tab.</p>
       </>}
-      {section === "accounts" && <>{(["claude", "codex"] as const).map((kind) => <details className="settings-account-group" key={kind} open><summary>{TOOL_LABEL[kind]}<span className="section-count">{accounts.filter((a) => a.kind === kind).length}</span></summary><div>{accounts.filter((a) => a.kind === kind).map((account) => <AccountRow key={account.id} account={account} />)}<button className="text-button" onClick={() => useDesk.getState().setModal({ kind: "addAccount", tool: kind })}><Plus size={14} />Add {TOOL_LABEL[kind]} account</button></div></details>)}<p className="settings-note">Choose a project's account from its sidebar chips. Existing sessions keep the account they started with.</p></>}
+      {section === "accounts" && <>{AGENTS.map((kind) => { const list = accounts.filter((a) => a.kind === kind); const canAdd = multiAccount(kind) || list.length === 0; return <details className="settings-account-group" key={kind} open={list.length > 0 || kind === "claude" || kind === "codex"}><summary><ToolLogo tool={kind} size={14} />{TOOL_LABEL[kind]}<span className="section-count">{list.length}</span></summary><div>{list.map((account) => <AccountRow key={account.id} account={account} />)}{canAdd ? <button className="text-button" onClick={() => useDesk.getState().setModal({ kind: "addAccount", tool: kind })}><Plus size={14} />Add {TOOL_LABEL[kind]} account</button> : <p className="settings-note">{TOOL_LABEL[kind]} keeps one sign-in per Mac.</p>}</div></details>; })}<p className="settings-note">Choose a project's accounts from its ⋯ menu. Existing sessions keep the account they started with. Gemini CLI, Cursor Agent and Grok open in terminal tabs; chats are Claude Code and Codex.</p></>}
+      {section === "usage" && <UsageSettings />}
       {section === "shortcuts" && <div className="shortcut-list">{[["New Claude Code tab in selected project", "⌘ D  /  ⌘ T"], ["New Codex tab in selected project", "⌘ E"], ["New shell tab in selected project", "⌘ J"], ["New SSH connection", "⌘ ⇧ N"], ["New worktree for selected project", "⌘ ⇧ T"], ["Jump to next waiting agent", "⌘ ⇧ A"], ["Move focused tab left / right", "⌥ ⇧ ← / →"], ["Command palette", "⌘ ⇧ P"], ["Search project", "⌘ ⇧ F"], ["Split panes", "⌘ \\"], ["Side by side / stacked", "⌘ ⌥ \\"], ["Focus left / right pane", "⌘ ⌥ ← / →"], ["Add project folder", "⌘ O"], ["Open file", "⌘ P"], ["Save file", "⌘ S"], ["Close tab", "⌘ W"], ["Toggle projects", "⌘ B"], ["Toggle files", "⌘ ⇧ B"], ["Switch tabs", "⌃ Tab"], ["Switch projects", "⌥ ⌘ ↑ / ↓"], ["Clear terminal", "⌘ K"], ["Open settings", "⌘ ,"]].map(([label, key]) => <div key={label}><span>{label}</span><kbd>{key}</kbd></div>)}</div>}
     </div>
   </div>;

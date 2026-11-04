@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Command, Search } from "lucide-react";
-import { useDesk, TOOL_LABEL, focusedTabId } from "../store";
+import { useDesk, TOOL_LABEL, EXTRA_AGENTS, focusedTabId } from "../store";
+import type { TabTool } from "../types";
 import { activeProject, addProjectsFromDialog, searchConversations, closeTab, connectionLabel, flipSplit, jumpToWaiting, openConnection, openTerminal, saveTab, splitWorkspace } from "../actions";
 import { fuzzyScore } from "./QuickOpen";
 import { THEMES } from "../appearance";
@@ -41,7 +42,9 @@ function Palette() {
       { id: "worktree", label: "New worktree…", group: "Source control", shortcut: "⌘⇧T", run: () => { const project = activeProject(); if (project) s.setModal({ kind: "worktree", projectId: project.id }); } },
       { id: "sessions", label: "Search past conversations", group: "Terminal", run: () => searchConversations() },
       { id: "ui-mode", label: useDesk.getState().preferences.uiMode === "chat" ? "Switch to terminal view" : "Switch to chat view", group: "View", run: () => s.setPreferences({ uiMode: useDesk.getState().preferences.uiMode === "chat" ? "terminal" : "chat" }) },
-      ...(["claude", "codex", "shell"] as const).map((tool) => ({ id: `new-${tool}`, label: `New ${TOOL_LABEL[tool]} session`, group: "Terminal", shortcut: { claude: "⌘D", codex: "⌘E", shell: "⌘J" }[tool], run: () => { const project = activeProject(); if (project) openTerminal(project.id, tool); } })),
+      ...([...(["claude", "codex"] as const), ...EXTRA_AGENTS.filter((k) => useDesk.getState().accounts.some((a) => a.kind === k)), "shell" as const] as TabTool[]).map((tool) => ({ id: `new-${tool}`, label: `New ${TOOL_LABEL[tool]} session`, group: "Terminal", shortcut: ({ claude: "⌘D", codex: "⌘E", shell: "⌘J" } as Partial<Record<TabTool, string>>)[tool], run: () => { const project = activeProject(); if (project) openTerminal(project.id, tool); } })),
+      { id: "add-account", label: "Add account (Claude Code, Codex, Gemini, Cursor, Grok)…", group: "Accounts", run: () => useDesk.getState().setModal({ kind: "addAccount", tool: "claude" }) },
+      { id: "usage", label: "Show usage limits", group: "Accounts", run: () => useDesk.getState().setModal({ kind: "settings", section: "usage" }) },
     );
     if (focusedId) items.push(
       { id: "split", label: "Toggle split panes", group: "View", shortcut: "⌘\\", run: splitWorkspace },

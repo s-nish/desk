@@ -2,17 +2,56 @@
 
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { ipc, errorText } from "./ipc";
-import { ACCOUNT_COLORS, TOOL_LABEL, accountId, projectAccount, sessionEnv, uid, useDesk, focusedTabId } from "./store";
+import { ACCOUNT_COLORS, AGENTS, ENV_VAR, TOOL_LABEL, accountId, isChatTool, projectAccount, sessionEnv, uid, useDesk, focusedTabId } from "./store";
 import { disposeTerminal } from "./terminals";
 import { disposeEditor, focusEditor, handleDiskChanges, openEditor, saveEditor, revealEditorLine } from "./editors";
 import { useTree } from "./tree";
 import { openSession } from "./chat";
-import type { Account, AgentSession, FileTab, Project, SshConnection, TabTool, TerminalTab, Tool, Worktree } from "./types";
+import type { Account, Agent, AgentSession, FileTab, Project, SshConnection, TabTool, TerminalTab, Tool, Worktree } from "./types";
 import type { DropZone } from "./store";
 import type { SessionSpec } from "./terminals";
 
-const COMMAND: Record<TabTool, string | null> = { claude: "claude", codex: "codex", shell: null };
-const SIGN_IN_COMMAND: Record<Tool, string> = { claude: "claude", codex: "codex login" };
+/** Runs `script` in the user's shell; `env VAR=… cmd` only takes a single program. */
+const inShell = (script: string) => `"$SHELL" -c ${shellWord(script)}`;
+/** Cursor's CLI is `cursor-agent`, newer installs also call it `agent`. */
+const CURSOR = "if command -v cursor-agent >/dev/null 2>&1; then exec cursor-agent \"$@\"; else exec agent \"$@\"; fi";
+
+const COMMAND: Record<TabTool, string | null> = { claude: "claude", codex: "codex", gemini: "gemini", cursor: inShell(CURSOR), grok: "grok", shell: null };
+const SIGN_IN: Record<Agent, string> = {
+  claude: "claude",
+  codex: "codex login",
+  gemini: "gemini",
+  cursor: "if command -v cursor-agent >/dev/null 2>&1; then cursor-agent login; else agent login; fi",
+  grok: "grok",
+};
+
+/** How each CLI is found and, if missing, installed. Shown to the user before anything runs. */
+export const INSTALL: Record<Agent, { bins: string[]; command: string; source: string }> = {
+  claude: { bins: ["claude"], command: "curl -fsSL https://claude.ai/install.sh | bash", source: "claude.ai" },
+  codex: { bins: ["codex"], command: "npm install -g @openai/codex", source: "npm (@openai/codex)" },
+  gemini: { bins: ["gemini"], command: "npm install -g @google/gemini-cli", source: "npm (@google/gemini-cli)" },
+  cursor: { bins: ["cursor-agent", "agent"], command: "curl https://cursor.com/install -fsS | bash", source: "cursor.com" },
+  grok: { bins: ["grok"], command: "curl -fsSL https://x.ai/cli/install.sh | bash", source: "x.ai" },
+};
+
+/** Agents that can hold several accounts (their CLI reads a config-folder variable). */
+export const multiAccount = (kind: Agent) => ENV_VAR[kind] !== null;
+
+/** Sign-in, preceded by an install when the CLI is missing. Installers that use npm
+ *  need npm; curl installers drop the binary in ~/.local/bin, added to PATH here. */
+function signInScript(kind: Agent) {
+  const { bins, command } = INSTALL[kind];
+  const have = bins.map((b) => `command -v ${b} >/dev/null 2>&1`).join(" || ");
+  const needsNpm = command.startsWith("npm ");
+  const install = [
+    `printf '\\n  %s is not installed. Installing it with:\\n  %s\\n\\n' ${shellWord(TOOL_LABEL[kind])} ${shellWord(command)}`,
+    needsNpm ? `if ! command -v npm >/dev/null 2>&1; then printf '  npm was not found. Install Node.js (nodejs.org) or run: brew install node\\n'; exit 1; fi` : "",
+    `${command} || { printf '\\n  The install did not finish. See the output above.\\n'; exit 1; }`,
+    `export PATH="$HOME/.local/bin:$PATH"; hash -r 2>/dev/null`,
+    `printf '\\n  Installed. Starting sign-in…\\n\\n'`,
+  ].filter(Boolean).join("; ");
+  return `if ! { ${have}; }; then ${install}; fi; export PATH="$HOME/.local/bin:$PATH"; ${SIGN_IN[kind]}`;
+}
 
 const desk = () => useDesk.getState();
 
@@ -64,10 +103,10 @@ export async function terminalSpec(tabId: string): Promise<SessionSpec> {
   if (!tab) return { cwd: "/", command: null, env: {}, unset: [] };
   // Resolved fresh at every spawn (a restart picks up a changed project account)
   // and recorded, so the tab keeps showing what this session really runs as.
-  const resolve = (kind: Tool) =>
+  const resolve = (kind: Agent) =>
     s.accounts.find((a) => tab.tool === kind && a.id === tab.accountId) ?? projectAccount(s.accounts, project, kind);
-  const overrides = { claude: resolve("claude"), codex: resolve("codex") };
-  s.patchTab(tabId, { runAs: { claude: overrides.claude.id, codex: overrides.codex.id } });
+  const overrides = Object.fromEntries(AGENTS.map((k) => [k, resolve(k)])) as Record<Agent, Account>;
+  s.patchTab(tabId, { runAs: Object.fromEntries(AGENTS.map((k) => [k, overrides[k].id])) });
   const env = sessionEnv(s.accounts, project, overrides);
   const claude = tab.tool === "claude" && !tab.sshId ? await claudeCommand(overrides.claude.dir, tab.cwd, env.env) : "claude";
   if (tab.sshId) {
@@ -481,7 +520,7 @@ export function signInSpec(account: Account): SessionSpec {
   const cwd = activeProject()?.path ?? s.identities[account.id]?.path ?? "/";
   return {
     cwd,
-    command: SIGN_IN_COMMAND[account.kind],
+    command: inShell(signInScript(account.kind)),
     ...sessionEnv(s.accounts, activeProject(), { [account.kind]: account }),
   };
 }
@@ -701,7 +740,7 @@ export async function detectProjectAccount(projectId: string) {
 }
 
 /** Sets a project's account by hand and says what happens to tabs already open. */
-export function chooseProjectAccount(projectId: string, kind: Tool, id: string) {
+export function chooseProjectAccount(projectId: string, kind: Agent, id: string) {
   const s = desk();
   const project = s.projects.find((p) => p.id === projectId);
   const account = s.accounts.find((a) => a.id === id);
@@ -725,7 +764,7 @@ export async function refreshIdentities() {
     s.mergeDetected(detected);
     // Accounts that live outside the scanned ~/.claude* / ~/.codex* names.
     for (const a of desk().accounts) {
-      if (a.dir && !detected.some((d) => accountId(d.kind, d.dir) === a.id)) {
+      if ((a.dir || !isChatTool(a.kind)) && !detected.some((d) => accountId(d.kind, d.dir) === a.id)) {
         const d = await ipc.accountInspect(a.kind, a.dir);
         desk().setIdentity(a.id, { path: d.path, email: d.email, org: d.org, signedIn: d.signedIn });
       }
@@ -735,7 +774,13 @@ export async function refreshIdentities() {
   }
 }
 
-export async function createAccount(kind: Tool, name: string, color: string) {
+export async function createAccount(kind: Agent, name: string, color: string) {
+  // Agents without a config-folder variable get one account: the CLI's own default.
+  if (!multiAccount(kind)) {
+    const account: Account = { id: accountId(kind, null), kind, dir: null, name: name.trim() || "Default", color: color || ACCOUNT_COLORS[0] };
+    desk().addAccount(account);
+    return account;
+  }
   const dir = await ipc.accountCreate(kind, name);
   const account: Account = { id: accountId(kind, dir), kind, dir, name: name.trim(), color: color || ACCOUNT_COLORS[0] };
   desk().addAccount(account);
@@ -746,7 +791,7 @@ export function removeAccount(account: Account) {
   desk().setModal({
     kind: "confirm",
     title: `Remove ${account.name} from Desk?`,
-    body: `Projects using it switch to the default account. The folder ${account.dir} and its sign-in stay on disk.`,
+    body: account.dir ? `Projects using it switch to the default account. The folder ${account.dir} and its sign-in stay on disk.` : `${TOOL_LABEL[account.kind]} stays installed and signed in; Desk just stops showing it.`,
     confirm: "Remove",
     danger: true,
     onConfirm: () => desk().removeAccount(account.id),

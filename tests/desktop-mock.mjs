@@ -15,7 +15,10 @@ export function mockDesktop() {
       if (cmd === 'state_load') return JSON.parse(localStorage.getItem('test-state') || 'null');
       if (cmd === 'state_save') { localStorage.setItem('test-state', JSON.stringify(args.state)); return; }
       if (cmd === 'plugin:dialog|open') return ['/demo/studio'];
-      if (cmd === 'accounts_detect' || cmd === 'account_usage') return [];
+      if (cmd === 'accounts_detect') return JSON.parse(localStorage.getItem('test-detected') || '[]');
+      if (cmd === 'account_usage') return [];
+      if (cmd === 'tool_installed') return (args.bins || []).some((b) => ['claude', 'codex'].includes(b));
+      if (cmd === 'account_create') return `/demo/.${args.kind}-${args.name.toLowerCase()}`;
       if (cmd === 'usage_limits') {
         const soon = Date.now() + 72 * 60000, week = Date.now() + 3 * 86400000;
         return JSON.parse(localStorage.getItem('test-limits') || 'null') ?? [

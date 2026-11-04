@@ -14,6 +14,9 @@ use serde_json::Value;
 pub enum Kind {
     Claude,
     Codex,
+    Gemini,
+    Cursor,
+    Grok,
 }
 
 impl Kind {
@@ -21,6 +24,9 @@ impl Kind {
         match self {
             Kind::Claude => ".claude",
             Kind::Codex => ".codex",
+            Kind::Gemini => ".gemini",
+            Kind::Cursor => ".cursor",
+            Kind::Grok => ".grok",
         }
     }
 
@@ -29,6 +35,10 @@ impl Kind {
         match self {
             Kind::Claude => &[".claude.json", "settings.json", "projects", "history.jsonl"],
             Kind::Codex => &["auth.json", "config.toml", "sessions"],
+            // `GEMINI_CLI_HOME=<dir>` keeps its files in `<dir>/.gemini`.
+            Kind::Gemini => &["settings.json", "oauth_creds.json", "google_accounts.json", ".gemini"],
+            Kind::Cursor => &["cli-config.json"],
+            Kind::Grok => &[],
         }
     }
 
@@ -36,6 +46,9 @@ impl Kind {
         match s {
             "claude" => Ok(Kind::Claude),
             "codex" => Ok(Kind::Codex),
+            "gemini" => Ok(Kind::Gemini),
+            "cursor" => Ok(Kind::Cursor),
+            "grok" => Ok(Kind::Grok),
             _ => Err(format!("unknown account kind: {s}")),
         }
     }
@@ -114,10 +127,22 @@ fn codex_identity(dir: &Path) -> (Option<String>, Option<String>, bool) {
     (email, org, signed_in)
 }
 
+/// Gemini CLI keeps the active Google account's email in `google_accounts.json`
+/// and its OAuth tokens (never read here) in `oauth_creds.json`.
+fn gemini_identity(dir: &Path, is_default: bool) -> (Option<String>, Option<String>, bool) {
+    let root = if is_default { dir.to_path_buf() } else { dir.join(".gemini") };
+    let email = read_json(&root.join("google_accounts.json")).and_then(|v| str_at(&v, "/active"));
+    let signed_in = email.is_some() || root.join("oauth_creds.json").exists();
+    (email, None, signed_in)
+}
+
 fn describe(kind: Kind, path: &Path, is_default: bool) -> DetectedAccount {
     let (email, org, signed_in) = match kind {
         Kind::Claude => claude_identity(path, is_default),
         Kind::Codex => codex_identity(path),
+        Kind::Gemini => gemini_identity(path, is_default),
+        // Cursor Agent and Grok don't expose who is signed in; the UI says so.
+        Kind::Cursor | Kind::Grok => (None, None, false),
     };
     DetectedAccount {
         kind,
@@ -143,7 +168,8 @@ pub fn detect() -> Vec<DetectedAccount> {
         .collect();
     names.sort();
 
-    for kind in [Kind::Claude, Kind::Codex] {
+    // Cursor (~/.cursor also belongs to the editor) and Grok are only ever added by hand.
+    for kind in [Kind::Claude, Kind::Codex, Kind::Gemini] {
         for name in &names {
             let Some(rest) = name.strip_prefix(kind.prefix()) else {
                 continue;
@@ -263,10 +289,13 @@ fn slug(name: &str) -> String {
     out.trim_matches('-').to_string()
 }
 
-/// Creates `~/.claude-<name>` or `~/.codex-<name>` and returns its path.
+/// Creates `~/.claude-<name>`, `~/.codex-<name>` or `~/.gemini-<name>` and returns its path.
 /// An existing directory is reused, never cleared.
 pub fn create(kind: &str, name: &str) -> Result<String, String> {
     let kind = Kind::parse(kind)?;
+    if matches!(kind, Kind::Cursor | Kind::Grok) {
+        return Err("This tool keeps one sign-in per Mac, so it can't have extra accounts".into());
+    }
     let s = slug(name);
     if s.is_empty() {
         return Err("Account name needs at least one letter or number".into());
@@ -276,9 +305,60 @@ pub fn create(kind: &str, name: &str) -> Result<String, String> {
     Ok(path.to_string_lossy().into_owned())
 }
 
+/// True when any of `bins` is on the PATH of the user's login shell (the same
+/// `-l -i` shell terminals use, so nvm/asdf installs count). Gives up after 6 s.
+pub fn tool_installed(bins: Vec<String>) -> bool {
+    use std::process::{Command, Stdio};
+    use std::sync::mpsc;
+    use std::time::Duration;
+    let safe = |b: &String| !b.is_empty() && b.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if bins.is_empty() || !bins.iter().all(safe) {
+        return false;
+    }
+    let script = bins
+        .iter()
+        .map(|b| format!("command -v {b} >/dev/null 2>&1"))
+        .collect::<Vec<_>>()
+        .join(" || ");
+    let Ok(mut child) = Command::new(crate::pty::user_shell())
+        .args(["-l", "-i", "-c", &script])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    let pid = child.id();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait().map(|s| s.success()).unwrap_or(false));
+    });
+    match rx.recv_timeout(Duration::from_secs(6)) {
+        Ok(found) => found,
+        Err(_) => {
+            unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+            false
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finds_tools_on_the_login_path() {
+        assert!(tool_installed(vec!["sh".into()]));
+        assert!(!tool_installed(vec!["desk-no-such-tool-xyz".into()]));
+        assert!(!tool_installed(vec!["sh; rm".into()]));
+    }
+
+    #[test]
+    fn single_account_tools_cannot_create_folders() {
+        assert!(create("grok", "work").is_err());
+        assert!(create("cursor", "work").is_err());
+    }
 
     #[test]
     fn slugs_names() {

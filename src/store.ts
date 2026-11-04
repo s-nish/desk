@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { EDITOR_THEMES, type EditorThemeId } from "./editorThemes";
 import { THEMES, type ThemeId } from "./themeCatalog";
-import type { Account, DetectedAccount, FileTab, Identity, Layout, Project, SshConnection, Tab, TabTool, TerminalTab, Tool, UsageLimits } from "./types";
+import type { Account, Agent, DetectedAccount, FileTab, Identity, Layout, Project, SshConnection, Tab, TabTool, TerminalTab, Tool, UsageLimits } from "./types";
 
 export const ACCOUNT_COLORS = ["#2dd4bf", "#f59e0b", "#60a5fa", "#fb7185", "#4ade80", "#e5e5e5"];
 
@@ -15,14 +15,28 @@ const LEGACY_COLORS: Record<string, string> = {
   "#62a8ee": "#60a5fa",
 };
 
-export const TOOL_LABEL: Record<TabTool, string> = { claude: "Claude Code", codex: "Codex", shell: "Shell" };
-export const ENV_VAR: Record<Tool, string> = { claude: "CLAUDE_CONFIG_DIR", codex: "CODEX_HOME" };
+export const TOOL_LABEL: Record<TabTool, string> = { claude: "Claude Code", codex: "Codex", gemini: "Gemini CLI", cursor: "Cursor Agent", grok: "Grok", shell: "Shell" };
+/** Short names for tight spots (pills, chips). */
+export const TOOL_SHORT: Record<Agent, string> = { claude: "Claude", codex: "Codex", gemini: "Gemini", cursor: "Cursor", grok: "Grok" };
+export const AGENTS: Agent[] = ["claude", "codex", "gemini", "cursor", "grok"];
+/** Agents beyond Claude Code and Codex: terminal tabs only, no chats or usage limits. */
+export const EXTRA_AGENTS: Agent[] = ["gemini", "cursor", "grok"];
+/** The variable that points each CLI at an account's folder. Cursor Agent and Grok
+ *  have no documented one, so Desk gives them a single (default) account. */
+export const ENV_VAR: Record<Agent, string | null> = { claude: "CLAUDE_CONFIG_DIR", codex: "CODEX_HOME", gemini: "GEMINI_CLI_HOME", cursor: null, grok: null };
+export const isChatTool = (kind: Agent | TabTool): kind is Tool => kind === "claude" || kind === "codex";
 
-export const accountId = (kind: Tool, dir: string | null) => `${kind}:${dir ?? "default"}`;
+export const accountId = (kind: Agent, dir: string | null) => `${kind}:${dir ?? "default"}`;
 export const uid = () => crypto.randomUUID();
 
 export interface Preferences {
   theme: ThemeId | "system";
+  /** Bumped when the default look changes; drives one-time theme migration. */
+  themeVersion: number;
+  /** Pixel themes: animate the pixel-wave backdrop (Reduce motion always shows a still frame). */
+  animatedBackground: boolean;
+  /** Usage rings, meters and labels show the share used, or what's left. */
+  usageShow: "used" | "remaining";
   density: "comfortable" | "compact";
   fontSize: number;
   showProjectAccounts: boolean;
@@ -58,14 +72,14 @@ export interface Preferences {
   chatToolsOpen: boolean;
 }
 
-export const DEFAULT_PREFERENCES: Preferences = { theme: "black", density: "comfortable", fontSize: 14, showProjectAccounts: false, accent: "neutral", showStatusBar: true, showPaths: false, showAccountEmails: false, accountColors: false, reduceMotion: false, terminalTheme: "desk", editorTheme: "desk", terminalColors: {}, cursorStyle: "bar", cursorBlink: true, smoothScroll: true, agentAlerts: true, usageLimits: true, alertBadge: true, alertBounce: true, uiMode: "terminal", accentColor: "neutral", corners: "soft", chatFontSize: 14, chatWidth: "comfortable", chatToolsOpen: false };
+export const DEFAULT_PREFERENCES: Preferences = { theme: "electric", themeVersion: 2, animatedBackground: true, usageShow: "used", density: "comfortable", fontSize: 14, showProjectAccounts: false, accent: "neutral", showStatusBar: true, showPaths: false, showAccountEmails: false, accountColors: false, reduceMotion: false, terminalTheme: "desk", editorTheme: "desk", terminalColors: {}, cursorStyle: "bar", cursorBlink: true, smoothScroll: true, agentAlerts: true, usageLimits: true, alertBadge: true, alertBounce: true, uiMode: "terminal", accentColor: "neutral", corners: "soft", chatFontSize: 14, chatWidth: "comfortable", chatToolsOpen: false };
 
 export type Modal =
   | { kind: "settings"; section?: string }
   | { kind: "ssh"; id: string | null; from?: "settings" }
   | { kind: "diff"; root: string; path: string; staged: boolean }
   | { kind: "worktree"; projectId: string }
-  | { kind: "addAccount"; tool: Tool }
+  | { kind: "addAccount"; tool: Agent }
   | { kind: "signin"; accountId: string }
   | {
       kind: "prompt";
@@ -133,7 +147,7 @@ interface DeskState extends Persisted {
   removeProject(id: string): void;
   renameProject(id: string, name: string): void;
   moveProject(id: string, toIndex: number): void;
-  setProjectAccount(projectId: string, kind: Tool, accountId: string, auto?: boolean): void;
+  setProjectAccount(projectId: string, kind: Agent, accountId: string, auto?: boolean): void;
   selectProject(id: string): void;
   addAccount(account: Account): void;
   updateAccount(id: string, patch: Partial<Account>): void;
@@ -164,10 +178,14 @@ const DEFAULT_LAYOUT: Layout = { sidebarWidth: 248, filesWidth: 280, sidebarOpen
 
 const THEME_IDS: string[] = [...THEMES.map((theme) => theme.id), "system"];
 
-/** Unknown themes fall back to Black; saved original palette IDs remain valid. */
+/** Unknown themes fall back to Electric; saved original palette IDs remain valid.
+ *  Anyone still on the previous default (Black) moves to Electric once; any
+ *  deliberate choice — including picking Black again afterwards — is kept. */
 function migratePreferences(saved: Partial<Preferences> | undefined): Preferences {
   const p = { ...DEFAULT_PREFERENCES, ...saved };
-  return { ...p, theme: THEME_IDS.includes(p.theme) ? p.theme : "black", editorTheme: EDITOR_THEMES.some(theme => theme.id === p.editorTheme) ? p.editorTheme : "desk", accent: "neutral" };
+  if (saved && (saved.themeVersion ?? 1) < 2 && (saved.theme ?? "black") === "black") p.theme = "electric";
+  p.themeVersion = 2;
+  return { ...p, theme: THEME_IDS.includes(p.theme) ? p.theme : "electric", editorTheme: EDITOR_THEMES.some(theme => theme.id === p.editorTheme) ? p.editorTheme : "desk", accent: "neutral" };
 }
 
 function baseName(path: string) {
@@ -175,9 +193,9 @@ function baseName(path: string) {
 }
 
 /** "~/.claude-work" -> "Work". Default dirs are called "Default". */
-function nameFromDir(kind: Tool, dir: string | null) {
+function nameFromDir(kind: Agent, dir: string | null) {
   if (!dir) return "Default";
-  const rest = baseName(dir).replace(kind === "claude" ? /^\.claude[-_.]?/ : /^\.codex[-_.]?/, "");
+  const rest = baseName(dir).replace(new RegExp(`^\\.${kind}[-_.]?`), "");
   if (!rest) return "Default";
   return rest
     .split(/[-_.]+/)
@@ -198,7 +216,7 @@ function identityOf(d: DetectedAccount): Identity {
 function mergeAccounts(accounts: Account[], detected: DetectedAccount[]) {
   const out = accounts.map((a) => (LEGACY_COLORS[a.color] ? { ...a, color: LEGACY_COLORS[a.color] } : a));
   const identities: Record<string, Identity> = {};
-  const wanted: { kind: Tool; dir: string | null }[] = [
+  const wanted: { kind: Agent; dir: string | null }[] = [
     { kind: "claude", dir: null },
     { kind: "codex", dir: null },
     ...detected.map((d) => ({ kind: d.kind, dir: d.dir })),
@@ -324,11 +342,15 @@ export const useDesk = create<DeskState>((set, get) => ({
   },
 
   setProjectAccount(projectId, kind, id, auto = false) {
-    const key = kind === "claude" ? "claudeAccountId" : "codexAccountId";
-    const chosen = kind === "claude" ? "claudeChosen" : "codexChosen";
     const account = get().accounts.find((a) => a.id === id);
     // The default account is stored as null so it follows the tool's default dir.
     const value = account && account.dir ? id : null;
+    if (!isChatTool(kind)) {
+      set((s) => ({ projects: s.projects.map((p) => (p.id === projectId ? { ...p, agentAccounts: { ...p.agentAccounts, [kind]: value } } : p)) }));
+      return;
+    }
+    const key = kind === "claude" ? "claudeAccountId" : "codexAccountId";
+    const chosen = kind === "claude" ? "claudeChosen" : "codexChosen";
     set((s) => ({
       projects: s.projects.map((p) => (p.id === projectId ? { ...p, [key]: value, ...(auto ? {} : { [chosen]: true }) } : p)),
     }));
@@ -491,7 +513,7 @@ export const useDesk = create<DeskState>((set, get) => ({
 
 // Derived helpers
 
-export function defaultAccount(accounts: Account[], kind: Tool): Account {
+export function defaultAccount(accounts: Account[], kind: Agent): Account {
   return (
     accounts.find((a) => a.kind === kind && a.dir === null) ?? {
       id: accountId(kind, null),
@@ -503,9 +525,10 @@ export function defaultAccount(accounts: Account[], kind: Tool): Account {
   );
 }
 
-export function projectAccount(accounts: Account[], project: Project | undefined, kind: Tool): Account {
-  const id = kind === "claude" ? project?.claudeAccountId : project?.codexAccountId;
-  return accounts.find((a) => a.id === id) ?? defaultAccount(accounts, kind);
+export function projectAccount(accounts: Account[], project: Project | undefined, kind: Agent): Account {
+  const id = kind === "claude" ? project?.claudeAccountId : kind === "codex" ? project?.codexAccountId : project?.agentAccounts?.[kind];
+  // Agents without a default folder (none detected) fall back to their first account.
+  return accounts.find((a) => a.id === id) ?? accounts.find((a) => a.kind === kind && a.dir === null) ?? accounts.find((a) => a.kind === kind) ?? defaultAccount(accounts, kind);
 }
 
 /**
@@ -516,20 +539,22 @@ export function tabAccount(
   accounts: Account[],
   project: Project | undefined,
   tab: TerminalTab,
-  kind: Tool = tab.tool === "codex" ? "codex" : "claude",
+  kind: Agent = tab.tool === "shell" ? "claude" : tab.tool,
 ): Account {
   const id = tab.runAs?.[kind] ?? (tab.tool === kind ? tab.accountId : null);
   return accounts.find((a) => a.id === id) ?? projectAccount(accounts, project, kind);
 }
 
 /** Environment for a session: chosen accounts get their config dir, default accounts unset the variable. */
-export function sessionEnv(accounts: Account[], project: Project | undefined, overrides: Partial<Record<Tool, Account>> = {}) {
+export function sessionEnv(accounts: Account[], project: Project | undefined, overrides: Partial<Record<Agent, Account>> = {}) {
   const env: Record<string, string> = {};
   const unset: string[] = [];
-  for (const kind of ["claude", "codex"] as Tool[]) {
+  for (const kind of AGENTS) {
+    const name = ENV_VAR[kind];
+    if (!name) continue;
     const account = overrides[kind] ?? projectAccount(accounts, project, kind);
-    if (account.dir) env[ENV_VAR[kind]] = account.dir;
-    else unset.push(ENV_VAR[kind]);
+    if (account.dir) env[name] = account.dir;
+    else unset.push(name);
   }
   return { env, unset };
 }
@@ -542,7 +567,7 @@ export function shortPath(path: string, home: string | null) {
   return home && path.startsWith(home) ? "~" + path.slice(home.length) : path;
 }
 
-export const limitKey = (tool: Tool, dir: string | null) => `${tool}:${dir ?? ""}`;
+export const limitKey = (tool: Agent, dir: string | null) => `${tool}:${dir ?? ""}`;
 
 /** Tabs whose agent finished or wants input, in tab order. */
 export function waitingTabs(s: Pick<DeskState, "tabs">) {

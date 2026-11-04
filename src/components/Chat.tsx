@@ -1,21 +1,24 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, Asterisk, Check, ChevronDown, ChevronRight, Ellipsis, Gauge, Hexagon, LoaderCircle, MessageSquarePlus, Plus, Search, Server, Settings2, Slash, Square, SquareTerminal, UserRound, X } from "lucide-react";
+import { ArrowUp, Asterisk, Check, ChevronDown, ChevronRight, Ellipsis, Gauge, Hexagon, LoaderCircle, MessageSquarePlus, Plus, Search, Server, Slash, Square, SquareTerminal, UserRound, X } from "lucide-react";
 import { TOOL_LABEL, projectTree, useDesk } from "../store";
 import { addProjectsFromDialog, closeTab, openTerminal } from "../actions";
 import { TerminalPane, cleanTitle } from "./Workspace";
+import { Home } from "./Home";
+import { SidebarFooter } from "./SidebarFooter";
 import { useTabReorder } from "./useTabReorder";
 import { ipc } from "../ipc";
 import { openMenu } from "./Menu";
-import { Connections } from "./Sidebar";
+import { Accounts, Connections } from "./Sidebar";
 import { relativeTime } from "./Sessions";
 import {
   CLAUDE_EFFORTS, CLAUDE_MODELS, CLAUDE_MODES, CODEX_MODES, LOCAL_COMMANDS, answer, chatBusy, closeChat, codexModelList, commandList, loadAllSessions, loadClaudeCommands,
   closeStripTab, moveStripTab, loadCodexModels, loadSessions, newChat, showStripTab, openSession, send, setAccount, setEffort, setMode, setModel, setTool, stop, useChats, type Chat, type ChatItem, type SlashCommand,
 } from "../chat";
-import type { AgentSession, MenuItem, Project, TerminalTab, Tool } from "../types";
+import type { Agent, AgentSession, MenuItem, Project, TerminalTab, Tool } from "../types";
+import { ToolLogo } from "./ToolLogo";
 
-export function ToolGlyph({ tool, size = 13 }: { tool: Tool; size?: number }) {
-  return tool === "claude" ? <Asterisk size={size} className="tool-glyph" aria-label="Claude Code" /> : <Hexagon size={size - 1} className="tool-glyph" aria-label="Codex" />;
+export function ToolGlyph({ tool, size = 13 }: { tool: Agent; size?: number }) {
+  return <span className="tool-glyph" role="img" aria-label={TOOL_LABEL[tool]}><ToolLogo tool={tool} size={size} /></span>;
 }
 
 // Sidebar
@@ -74,7 +77,8 @@ export function ChatSidebar() {
         {roots.length === 0 && <button className="side-empty" onClick={() => void addProjectsFromDialog()}>Add a project folder to start chatting</button>}
       </div>
       <Connections />
-      <button className="settings-link" onClick={() => useDesk.getState().setModal({ kind: "settings" })}><Settings2 size={16} /><span>Settings</span><kbd>⌘,</kbd></button>
+      <Accounts />
+      <SidebarFooter />
     </aside>
   );
 }
@@ -178,22 +182,16 @@ export function shortTime(ms: number) {
 // Conversation
 
 export function ChatView() {
-  const activeId = useChats((s) => s.activeId);
   const termId = useChats((s) => s.termId);
   const chat = useChats((s) => (s.activeId ? s.chats[s.activeId] : undefined));
   const term = useDesk((s) => (termId ? s.tabs.find((t): t is TerminalTab => t.id === termId && t.type === "terminal") : undefined));
   const project = useDesk((s) => s.projects.find((p) => p.id === (chat?.projectId ?? s.activeProjectId)));
-  const projects = useDesk((s) => s.projects.length);
 
-  // Something is always on screen: the picked tab, or a blank chat in the selected project.
+  // A terminal tab that went away is forgotten. With nothing open, Home shows —
+  // closing the last tab no longer conjures a fresh blank chat.
   useEffect(() => {
-    if (term) return;
-    if (termId) useChats.setState({ termId: null });
-    if (!activeId || !chat) {
-      const pid = useDesk.getState().activeProjectId ?? useDesk.getState().projects[0]?.id;
-      if (pid) newChat(pid);
-    }
-  }, [activeId, chat, projects, term, termId]);
+    if (!term && termId) useChats.setState({ termId: null });
+  }, [term, termId]);
 
   return (
     <main className="workspace chat-main">
@@ -203,7 +201,7 @@ export function ChatView() {
       ) : chat && project ? (
         <Conversation key={chat.id} chat={chat} project={project} />
       ) : (
-        <div className="chat-empty-state"><h1>Chat</h1><p>Add a project folder to start a conversation.</p><button className="btn is-primary" onClick={() => void addProjectsFromDialog()}>Add project folder</button></div>
+        <div className="stage"><Home mode="chat" /></div>
       )}
     </main>
   );

@@ -9,7 +9,8 @@
     "tauri": "tauri",
     "test:ui": "node tests/ui-smoke.mjs",
     "test:appearance": "node tests/appearance.mjs",
-    "test:backend": "cargo test --manifest-path src-tauri/Cargo.toml"
+    "test:backend": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "test:home": "node tests/home.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",

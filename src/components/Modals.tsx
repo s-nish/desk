@@ -1,13 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowLeftRight, CircleCheck, Eye, EyeOff, KeyRound, Server, X } from "lucide-react";
-import { ACCOUNT_COLORS, TOOL_LABEL, uid, useDesk, type Modal } from "../store";
-import { connectionLabel, createAccount, openConnection, parseSsh, refreshIdentities, saveConnection, signInSpec } from "../actions";
+import { ArrowLeftRight, CircleCheck, Download, Eye, EyeOff, KeyRound, Server, X } from "lucide-react";
+import { ACCOUNT_COLORS, AGENTS, ENV_VAR, TOOL_LABEL, TOOL_SHORT, isChatTool, uid, useDesk, type Modal } from "../store";
+import { INSTALL, connectionLabel, createAccount, multiAccount, openConnection, parseSsh, refreshIdentities, saveConnection, signInSpec } from "../actions";
 import { disposeTerminal, mountTerminal, setTerminalVisible } from "../terminals";
-import { errorText } from "../ipc";
+import { errorText, ipc } from "../ipc";
 import { Review } from "./Review";
 import { WorktreeDialog } from "./Worktrees";
 import { Settings } from "./Settings";
-import type { Tool } from "../types";
+import type { Agent } from "../types";
+import { ToolLogo } from "./ToolLogo";
 
 export function ModalLayer() {
   const modal = useDesk((s) => s.modal);
@@ -74,22 +75,35 @@ function slug(name: string) {
     .replace(/^-+|-+$/g, "");
 }
 
-function AddAccount({ initial }: { initial: Tool }) {
+function AddAccount({ initial }: { initial: Agent }) {
   const accounts = useDesk((s) => s.accounts);
-  const [tool, setTool] = useState<Tool>(initial);
+  const [tool, setTool] = useState<Agent>(initial);
   const [name, setName] = useState("");
   const [color, setColor] = useState(() => ACCOUNT_COLORS.find((c) => !accounts.some((a) => a.color === c)) ?? ACCOUNT_COLORS[1]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // null while checking; checked in the same login shell terminals use.
+  const [installed, setInstalled] = useState<Record<string, boolean | null>>({});
+  const multi = multiAccount(tool);
+  const taken = !multi && accounts.some((a) => a.kind === tool);
   const s = slug(name);
   const folder = `~/.${tool}-${s || "name"}`;
+  const install = INSTALL[tool];
+  const has = installed[tool];
+
+  useEffect(() => {
+    if (installed[tool] !== undefined) return;
+    setInstalled((m) => ({ ...m, [tool]: null }));
+    void ipc.toolInstalled(INSTALL[tool].bins).then((ok) => setInstalled((m) => ({ ...m, [tool]: ok }))).catch(() => setInstalled((m) => ({ ...m, [tool]: true })));
+  }, [tool]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!s) return setError("Give the account a name, like Work or Personal.");
+    if (taken) return;
+    if (multi && !s) return setError("Give the account a name, like Work or Personal.");
     setBusy(true);
     try {
-      const account = await createAccount(tool, name, color);
+      const account = await createAccount(tool, name || TOOL_SHORT[tool], color);
       useDesk.getState().setModal({ kind: "signin", accountId: account.id });
     } catch (err) {
       setError(errorText(err));
@@ -100,43 +114,63 @@ function AddAccount({ initial }: { initial: Tool }) {
   return (
     <Shell title="Add account">
       <form className="modal-body" onSubmit={submit}>
-        <div className="segmented" role="radiogroup" aria-label="Tool">
-          {(["claude", "codex"] as Tool[]).map((t) => (
-            <button type="button" key={t} role="radio" aria-checked={tool === t} className={tool === t ? "is-on" : ""} onClick={() => setTool(t)}>
-              {TOOL_LABEL[t]}
+        <div className="tool-picker" role="radiogroup" aria-label="Tool">
+          {AGENTS.map((t) => (
+            <button type="button" key={t} role="radio" aria-checked={tool === t} aria-label={TOOL_LABEL[t]} className={tool === t ? "is-on" : ""} onClick={() => (setTool(t), setError(""))}>
+              <ToolLogo tool={t} size={20} />
+              <span>{TOOL_SHORT[t]}</span>
             </button>
           ))}
         </div>
-        <label className="field">
-          <span>Name</span>
-          <input autoFocus value={name} placeholder="Work" onChange={(e) => (setName(e.target.value), setError(""))} />
-        </label>
-        <div className="field">
-          <span>Color</span>
-          <div className="swatch-row">
-            {ACCOUNT_COLORS.map((c) => (
-              <button
-                type="button"
-                key={c}
-                className={"swatch" + (c === color ? " is-current" : "")}
-                style={{ background: c }}
-                aria-label={`Color ${c}`}
-                onClick={() => setColor(c)}
-              />
-            ))}
+        {taken ? (
+          <p className="modal-note">
+            {TOOL_LABEL[tool]} keeps one sign-in per Mac, so Desk shows it as a single account, and it's already added. Use its ⋯ menu in Accounts to sign in again.
+          </p>
+        ) : <>
+          <label className="field">
+            <span>Name</span>
+            <input autoFocus value={name} placeholder={multi ? "Work" : TOOL_SHORT[tool]} onChange={(e) => (setName(e.target.value), setError(""))} />
+          </label>
+          <div className="field">
+            <span>Color</span>
+            <div className="swatch-row">
+              {ACCOUNT_COLORS.map((c) => (
+                <button
+                  type="button"
+                  key={c}
+                  className={"swatch" + (c === color ? " is-current" : "")}
+                  style={{ background: c }}
+                  aria-label={`Color ${c}`}
+                  onClick={() => setColor(c)}
+                />
+              ))}
+            </div>
           </div>
-        </div>
-        <p className="modal-note">
-          Desk creates <code>{folder}</code> for this account's sign-in and settings, then opens {TOOL_LABEL[tool]} there so you can sign in. Your
-          other accounts aren't touched.
-        </p>
+          {has === false && (
+            <div className="install-note" role="note">
+              <Download size={15} />
+              <div>
+                <strong>{TOOL_LABEL[tool]} isn't installed on this Mac.</strong>
+                <span>Desk will install it from {install.source} when you continue, by running:</span>
+                <code>{install.command}</code>
+                <span>You'll see the install in the next window, then sign in there.</span>
+              </div>
+            </div>
+          )}
+          <p className="modal-note">
+            {multi
+              ? <>Desk creates <code>{folder}</code> for this account's sign-in and settings ({ENV_VAR[tool]}), then opens {TOOL_LABEL[tool]} there so you can sign in. Your other accounts aren't touched.</>
+              : <>{TOOL_LABEL[tool]} keeps one sign-in per Mac, so this account uses its normal sign-in. Desk opens {TOOL_LABEL[tool]} so you can sign in.</>}
+            {!isChatTool(tool) && <> It runs in terminal tabs; chats and usage limits are Claude Code and Codex only.</>}
+          </p>
+        </>}
         {error && <p className="form-error">{error}</p>}
         <footer className="modal-foot">
           <button type="button" className="btn" onClick={close}>
             Cancel
           </button>
-          <button type="submit" className="btn is-primary" disabled={busy}>
-            Create and sign in
+          <button type="submit" className="btn is-primary" disabled={busy || taken || has === null}>
+            {has === null ? "Checking…" : has === false ? "Install and sign in" : "Create and sign in"}
           </button>
         </footer>
       </form>
@@ -164,10 +198,14 @@ function SignIn({ accountId }: { accountId: string }) {
   }, [key]);
 
   if (!account) return null;
-  const how =
-    account.kind === "claude"
-      ? "Claude Code opens below using this account's folder. Follow its sign-in steps (run /login if it doesn't ask), then close this window."
-      : "codex login runs below using this account's folder. Finish in the browser, then close this window.";
+  const HOW: Record<Agent, string> = {
+    claude: "Claude Code opens below using this account's folder. Follow its sign-in steps (run /login if it doesn't ask), then close this window.",
+    codex: "codex login runs below using this account's folder. Finish in the browser, then close this window.",
+    gemini: "Gemini CLI opens below using this account's folder. Pick \"Login with Google\" and finish in the browser, then close this window.",
+    cursor: "Cursor Agent's login runs below. Finish in the browser, then close this window.",
+    grok: "Grok opens below and signs you in through the browser. Finish there, then close this window.",
+  };
+  const how = (INSTALL[account.kind] ? "If it isn't installed yet, Desk installs it first. " : "") + HOW[account.kind];
 
   return (
     <Shell title={`Sign in to ${account.name}`} wide escape={false}>

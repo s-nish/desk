@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { Bell, Command, GitBranch, MessagesSquare, Settings2, SquareTerminal } from "lucide-react";
 import { homeDir } from "@tauri-apps/api/path";
 import { useShallow } from "zustand/react/shallow";
-import { TOOL_LABEL, projectAccount, shortPath, tabAccount, useDesk, focusedTabId, waitingTabs } from "../store";
-import type { Account, Project, Tool } from "../types";
+import { TOOL_LABEL, isChatTool, projectAccount, shortPath, tabAccount, useDesk, focusedTabId, waitingTabs } from "../store";
+import type { Account, Agent, Project } from "../types";
 import { accountChoices } from "./Sidebar";
 import { openMenu } from "./Menu";
 import { UsageChip } from "./Usage";
@@ -113,7 +113,7 @@ function WaitingButton() {
   );
 }
 
-function AccountSegment({ kind, account, project }: { kind: Tool; account: Account; project: Project }) {
+function AccountSegment({ kind, account, project }: { kind: Agent; account: Account; project: Project }) {
   const identity = useDesk((s) => s.identities[account.id]);
   const showEmails = useDesk((s) => s.preferences.showAccountEmails);
   return (
@@ -127,9 +127,9 @@ function AccountSegment({ kind, account, project }: { kind: Tool; account: Accou
       <span className="status-tool">{TOOL_LABEL[kind]}</span>
       <span className="status-name">{account.name}</span>
       {showEmails && identity?.email && <span className="status-email">{identity.email}</span>}
-      {identity && !identity.signedIn && <span className="status-email">not signed in</span>}
+      {identity && !identity.signedIn && isChatTool(kind) && <span className="status-email">not signed in</span>}
     </button>
-    {identity?.signedIn !== false && <UsageChip account={account} />}
+    {identity?.signedIn !== false && isChatTool(kind) && <UsageChip account={account} />}
     </span>
   );
 }
@@ -143,7 +143,7 @@ export function StatusBar() {
   const branch = useDesk((s) => (project ? s.branches[project.id] : null));
 
   // A Claude Code or Codex tab shows only the account it runs as; SSH tabs show none; anything else shows both.
-  const segments: [Tool, Account][] = [];
+  const segments: [Agent, Account][] = [];
   if (tab?.type === "terminal" && tab.tool !== "shell") segments.push([tab.tool, tabAccount(accounts, project, tab)]);
   else if (tab?.type === "terminal" && tab.sshId) { /* an SSH session runs no Claude Code or Codex account */ }
   else if (tab?.type === "terminal") segments.push(["claude", tabAccount(accounts, project, tab, "claude")], ["codex", tabAccount(accounts, project, tab, "codex")]);

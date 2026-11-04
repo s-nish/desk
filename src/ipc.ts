@@ -40,6 +40,7 @@ export const ipc = {
   accountUsage: (path: string, dirs: (string | null)[]) =>
     invoke<{ dir: string | null; sessions: number; lastUsed: number; exact: boolean }[]>("account_usage", { path, dirs }),
   accountCreate: (kind: string, name: string) => invoke<string>("account_create", { kind, name }),
+  toolInstalled: (bins: string[]) => invoke<boolean>("tool_installed", { bins }),
 
   sshSavePassword: (id: string, password: string) => invoke<void>("ssh_save_password", { id, password }),
   sshForgetPassword: (id: string) => invoke<void>("ssh_forget_password", { id }),

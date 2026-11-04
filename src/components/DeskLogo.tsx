@@ -1,11 +1,10 @@
 import type { SVGProps } from "react";
 
-/** Desk's split monogram: an offset spine and a continuous curved plane. */
+/** Desk's mark: a 5×7 pixel-grid D. Monochrome: takes the theme's text colour. */
 export function DeskLogo({ size = 24, ...props }: SVGProps<SVGSVGElement> & { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true" {...props}>
-      <path d="M4 9 9 6v20l-5 3V9Z" fill="currentColor" />
-      <path d="M12 4h5a12 12 0 0 1 0 24h-5v-5h5a7 7 0 0 0 0-14h-5V4Z" fill="currentColor" />
+    <svg width={size} height={size} viewBox="-1.56 -0.56 8 8" fill="none" aria-hidden="true" {...props}>
+      <path d="M0 0h0.88v0.88h-0.88zM1 0h0.88v0.88h-0.88zM2 0h0.88v0.88h-0.88zM3 0h0.88v0.88h-0.88zM0 1h0.88v0.88h-0.88zM4 1h0.88v0.88h-0.88zM0 2h0.88v0.88h-0.88zM4 2h0.88v0.88h-0.88zM0 3h0.88v0.88h-0.88zM4 3h0.88v0.88h-0.88zM0 4h0.88v0.88h-0.88zM4 4h0.88v0.88h-0.88zM0 5h0.88v0.88h-0.88zM4 5h0.88v0.88h-0.88zM0 6h0.88v0.88h-0.88zM1 6h0.88v0.88h-0.88zM2 6h0.88v0.88h-0.88zM3 6h0.88v0.88h-0.88z" style={{ fill: "var(--text, currentColor)" }} />
     </svg>
   );
 }

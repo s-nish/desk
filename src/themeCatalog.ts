@@ -1,5 +1,13 @@
 /** Original and neutral interface palettes, shared by settings and preference validation. */
 export const THEMES = [
+  { id: "electric", name: "Electric", description: "Midnight black, electric blue, a touch of cantaloupe.", bg: "#02070A", surface: "#06121A", accent: "#0297DE", light: false },
+  { id: "ember", name: "Ember", description: "Warm cantaloupe glow with blue sparks.", bg: "#0A0605", surface: "#130C0A", accent: "#FC734D", light: false },
+  { id: "aurora", name: "Aurora", description: "Deep teal waves, a warm horizon.", bg: "#020B0A", surface: "#061512", accent: "#2DD4BF", light: false },
+  { id: "electric-light", name: "Electric Light", description: "Clean white, sky blue, a touch of cantaloupe.", bg: "#FCFFFF", surface: "#F2F8FB", accent: "#0593C6", light: true },
+  { id: "ember-light", name: "Ember Light", description: "Warm cream, cantaloupe pixels, a blue spark.", bg: "#FFFAF6", surface: "#FBF1EA", accent: "#B93C0B", light: true },
+  { id: "aurora-light", name: "Aurora Light", description: "Pale mint, teal waves, a warm horizon.", bg: "#F7FDFB", surface: "#ECF8F4", accent: "#0F766E", light: true },
+  { id: "snow", name: "Snow", description: "Black on white, graphite pixels, one cantaloupe spark.", bg: "#FCFCFC", surface: "#F4F4F4", accent: "#111111", light: true },
+  { id: "onyx", name: "Onyx", description: "White on black, silver pixels, one cantaloupe spark.", bg: "#050505", surface: "#0C0C0C", accent: "#F4F4F4", light: false },
   { id: "black", name: "Black", description: "Pure black. Crisp white.", bg: "#000000", surface: "#0b0b0b", accent: "#fafafa", light: false },
   { id: "obsidian", name: "Obsidian", description: "Deep ink. Quiet separation.", bg: "#101010", surface: "#171717", accent: "#f5f5f5", light: false },
   { id: "graphite-refined", name: "Graphite", description: "Balanced charcoal.", bg: "#202020", surface: "#282828", accent: "#f5f5f5", light: false },
@@ -23,3 +31,6 @@ export const THEMES = [
 ] as const;
 
 export type ThemeId = (typeof THEMES)[number]["id"];
+
+/** Themes with the animated pixel backdrop, serif display type and pill buttons. */
+export const PIXEL_THEMES: ReadonlySet<string> = new Set(["electric", "electric-light", "ember", "ember-light", "aurora", "aurora-light", "snow", "onyx"]);

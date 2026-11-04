@@ -1,14 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowLeftRight, Columns2, Play, ArrowUpRight, Layers3, Rows2, Search, Server, Settings2, ChevronDown, FileText, FolderPlus, History, Plus, RotateCcw, SquareTerminal, TriangleAlert, X } from "lucide-react";
+import { ArrowLeftRight, Columns2, Play, Rows2, Server, ChevronDown, FileText, History, Plus, RotateCcw, SquareTerminal, TriangleAlert, X } from "lucide-react";
 import { TOOL_LABEL, projectAccount, tabAccount, useDesk, focusedTabId, type DropZone } from "../store";
-import { addProjectsFromDialog, closeOtherTabs, closeTab, connectionLabel, flipSplit, markAttention, openConnection, openInSplit, openTerminal, refreshLimits, saveTab, startFresh, swapPanes, terminalSpec, splitWorkspace } from "../actions";
+import { closeOtherTabs, closeTab, connectionLabel, flipSplit, markAttention, openConnection, openInSplit, openTerminal, refreshLimits, saveTab, startFresh, swapPanes, terminalSpec, splitWorkspace } from "../actions";
 import { isTerminalVisible, mountTerminal, setTerminalVisible, unmountTerminal } from "../terminals";
-import { RecentSessions } from "./Sessions";
 import { focusEditor, keepEditorVersion, mountEditor, reloadEditor } from "../editors";
 import { useTabReorder } from "./useTabReorder";
-import { DeskLogo } from "./DeskLogo";
+import { Home } from "./Home";
 import { openMenu } from "./Menu";
-import type { FileTab, MenuItem, Project, Tab, TabTool, TerminalTab } from "../types";
+import type { FileTab, MenuItem, Project, Tab, TerminalTab } from "../types";
 
 export function Workspace() {
   const project = useDesk((s) => s.projects.find((p) => p.id === s.activeProjectId));
@@ -20,8 +19,7 @@ export function Workspace() {
       {project && <TabBar project={project} />}
       <div className="stage">
         <Panes />
-        {!hasProjects && <Welcome />}
-        {project && !showing && <Launcher project={project} />}
+        {(!hasProjects || !showing) && <Home mode="terminal" />}
       </div>
     </main>
   );
@@ -409,66 +407,3 @@ function EditorPane({ tab, visible, focused }: { tab: FileTab; visible: boolean;
   );
 }
 
-// Empty states
-
-function Launcher({ project }: { project: Project }) {
-  const accounts = useDesk((s) => s.accounts);
-  const identities = useDesk((s) => s.identities);
-  const tiles: { tool: TabTool; key: string; detail: string; color: string }[] = (["claude", "codex"] as const).map((kind, i) => {
-    const a = projectAccount(accounts, project, kind);
-    const id = identities[a.id];
-    return {
-      tool: kind,
-      key: i === 0 ? "⌘D" : "⌘E",
-      detail: `${a.name}${id?.email ? `, ${id.email}` : id?.signedIn ? "" : ", not signed in"}`,
-      color: a.color,
-    };
-  });
-  tiles.push({ tool: "shell", key: "⌘J", detail: "Your login shell in this folder", color: "var(--muted)" });
-
-  return (
-    <div className="launcher">
-      <div className="launcher-inner">
-        <h1>{project.name}</h1>
-        <p className="launcher-path">{project.path}</p>
-        <h2 className="launch-section-title">Start a session</h2>
-        <div className="launch-tiles">
-          {tiles.map((t) => (
-            <button key={t.tool} className="launch-tile" style={{ "--acct": t.color } as React.CSSProperties} onClick={() => openTerminal(project.id, t.tool)}>
-              <span className="launch-tool-icon"><SquareTerminal size={19} /></span>
-              <span className="launch-name">
-                {TOOL_LABEL[t.tool]}
-                {t.key && <kbd>{t.key}</kbd>}
-              </span>
-              <span className="launch-detail">{t.detail}</span>
-              <ArrowUpRight size={15} className="launch-arrow" />
-            </button>
-          ))}
-        </div>
-        <RecentSessions project={project} />
-        <div className="launcher-actions"><button onClick={() => useDesk.getState().setQuickOpen(true)}><Search size={14} />Open a file<kbd>⌘P</kbd></button><button onClick={() => useDesk.getState().setModal({ kind: "settings" })}><Settings2 size={14} />Customize Desk<kbd>⌘,</kbd></button></div>
-      </div>
-    </div>
-  );
-}
-
-function Welcome() {
-  return (
-    <div className="launcher">
-      <div className="launcher-inner">
-        <span className="welcome-mark"><DeskLogo size={36} /></span>
-        <h1>Good work starts here.</h1>
-        <p className="launcher-lead">
-          Your projects, AI tools, and terminals. One considered workspace.
-          Open a folder and make room for your next idea.
-        </p>
-        <button className="btn is-primary" onClick={() => void addProjectsFromDialog()}>
-          <FolderPlus size={15} /> Add project folder
-        </button>
-        <p className="launcher-hint">Or drop a project folder anywhere in this window.</p>
-        <div className="welcome-features"><div><SquareTerminal size={17} /><strong>Your tools, together</strong><span>Claude Code, Codex, and your shell.</span></div><div><Layers3 size={17} /><strong>A place for every project</strong><span>Separate accounts. Persistent sessions.</span></div></div>
-        <div className="launcher-actions"><button onClick={() => useDesk.getState().setModal({ kind: "settings" })}><Settings2 size={14} />Make Desk yours<kbd>⌘,</kbd></button></div>
-      </div>
-    </div>
-  );
-}

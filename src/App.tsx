@@ -29,6 +29,7 @@ import {
   refreshLimits,
 } from "./actions";
 import { isLightTheme, resolvedTheme } from "./appearance";
+import { PIXEL_THEMES } from "./themeCatalog";
 import { updateEditorAppearance } from "./editors";
 import { clearTerminal, pasteIntoTerminal, updateTerminalAppearance } from "./terminals";
 import { Sidebar } from "./components/Sidebar";
@@ -193,6 +194,7 @@ export function App() {
   useEffect(() => {
     const apply = () => {
       document.documentElement.dataset.theme = resolvedTheme();
+      document.documentElement.dataset.style = PIXEL_THEMES.has(resolvedTheme()) ? "pixel" : "plain";
       document.documentElement.dataset.colorScheme = isLightTheme() ? "light" : "dark";
       document.documentElement.dataset.density = preferences.density;
       document.documentElement.dataset.accent = preferences.accent;

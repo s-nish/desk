@@ -1,10 +1,13 @@
+/** Tools with chats, session history and usage limits. */
 export type Tool = "claude" | "codex";
-export type TabTool = Tool | "shell";
+/** Every coding agent Desk can run in a terminal tab, each with its own accounts. */
+export type Agent = Tool | "gemini" | "cursor" | "grok";
+export type TabTool = Agent | "shell";
 
 /** An account is a config directory. `dir: null` is the tool's default (~/.claude, ~/.codex). */
 export interface Account {
   id: string;
-  kind: Tool;
+  kind: Agent;
   name: string;
   dir: string | null;
   color: string;
@@ -26,6 +29,8 @@ export interface Project {
   /** Set once the user picks an account by hand; automatic detection then leaves it alone. */
   claudeChosen?: boolean;
   codexChosen?: boolean;
+  /** Accounts for the other agents (Gemini CLI, Cursor Agent, Grok); missing means default. */
+  agentAccounts?: Partial<Record<Agent, string | null>>;
   /** Set for a git worktree: the project it was branched from. Shown nested under it. */
   worktreeOf?: string;
   /** Branch checked out in the worktree, and the branch it started from. */
@@ -53,7 +58,7 @@ export interface TerminalTab {
   /** Account picked explicitly for this tab, overriding the project's (claude/codex tabs). */
   accountId: string | null;
   /** Accounts the running session was actually started with; set at every spawn. */
-  runAs?: Partial<Record<Tool, string>>;
+  runAs?: Partial<Record<Agent, string>>;
   /** Saved connection this tab runs (a shell tab running its command). */
   sshId?: string;
   cwd: string;
@@ -112,7 +117,7 @@ export interface DirEntry {
 }
 
 export interface DetectedAccount {
-  kind: Tool;
+  kind: Agent;
   dir: string | null;
   path: string;
   email: string | null;
