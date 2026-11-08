@@ -4,8 +4,9 @@ import { projectAccount, useDesk } from "../store";
 import { accountChoices } from "./Sidebar";
 import { ToolLogo } from "./ToolLogo";
 import { errorText, ipc } from "../ipc";
-import { addWorktreeProject, rootProject } from "../actions";
+import { addWorktreeProject, closeTab, rootProject } from "../actions";
 import { handToAgent } from "../review";
+import { distrustChats } from "../chat";
 import { ghConfig, checkSummary, createPr, currentPr, draftPr, failureLogs, issue, listIssues, listPrs, markReady, mergePr, repoInfo, type IssueRow, type PrRow, type PullRequest } from "../github";
 import { openMenu } from "./Menu";
 import { Shell } from "./Modals";
@@ -258,7 +259,7 @@ export function GitHubPanel({ project }: { project: Project }) {
     useDesk.getState().setModal({
       kind: "confirm",
       title: `Check out #${row.number} by ${row.author || "someone else"}?`,
-      body: `This puts the pull request's code on your Mac, in its own worktree. Desk treats it as untrusted: agents there ignore the branch's own settings, hooks and MCP servers, and start in plan mode or a read-only sandbox. Only switch an agent to a mode that edits files or runs commands once you've read the changes.`,
+      body: `This puts the pull request's code on your Mac, in its own worktree. Desk treats it as untrusted: Claude Code and Codex there ignore the branch's own settings, hooks and MCP servers, and start in plan mode or a read-only sandbox. Other agents don't open there, and agents already running in it are stopped. Only switch to a mode that edits files or runs commands once you've read the changes.`,
       confirm: review ? "Check out and review" : "Check out",
       onConfirm: () => void checkoutNow(row, review),
     });
@@ -268,10 +269,17 @@ export function GitHubPanel({ project }: { project: Project }) {
     try {
       const made = await ipc.ghPrWorktree(repo.path, row.number, ghConfig(repo.path));
       const known = useDesk.getState().projects.find((p) => p.path === made.path);
-      if (known && !known.untrusted) useDesk.setState((s) => ({ projects: s.projects.map((p) => (p.id === known.id ? { ...p, untrusted: true } : p)) }));
+      if (known && !known.untrusted) {
+        useDesk.setState((s) => ({ projects: s.projects.map((p) => (p.id === known.id ? { ...p, untrusted: true } : p)) }));
+        // Anything already running there started with the branch's own settings.
+        distrustChats(made.path);
+        for (const t of useDesk.getState().tabs) {
+          if (t.type === "terminal" && t.tool !== "shell" && !t.sshId && (t.cwd === made.path || t.cwd.startsWith(made.path + "/"))) closeTab(t.id);
+        }
+      }
       const id = known?.id ?? addWorktreeProject(repo, made.path, made.branch, undefined, true);
       useDesk.getState().selectProject(id);
-      if (review) handToAgent(made.path, `Review pull request #${row.number}: ${row.title}. Read the description with \`gh pr view ${row.number}\` and the diff with \`gh pr diff ${row.number}\`. Point out bugs, risky changes and missing tests, with file and line for each. Don't change any files.`);
+      if (review) handToAgent(made.path, `Review pull request #${row.number}: ${row.title}. Read the description with \`gh pr view ${row.number}\` and the diff with \`gh pr diff ${row.number}\`. Point out bugs, risky changes and missing tests, with file and line for each. Don't change any files.`, { fresh: true });
       else toast(`Checked out #${row.number} in its own worktree.`);
     } catch (e) {
       toast(errorText(e), "error");

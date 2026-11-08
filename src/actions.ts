@@ -120,7 +120,12 @@ export async function terminalSpec(tabId: string): Promise<SessionSpec> {
   const overrides = Object.fromEntries(AGENTS.map((k) => [k, resolve(k)])) as Record<Agent, Account>;
   s.patchTab(tabId, { runAs: Object.fromEntries(AGENTS.map((k) => [k, overrides[k].id])) });
   const env = sessionEnv(s.accounts, project, overrides);
-  const untrusted = !!project?.untrusted && !tab.sshId;
+  const untrusted = (!!project?.untrusted || untrustedPath(tab.cwd)) && !tab.sshId;
+  // Only Claude Code and Codex have flags to skip a folder's own config; the other agents
+  // could load the checkout's settings or MCP servers, so they don't start there.
+  if (untrusted && tab.tool !== "claude" && tab.tool !== "codex" && tab.tool !== "shell") {
+    return { cwd: tab.cwd, command: `printf '%s\\n' ${shellWord(`${TOOL_LABEL[tab.tool]} doesn't open in untrusted checkouts. Use Claude Code or Codex here; they start without this folder's own settings.`)}; exit 1`, keepShell: false, ...env };
+  }
   const claude = tab.tool === "claude" && !tab.sshId
     ? `${await claudeCommand(overrides.claude.dir, tab.cwd, env.env)}${untrusted ? ` ${UNTRUSTED_CLAUDE_ARGS.join(" ")} --permission-mode plan` : ""}`
     : "claude";
@@ -245,6 +250,13 @@ export function jumpToWaiting() {
 // Past conversations
 
 /** The project a folder belongs to, preferring the deepest match (a worktree over its repo). */
+/** Whether this folder is, or is inside, a project marked untrusted (someone else's code).
+ *  Decided from the folder that actually runs, so a chat or tab filed under another
+ *  project still gets the restrictions. */
+export function untrustedPath(path: string): boolean {
+  return desk().projects.some((p) => p.untrusted && (path === p.path || path.startsWith(p.path + "/")));
+}
+
 export function projectForPath(path: string): Project | undefined {
   return desk()
     .projects.filter((p) => path === p.path || path.startsWith(p.path + "/"))

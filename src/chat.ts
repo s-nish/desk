@@ -11,7 +11,7 @@
 import { create } from "zustand";
 import { ipc } from "./ipc";
 import { chatView, projectAccount, sessionEnv, uid, useDesk } from "./store";
-import { addWorktreeProject, branchSlug, refreshLimits, rootProject, UNTRUSTED_CLAUDE_ARGS } from "./actions";
+import { addWorktreeProject, branchSlug, refreshLimits, rootProject, UNTRUSTED_CLAUDE_ARGS, untrustedPath } from "./actions";
 import { notify } from "./notify";
 import type { AgentSession, Project, Tool } from "./types";
 
@@ -265,9 +265,21 @@ export function newChat(projectId: string, tool: Tool = lastTool) {
 
 let lastTool: Tool = "claude";
 /** Someone else's checkout starts read-only: plan mode for Claude, a read-only sandbox for Codex. */
-const defaultMode = (tool: Tool, project?: Project) =>
-  project?.untrusted ? (tool === "claude" ? "plan" : "read-only") : tool === "claude" ? "default" : "workspace-write";
-const untrusted = (chat: Chat) => !!desk().projects.find((p) => p.id === chat.projectId)?.untrusted;
+const defaultMode = (tool: Tool, project?: Project, cwd?: string) =>
+  project?.untrusted || (cwd && untrustedPath(cwd)) ? (tool === "claude" ? "plan" : "read-only") : tool === "claude" ? "default" : "workspace-write";
+/** Trust follows the folder the agent runs in, as well as the project the chat is filed under. */
+const untrusted = (chat: Chat) => untrustedPath(chat.cwd) || !!desk().projects.find((p) => p.id === chat.projectId)?.untrusted;
+
+/** A folder was just marked untrusted: agents already running there were started with its
+ *  own settings, so stop them. Chats restart restricted on the next message, in a read-only mode. */
+export function distrustChats(path: string) {
+  const inside = (cwd: string) => cwd === path || cwd.startsWith(path + "/");
+  for (const chat of Object.values(chats().chats)) {
+    if (!inside(chat.cwd)) continue;
+    if (chat.proc != null) void ipc.chatKill(chat.proc);
+    chats().patch(chat.id, { proc: null, status: "idle", mode: chat.tool === "claude" ? "plan" : "read-only" });
+  }
+}
 
 /** Opens a past conversation as a chat, with its history, or shows the chat already open. */
 export function openSession(session: AgentSession, project: Project) {
@@ -290,7 +302,7 @@ export function openSession(session: AgentSession, project: Project) {
     items: [],
     status: "idle",
     proc: null,
-    mode: defaultMode(session.tool, project),
+    mode: defaultMode(session.tool, project, session.cwd),
     model: "",
     effort: "",
     truncated: false,

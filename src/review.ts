@@ -64,8 +64,9 @@ export function handTo(target: { chat: Chat } | { tab: TerminalTab }, text: stri
 }
 
 /** Hands text to the agent already working in this folder, or a new chat there. */
-export function handToAgent(root: string, text: string, options: { worktree?: boolean; branch?: string } = {}) {
-  const { chats, tabs } = options.worktree ? { chats: [], tabs: [] } : reviewTargets(root);
+export function handToAgent(root: string, text: string, options: { worktree?: boolean; branch?: string; fresh?: boolean } = {}) {
+  // `fresh` always starts a new chat, never one already running in the folder.
+  const { chats, tabs } = options.worktree || options.fresh ? { chats: [], tabs: [] } : reviewTargets(root);
   if (chats[0]) return handTo({ chat: chats[0] }, text);
   if (tabs[0]) return handTo({ tab: tabs[0] }, text);
   const project = projectForPath(root);
