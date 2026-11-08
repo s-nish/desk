@@ -90,6 +90,29 @@
     })
   );
 
+  /* ── Copy install command ── */
+  document.querySelectorAll("[data-copy]").forEach((btn) => {
+    const label = btn.querySelector("[data-copy-label]");
+    let timer;
+    btn.addEventListener("click", async () => {
+      const text = btn.dataset.copy;
+      try { await navigator.clipboard.writeText(text); }
+      catch {
+        // Fallback for browsers without the async clipboard API.
+        const area = Object.assign(document.createElement("textarea"), { value: text });
+        area.style.cssText = "position:fixed;opacity:0";
+        document.body.append(area); area.select();
+        try { document.execCommand("copy"); } catch {}
+        area.remove();
+      }
+      btn.classList.add("done");
+      if (label) label.textContent = "Copied";
+      btn.setAttribute("aria-label", "Copied");
+      clearTimeout(timer);
+      timer = setTimeout(() => { btn.classList.remove("done"); if (label) label.textContent = "Copy"; btn.setAttribute("aria-label", "Copy install command"); }, 1800);
+    });
+  });
+
   /* ── Reveal on scroll ── */
   const io = new IntersectionObserver(
     (entries) => entries.forEach((e) => { if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); } }),

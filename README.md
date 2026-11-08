@@ -9,7 +9,7 @@
 A calm macOS workspace for Claude Code, Codex and friends.<br>
 Projects, terminals, files, git and chat in one window, and the right account for every project.
 
-[**Download for macOS**](https://github.com/s-nish/desk/releases/latest) · [Website](https://github.com/s-nish/desk/tree/main/site) · [Report an issue](https://github.com/s-nish/desk/issues)
+[**Download for macOS**](https://github.com/s-nish/desk/releases/latest/download/Desk.dmg) · [Website](https://github.com/s-nish/desk/tree/main/site) · [Report an issue](https://github.com/s-nish/desk/issues)
 
 ![macOS 12+](https://img.shields.io/badge/macOS-12%2B-0297DE?style=flat-square&logo=apple&logoColor=white)
 ![Apple silicon](https://img.shields.io/badge/Apple%20silicon-arm64-0297DE?style=flat-square)
@@ -87,9 +87,18 @@ Desk opens in **Electric**: Midnight `#02070A`, Electric Blue `#0297DE` and a to
 
 ## Install
 
-1. Download the latest `.dmg` from [**Releases**](https://github.com/s-nish/desk/releases/latest) and drag Desk to Applications.
-2. Desk isn't notarized yet. On first launch, open **System Settings ▸ Privacy & Security** and choose **Open Anyway**.
-3. Install and sign in to the agents you use, such as `claude` or `codex`. Desk picks them up on launch.
+**From Terminal:**
+
+```sh
+curl -fL https://github.com/s-nish/desk/releases/latest/download/Desk.dmg -o ~/Downloads/Desk.dmg && open ~/Downloads/Desk.dmg
+```
+
+**Or by hand:** download [**Desk.dmg**](https://github.com/s-nish/desk/releases/latest/download/Desk.dmg) from the latest release.
+
+Then drag Desk to Applications, and install and sign in to the agents you use, such as `claude` or `codex`. Desk picks them up on launch.
+
+> [!TIP]
+> Desk isn't notarized yet. If you downloaded it in a browser, macOS asks on first launch: open **System Settings ▸ Privacy & Security** and choose **Open Anyway**. The Terminal command above skips that prompt.
 
 > [!NOTE]
 > The release is built for Apple silicon. On an Intel Mac, [build from source](#develop).
