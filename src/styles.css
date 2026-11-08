@@ -2327,29 +2327,37 @@ body.is-resizing-rows, body.is-resizing-rows * { cursor: row-resize !important; 
 .home-section-head .launch-section-title { margin: 0; }
 .home-add { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--text-2); font-size: 12px; }
 .home-add:hover { background: var(--bg-hover); border-color: var(--line-strong); }
-.home-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; margin-bottom: 30px; }
+.home-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: 10px; margin-bottom: 30px; }
 .home-card {
-  display: flex; flex-direction: column; gap: 14px; padding: 14px; min-width: 0;
+  display: flex; flex-direction: column; gap: 16px; padding: 14px 14px 12px; min-width: 0;
   border: 1px solid var(--line); border-radius: 14px; cursor: pointer;
   background: color-mix(in srgb, var(--surface) 86%, transparent); backdrop-filter: blur(8px);
   transition: border-color 120ms, box-shadow 160ms, transform 160ms;
 }
 .home-card:hover { border-color: var(--line-strong); transform: translateY(-1px); }
 .home-card.is-active { border-color: color-mix(in srgb, var(--ui-accent, var(--accent)) 55%, var(--line-strong)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--ui-accent, var(--accent)) 22%, transparent), 0 12px 34px color-mix(in srgb, var(--ui-accent, var(--accent)) 12%, transparent); }
-.home-card header { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.home-card-icon { display: grid; place-items: center; width: 32px; height: 32px; flex: none; border-radius: 9px; background: var(--bg-raised); color: var(--muted); border: 1px solid var(--line); }
-.home-card.is-active .home-card-icon { color: var(--ui-accent, var(--accent)); }
-.home-card-title { display: flex; flex-direction: column; min-width: 0; flex: 1; }
-.home-card h3 { margin: 0; font-size: 14px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-card header { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.home-card-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.home-card h3 { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 14px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-card-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--ui-accent, var(--accent)); box-shadow: 0 0 8px color-mix(in srgb, var(--ui-accent, var(--accent)) 70%, transparent); }
 .home-card-path { font: 11px/1.4 var(--font-mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.home-badge, .home-count { flex: none; font-size: 10.5px; font-weight: 600; padding: 3px 8px; border-radius: 999px; }
-.home-badge { color: var(--ui-accent, var(--accent)); background: color-mix(in srgb, var(--ui-accent, var(--accent)) 14%, transparent); }
-.home-count { color: var(--muted); background: var(--bg-raised); }
+.home-count { flex: none; font-size: 10.5px; font-weight: 600; padding: 3px 8px; border-radius: 999px; color: var(--muted); background: var(--bg-raised); }
 .home-card-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-.home-action { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg-raised); color: var(--text-2); font-size: 12px; }
-.home-action svg { color: var(--acct, var(--muted)); }
-.home-action:hover { border-color: var(--line-strong); background: var(--bg-hover); color: var(--text); }
-.home-action kbd { margin-left: 2px; font-size: 10px; color: var(--muted); }
+.home-icon {
+  position: relative; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%;
+  border: 1px solid var(--line); background: var(--bg-raised); color: var(--text-2);
+  transition: border-color 120ms, background 120ms, transform 120ms;
+}
+.home-icon:hover, .home-icon:focus-visible { border-color: color-mix(in srgb, var(--acct, var(--line-strong)) 60%, var(--line-strong)); background: var(--bg-hover); color: var(--text); transform: translateY(-1px); }
+.home-icon.is-shell { margin-left: 4px; }
+.home-icon::after {
+  content: attr(data-tip); position: absolute; left: 50%; bottom: calc(100% + 7px); transform: translate(-50%, 3px);
+  padding: 4px 8px; border-radius: 7px; white-space: pre; pointer-events: none; z-index: 5;
+  font-size: 11px; font-weight: 500; color: var(--text); background: var(--bg-raised); border: 1px solid var(--line-strong);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.28); opacity: 0; transition: opacity 120ms, transform 120ms;
+}
+.home-icon:hover::after, .home-icon:focus-visible::after { opacity: 1; transform: translate(-50%, 0); transition-delay: 250ms; }
+:root[data-motion="reduced"] .home-icon, :root[data-motion="reduced"] .home-icon::after { transition: none; }
 .chat-main > .stage { position: relative; flex: 1; min-height: 0; }
 
 /* Sidebar footer: usage rings, animation switch, settings — over a strip of pixels. */
@@ -2409,6 +2417,14 @@ body.is-resizing-rows, body.is-resizing-rows * { cursor: row-resize !important; 
 .home-action .home-action-sub { margin-left: -3px; opacity: .7; }
 .group-toggle .tool-logo { margin-right: 2px; opacity: .9; }
 .settings-account-group summary .tool-logo { margin-right: 6px; }
+.settings-account + .settings-account { border-top: 1px solid color-mix(in srgb, var(--line) 70%, transparent); margin-top: 6px; padding-top: 6px; }
+.account-defaults { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 14px; padding: 4px 10px 8px 22px; }
+.account-defaults label { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.account-defaults label > span { font-size: 11px; font-weight: 500; color: var(--muted); }
+.account-defaults select { min-width: 170px; max-width: 260px; }
+.account-defaults select:disabled { opacity: 0.55; }
+.account-defaults-load { display: inline-flex; align-items: center; gap: 6px; height: 30px; }
+.account-defaults-error { flex-basis: 100%; margin: 0; font-size: 11.5px; line-height: 1.45; color: var(--danger, #f87171); white-space: pre-wrap; }
 
 /* Add account: pick a tool by its logo. */
 .tool-picker { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin-bottom: 14px; }

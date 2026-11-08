@@ -13,6 +13,10 @@ export interface Account {
   name: string;
   dir: string | null;
   color: string;
+  /** Model new chats start with; empty uses the agent's own default. */
+  model?: string;
+  /** Reasoning effort new chats start with, where the agent has one. */
+  effort?: string;
 }
 
 export interface Identity {
@@ -152,6 +156,8 @@ export interface Worktree { path: string; branch: string | null; head: string; m
 /** Share of an allowance used, 0 to 100, and when it starts over (ms since the epoch). */
 export interface UsageWindow { used: number; resetsAt: number | null; minutes: number }
 export interface UsageLimits { tool: Tool; dir: string | null; session: UsageWindow | null; weekly: UsageWindow | null; plan: string | null; updated: number }
-export interface AgentSession { tool: Tool; dir: string | null; id: string; title: string; prompt: string | null; cwd: string; updated: number }
+export interface AgentSession { tool: Agent; dir: string | null; id: string; title: string; prompt: string | null; cwd: string; updated: number }
+/** A chat with an ACP agent (Gemini CLI, Cursor Agent, Grok, OpenCode), which Desk lists itself. `root` is the project folder it belongs to. */
+export interface AcpSessionEntry extends AgentSession { root: string }
 export interface SearchFile { path: string; original: string; matches: { line: number; text: string }[]; count: number }
 export interface SearchResults { files: SearchFile[]; truncated: boolean; skipped: number }

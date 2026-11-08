@@ -9,6 +9,7 @@ mod chat;
 mod pty;
 mod search;
 mod sessions;
+mod tray;
 mod ssh;
 mod usage_live;
 
@@ -575,6 +576,12 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// The agents working or waiting, for the menu bar icon's menu.
+#[tauri::command]
+fn tray_update(app: AppHandle, items: Vec<tray::TrayItem>) -> Result<(), String> {
+    tray::update(&app, &items).map_err(|e| e.to_string())
+}
+
 pub fn run() {
     let ptys = Arc::new(PtyManager::default());
     bridge::start(Arc::clone(&ptys));
@@ -586,6 +593,13 @@ pub fn run() {
         .manage(files::Watchers::default())
         .manage(QuitState::default())
         .menu(build_menu)
+        .setup(|app| {
+            // The menu bar icon is a nicety: Desk runs without it.
+            if let Err(e) = tray::create(app.handle()) {
+                eprintln!("Couldn't add the menu bar icon: {e}");
+            }
+            Ok(())
+        })
         // Only Desk's own page may call its commands; the built-in browser's pages never can.
         .invoke_handler({
             let handler: Box<dyn Fn(tauri::ipc::Invoke) -> bool + Send + Sync> = Box::new(tauri::generate_handler![
@@ -660,6 +674,7 @@ pub fn run() {
             ssh_save_password,
             ssh_forget_password,
             ssh_has_password,
+            tray_update,
             ]);
             move |invoke: tauri::ipc::Invoke| {
                 if invoke.message.webview().label() != "main" {

@@ -43,7 +43,7 @@ export const INSTALL: Record<AccountKind, { bins: string[]; command: string; sou
   gemini: { bins: ["gemini"], command: "npm install -g @google/gemini-cli", source: "npm (@google/gemini-cli)" },
   cursor: { bins: ["cursor-agent", "agent"], command: "curl https://cursor.com/install -fsS | bash", source: "cursor.com" },
   grok: { bins: ["grok"], command: "curl -fsSL https://x.ai/cli/install.sh | bash", source: "x.ai" },
-  opencode: { bins: ["opencode"], command: "npm install -g opencode-ai", source: "npm (opencode-ai)" },
+  opencode: { bins: ["opencode"], command: "curl -fsSL https://opencode.ai/v2/install | bash", source: "opencode.ai" },
 };
 
 /** Agents that can hold several accounts (their CLI reads a config-folder variable). */
@@ -93,7 +93,7 @@ export function openTerminal(projectId: string, tool: TabTool, opts: { accountId
     // Each Claude Code tab gets its own conversation id up front, so the tab can
     // pick the same conversation back up after Desk quits.
     ...(tool === "claude" ? { sessionId: opts.sessionId ?? uid() } : {}),
-    ...(tool === "codex" && opts.resume ? { resume: opts.resume } : {}),
+    ...(tool !== "claude" && tool !== "shell" && opts.resume ? { resume: opts.resume } : {}),
     ...(tool === "shell" && opts.command ? { command: opts.command } : {}),
     cwd: opts.cwd ?? project.path,
     title: "",
@@ -106,6 +106,9 @@ export function openTerminal(projectId: string, tool: TabTool, opts: { accountId
 }
 
 const SAFE_ID = /^[0-9a-zA-Z-]{8,64}$/;
+/** OpenCode's ids have underscores (`ses_…`). */
+const ACP_ID = /^[0-9a-zA-Z_-]{8,80}$/;
+const RESUME_FLAG: Partial<Record<TabTool, string>> = { cursor: "--resume", grok: "--resume", gemini: "--resume", opencode: "--session" };
 
 /** Re-reads accounts at spawn time so restarts use the current folder for that account. */
 export async function terminalSpec(tabId: string): Promise<SessionSpec> {
@@ -147,6 +150,11 @@ export async function terminalSpec(tabId: string): Promise<SessionSpec> {
   }
   if (tab.tool === "codex" && tab.resume && SAFE_ID.test(tab.resume)) {
     return { cwd: tab.cwd, command: `${codex} resume ${tab.resume}`, ...env };
+  }
+  // A chat with an ACP agent, continued in its own terminal interface.
+  if (tab.resume && ACP_ID.test(tab.resume) && RESUME_FLAG[tab.tool]) {
+    const base = tab.tool === "cursor" ? `${COMMAND.cursor} cursor` : COMMAND[tab.tool];
+    return { cwd: tab.cwd, command: `${base} ${RESUME_FLAG[tab.tool]} ${tab.resume}`, ...env };
   }
   if (tab.tool === "shell" && tab.command) {
     // Runs once; restarting the tab gives a plain shell.

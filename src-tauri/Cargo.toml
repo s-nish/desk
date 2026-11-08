@@ -18,7 +18,7 @@ notify = "8.2.0"
 portable-pty = "0.9.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
-tauri = { version = "2.12.4", features = ["unstable"] }
+tauri = { version = "2.12.4", features = ["unstable", "tray-icon"] }
 tauri-plugin-dialog = "2.8.3"
 trash = "5.2.9"
 sha2 = "0.10.9"

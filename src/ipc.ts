@@ -30,6 +30,7 @@ export const ipc = {
   },
   chatWrite: (id: number, line: string) => invoke<void>("chat_write", { id, line }),
   chatKill: (id: number) => invoke<void>("chat_kill", { id }),
+  trayUpdate: (items: { id: string; label: string; detail: string; waiting: boolean }[]) => invoke<void>("tray_update", { items }),
   attachmentSave: (name: string, data: string) => invoke<string>("attachment_save", { name, data }),
   attachmentImage: (path: string) => invoke<{ mediaType: string; data: string }>("attachment_image", { path }),
   codexModels: (dir: string | null) => invoke<{ id: string; label: string; description?: string; efforts?: string[]; defaultEffort?: string }[]>("codex_models", { dir }),

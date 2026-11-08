@@ -1,5 +1,5 @@
-import { FolderPlus, Layers3, MessageSquarePlus, Search, Settings2, SquareTerminal } from "lucide-react";
-import { EXTRA_AGENTS, TOOL_LABEL, isChatTool, projectAccount, useDesk } from "../store";
+import { FolderPlus, Layers3, Search, Settings2, SquareTerminal } from "lucide-react";
+import { EXTRA_AGENTS, TOOL_LABEL, projectAccount, useDesk } from "../store";
 import { addProjectsFromDialog, openTerminal } from "../actions";
 import { newChat } from "../chat";
 import { RecentSessions } from "./Sessions";
@@ -45,7 +45,7 @@ export function Home({ mode }: { mode: Mode }) {
         <h1>{greeting()}. <em>What's next?</em></h1>
         <p className="launcher-lead">
           {roots.length === 1 ? "One project" : `${roots.length} projects`} ready.{" "}
-          {mode === "chat" ? "Start a chat with Claude Code or Codex in any of them." : "Open a session in any of them, or pick up where you left off."}
+          {mode === "chat" ? "Pick an agent on any project to start a chat." : "Open a session in any of them, or pick up where you left off."}
         </p>
 
         <div className="home-section-head">
@@ -72,39 +72,39 @@ function ProjectCard({ project, active, mode }: { project: Project; active: bool
   const accounts = useDesk((s) => s.accounts);
   const tabCount = useDesk((s) => s.tabs.filter((t) => t.projectId === project.id).length);
   const select = () => useDesk.getState().selectProject(project.id);
-  // Gemini CLI, Cursor Agent and Grok show up once they have an account.
+  // Gemini CLI, Cursor Agent, Grok and OpenCode show up once they have an account.
   const extras = EXTRA_AGENTS.filter((k) => accounts.some((a) => a.kind === k));
-  const tools: TabTool[] = mode === "chat" ? ["claude", "codex"] : ["claude", "codex", ...extras, "shell"];
+  const tools: TabTool[] = ["claude", "codex", ...extras, ...(mode === "terminal" ? ["shell" as const] : [])];
   const start = (tool: TabTool) => {
     select();
-    if (mode === "chat" && isChatTool(tool)) newChat(project.id, tool);
+    if (mode === "chat" && tool !== "shell") newChat(project.id, tool);
     else openTerminal(project.id, tool);
   };
 
   return (
-    <article className={"home-card" + (active ? " is-active" : "")} onClick={select}>
+    <article className={"home-card" + (active ? " is-active" : "")} aria-current={active || undefined} onClick={select}>
       <header>
-        <span className="home-card-icon"><Layers3 size={15} /></span>
         <div className="home-card-title">
-          <h3>{project.name}</h3>
+          <h3>{active && <span className="home-card-dot" aria-hidden="true" />}{project.name}</h3>
           <span className="home-card-path" title={project.path}>{shortPath(project.path)}</span>
         </div>
-        {active ? <span className="home-badge">Selected</span> : tabCount > 0 ? <span className="home-count">{tabCount} open</span> : null}
+        {tabCount > 0 && <span className="home-count">{tabCount} open</span>}
       </header>
-      <div className="home-card-actions">
+      <div className="home-card-actions" role="toolbar" aria-label={`Start in ${project.name}`}>
         {tools.map((tool) => {
           const account = tool === "shell" ? null : projectAccount(accounts, project, tool);
+          const what = tool === "shell" ? "New shell" : mode === "chat" ? `New ${TOOL_LABEL[tool]} chat` : `New ${TOOL_LABEL[tool]} tab`;
+          const tip = `${what}${account && accounts.filter((a) => a.kind === tool).length > 1 ? ` · ${account.name}` : ""}${active && mode === "terminal" && SHORTCUT[tool] ? `  ${SHORTCUT[tool]}` : ""}`;
           return (
             <button
               key={tool}
-              className="home-action"
+              className={"home-icon" + (tool === "shell" ? " is-shell" : "")}
               style={account ? ({ "--acct": account.color } as React.CSSProperties) : undefined}
-              title={account ? `${TOOL_LABEL[tool]} · ${account.name}` : TOOL_LABEL[tool]}
+              aria-label={what}
+              data-tip={tip}
               onClick={(e) => { e.stopPropagation(); start(tool); }}
             >
-              {mode === "chat" && tool !== "shell" ? <><ToolLogo tool={tool} size={13} /><MessageSquarePlus size={11} className="home-action-sub" /></> : glyph(tool)}
-              <span>{mode === "chat" ? `${TOOL_LABEL[tool]} chat` : TOOL_LABEL[tool]}</span>
-              {active && mode === "terminal" && SHORTCUT[tool] && <kbd>{SHORTCUT[tool]}</kbd>}
+              {glyph(tool, 16)}
             </button>
           );
         })}

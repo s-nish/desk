@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { EDITOR_THEMES, type EditorThemeId } from "./editorThemes";
 import { THEMES, type ThemeId } from "./themeCatalog";
-import type { Account, AccountKind, Agent, DetectedAccount, FileTab, Identity, Layout, Project, SshConnection, Tab, TabTool, TerminalTab, Tool, UsageLimits } from "./types";
+import type { AcpSessionEntry, Account, AccountKind, Agent, DetectedAccount, FileTab, Identity, Layout, Project, SshConnection, Tab, TabTool, TerminalTab, Tool, UsageLimits } from "./types";
 
 export const ACCOUNT_COLORS = ["#2dd4bf", "#f59e0b", "#60a5fa", "#fb7185", "#4ade80", "#e5e5e5"];
 
@@ -19,7 +19,7 @@ export const TOOL_LABEL: Record<TabTool | "github", string> = { github: "GitHub"
 /** Short names for tight spots (pills, chips). */
 export const TOOL_SHORT: Record<AccountKind, string> = { github: "GitHub", claude: "Claude", codex: "Codex", gemini: "Gemini", cursor: "Cursor", grok: "Grok", opencode: "OpenCode" };
 export const AGENTS: Agent[] = ["claude", "codex", "gemini", "cursor", "grok", "opencode"];
-/** Agents beyond Claude Code and Codex: terminal tabs only, no chats or usage limits. */
+/** Agents beyond Claude Code and Codex. They chat over ACP; no usage limits. */
 export const EXTRA_AGENTS: Agent[] = ["gemini", "cursor", "grok", "opencode"];
 /** Every kind of account, agents first. */
 export const ACCOUNT_KINDS: AccountKind[] = [...AGENTS, "github"];
@@ -35,6 +35,9 @@ export interface Preferences {
   theme: ThemeId | "system";
   /** Names you gave conversations in Desk, by `<tool>:<id>`. The CLIs keep their own. */
   sessionTitles?: Record<string, string>;
+  /** Chats with Gemini CLI, Cursor Agent, Grok and OpenCode, newest first. Their CLIs
+   *  keep the conversations; Desk keeps this list so the sidebar can show them. */
+  acpSessions?: AcpSessionEntry[];
   /** Bumped when the default look changes; drives one-time theme migration. */
   themeVersion: number;
   /** Pixel themes: animate the pixel-wave backdrop (Reduce motion always shows a still frame). */

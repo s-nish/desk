@@ -164,7 +164,7 @@ function AddAccount({ initial }: { initial: AccountKind }) {
             {multi
               ? <>Desk creates <code>{folder}</code> for this account's sign-in and settings ({ENV_VAR[tool]}), then opens {TOOL_LABEL[tool]} there so you can sign in. Your other accounts aren't touched.</>
               : <>{TOOL_LABEL[tool]} keeps one sign-in per Mac, so this account uses its normal sign-in. Desk opens {TOOL_LABEL[tool]} so you can sign in.</>}
-            {!isChatTool(tool) && <> It runs in terminal tabs; chats and usage limits are Claude Code and Codex only.</>}
+            {!isChatTool(tool) && <> It chats in the chat view and runs in terminal tabs. Usage limits are Claude Code and Codex only.</>}
           </p>
         </>}
         {error && <p className="form-error">{error}</p>}

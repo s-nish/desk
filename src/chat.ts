@@ -1,4 +1,4 @@
-// Chat mode. Claude Code and Codex run as their own CLIs, speaking JSON lines,
+// Chat mode. Each agent runs as its own CLI, speaking JSON lines,
 // and the conversation is drawn here instead of in a terminal. Nothing is proxied:
 // the CLI uses the account folder's sign-in and writes its session files as usual,
 // so a chat can be resumed in a terminal tab, and the other way round.
@@ -7,14 +7,17 @@
 // Messages go in on stdin, permission questions come out as control requests.
 // Codex: one `codex exec --json` per turn, continued with `codex exec resume`.
 // `exec` can't ask for approval, so the chat picks a sandbox instead.
+// Gemini CLI, Cursor Agent, Grok and OpenCode: one long-lived ACP server per chat
+// (see acp.ts). They ask before acting, like Claude Code, and list their own modes and models.
 
 import { create } from "zustand";
 import { ipc } from "./ipc";
-import { chatView, projectAccount, sessionEnv, uid, useDesk } from "./store";
+import { TOOL_LABEL, chatView, projectAccount, sessionEnv, uid, useDesk } from "./store";
 import { addWorktreeProject, branchSlug, refreshLimits, rootProject, UNTRUSTED_CLAUDE_ARGS, untrustedPath } from "./actions";
 import { notify } from "./notify";
-import { withTitles } from "./sessionActions";
-import type { AgentSession, Project, Tool } from "./types";
+import { customTitle, withTitles } from "./sessionActions";
+import { ACP_COMMAND, ACP_INIT, AcpConnection, foldUpdate, isAcpAgent, newFold, optionRequest, readOptions, startError, describeToolCall, type AcpAgent, type AcpOption, type AcpRequest, type Fold } from "./acp";
+import type { AcpSessionEntry, Account, Agent, AgentSession, Project, Tool } from "./types";
 
 /** A file sent with a message. Images go to the agent as images; other files as their paths. */
 export interface Attachment { name: string; path: string; image: boolean }
@@ -64,10 +67,10 @@ export const LOCAL_COMMANDS: SlashCommand[] = [
 export interface Chat {
   id: string;
   projectId: string;
-  tool: Tool;
+  tool: Agent;
   accountId: string;
   cwd: string;
-  /** Claude Code's session id (chosen up front) or Codex's thread id (once it starts). */
+  /** Claude Code's session id (chosen up front), Codex's thread id or an ACP session id (once it starts). */
   sessionId: string | null;
   /** Whether the CLI has saved the session, so the next start resumes it. */
   saved: boolean;
@@ -100,6 +103,10 @@ export interface Chat {
   branchHint?: string;
   /** Messages typed while a turn was running, sent one by one as each turn finishes. */
   queue?: QueuedMessage[];
+  /** ACP agents: the modes, models and efforts it offers, once it has started. */
+  options?: AcpOption[];
+  /** ACP agents: its slash commands. */
+  acpCommands?: SlashCommand[];
 }
 
 export interface QueuedMessage { id: string; text: string; attachments: Attachment[] }
@@ -136,6 +143,8 @@ interface ChatState {
   commands: Record<string, SlashCommand[]>;
   /** Codex's model catalog per account folder. */
   codexModels: Record<string, ModelChoice[]>;
+  /** ACP agents' choices per `<tool>|<account folder>`, from their last session. */
+  acpOptions: Record<string, AcpOption[]>;
   query: string;
   setQuery(q: string): void;
   patch(id: string, patch: Partial<Chat> | ((c: Chat) => Partial<Chat>)): void;
@@ -150,6 +159,7 @@ export const useChats = create<ChatState>((set) => ({
   sessions: {},
   commands: {},
   codexModels: {},
+  acpOptions: readCachedOptions(),
   query: "",
   setQuery: (query) => set({ query }),
   patch: (id, patch) =>
@@ -235,7 +245,9 @@ export async function loadSessions(project: Project) {
   const accounts = desk().accounts;
   const dirs = (kind: Tool) => [...new Set(accounts.filter((a) => a.kind === kind).map((a) => a.dir))];
   try {
-    const list = withTitles(await ipc.sessionsList(project.path, dirs("claude"), dirs("codex")));
+    const listed = (await ipc.sessionsList(project.path, dirs("claude"), dirs("codex")).catch(() => null)) ?? [];
+    const acp = (desk().preferences.acpSessions ?? []).filter((e) => e.root === project.path || e.cwd === project.path);
+    const list = withTitles([...listed, ...acp]).sort((a, b) => b.updated - a.updated);
     useChats.setState((s) => ({ sessions: { ...s.sessions, [project.path]: list } }));
   } catch {
     /* Keeps what was there. */
@@ -249,23 +261,26 @@ export function loadAllSessions() {
 // Opening chats
 
 /** A blank chat in a project, using the project's account for `tool`. */
-export function newChat(projectId: string, tool: Tool = lastTool) {
+export function newChat(projectId: string, tool: Agent = lastTool) {
   const s = desk();
   const project = s.projects.find((p) => p.id === projectId);
   if (!project) return;
   // Reuse an untouched blank chat rather than piling them up.
   const blank = Object.values(chats().chats).find((c) => c.projectId === projectId && !c.items.length && !c.saved && c.status === "idle");
   if (blank) {
-    chats().patch(blank.id, { tool, accountId: projectAccount(s.accounts, project, tool).id, sessionId: tool === "claude" ? uid() : null, mode: defaultMode(tool, project), model: "", effort: "", worktree: s.preferences.chatWorktree && !project.worktreeOf });
+    if (blank.tool !== tool) dropAcp(blank.id);
+    const account = projectAccount(s.accounts, project, tool);
+    chats().patch(blank.id, { tool, accountId: account.id, sessionId: tool === "claude" ? uid() : null, mode: defaultMode(tool, project), ...seed(account), ...(blank.tool !== tool ? { options: undefined, acpCommands: undefined, proc: null } : {}), worktree: s.preferences.chatWorktree && !project.worktreeOf });
     chats().select(blank.id);
     s.selectProject(projectId);
     return blank.id;
   }
+  const account = projectAccount(s.accounts, project, tool);
   const chat: Chat = {
     id: uid(),
     projectId,
     tool,
-    accountId: projectAccount(s.accounts, project, tool).id,
+    accountId: account.id,
     cwd: project.path,
     sessionId: tool === "claude" ? uid() : null,
     saved: false,
@@ -274,8 +289,7 @@ export function newChat(projectId: string, tool: Tool = lastTool) {
     status: "idle",
     proc: null,
     mode: defaultMode(tool, project),
-    model: "",
-    effort: "",
+    ...seed(account),
     truncated: false,
     loading: false,
     startedAt: null,
@@ -287,10 +301,13 @@ export function newChat(projectId: string, tool: Tool = lastTool) {
   return chat.id;
 }
 
-let lastTool: Tool = "claude";
-/** Someone else's checkout starts read-only: plan mode for Claude, a read-only sandbox for Codex. */
-const defaultMode = (tool: Tool, project?: Project, cwd?: string) =>
-  project?.untrusted || (cwd && untrustedPath(cwd)) ? (tool === "claude" ? "plan" : "read-only") : tool === "claude" ? "default" : "workspace-write";
+let lastTool: Agent = "claude";
+/** Someone else's checkout starts read-only: plan mode for Claude, a read-only sandbox for Codex.
+ *  ACP agents start in their own default mode (empty); they don't run in untrusted checkouts. */
+const defaultMode = (tool: Agent, project?: Project, cwd?: string) =>
+  isAcpAgent(tool) ? "" : project?.untrusted || (cwd && untrustedPath(cwd)) ? (tool === "claude" ? "plan" : "read-only") : tool === "claude" ? "default" : "workspace-write";
+/** The model and effort an account's new chats start with. */
+const seed = (account: Account | undefined) => ({ model: account?.model ?? "", effort: account?.effort ?? "" });
 /** Trust follows the folder the agent runs in, as well as the project the chat is filed under. */
 const untrusted = (chat: Chat) => untrustedPath(chat.cwd) || !!desk().projects.find((p) => p.id === chat.projectId)?.untrusted;
 
@@ -300,8 +317,9 @@ export function distrustChats(path: string) {
   const inside = (cwd: string) => cwd === path || cwd.startsWith(path + "/");
   for (const chat of Object.values(chats().chats)) {
     if (!inside(chat.cwd)) continue;
-    if (chat.proc != null) void ipc.chatKill(chat.proc);
-    chats().patch(chat.id, { proc: null, status: "idle", mode: chat.tool === "claude" ? "plan" : "read-only" });
+    if (isAcpAgent(chat.tool)) dropAcp(chat.id);
+    else if (chat.proc != null) void ipc.chatKill(chat.proc);
+    chats().patch(chat.id, { proc: null, status: "idle", mode: chat.tool === "claude" ? "plan" : chat.tool === "codex" ? "read-only" : chat.mode });
   }
 }
 
@@ -327,14 +345,19 @@ export function openSession(session: AgentSession, project: Project) {
     status: "idle",
     proc: null,
     mode: defaultMode(session.tool, project, session.cwd),
-    model: "",
-    effort: "",
+    ...seed(account),
     truncated: false,
     loading: true,
     startedAt: null,
     lastTurnMs: null,
   };
   addChat(chat);
+  if (isAcpAgent(session.tool)) {
+    // The agent replays the conversation when it loads it.
+    if (untrusted(chat)) chats().patch(chat.id, { loading: false, items: [{ kind: "notice", id: uid(), text: untrustedText(session.tool), tone: "error" }] });
+    else void startAcp(chat.id).catch((e) => fail(chat.id, e instanceof Error ? e.message : String(e)));
+    return chat.id;
+  }
   void ipc.chatHistory(session.tool, account.dir, session.cwd, session.id).then((h) => {
     const items = session.tool === "claude" ? claudeHistory(h.records) : codexHistory(h.records);
     chats().patch(chat.id, { items, truncated: h.truncated, loading: false });
@@ -345,7 +368,8 @@ export function openSession(session: AgentSession, project: Project) {
 export function closeChat(id: string) {
   const chat = chats().chats[id];
   if (!chat) return;
-  if (chat.proc != null) void ipc.chatKill(chat.proc);
+  if (isAcpAgent(chat.tool)) dropAcp(id);
+  else if (chat.proc != null) void ipc.chatKill(chat.proc);
   closeStripTab(`c:${id}`);
   useChats.setState((s) => {
     const rest = { ...s.chats };
@@ -369,6 +393,10 @@ export async function send(chatId: string, text: string, attachments: Attachment
   if (!chat || (!text.trim() && !attachments.length)) return;
   lastTool = chat.tool;
   const first = !chat.items.some((i) => i.kind === "user");
+  if (isAcpAgent(chat.tool) && untrusted(chat)) {
+    updateItems(chatId, (items) => [...items, { kind: "notice", id: uid(), text: untrustedText(chat.tool), tone: "error" }]);
+    return;
+  }
   chats().patch(chatId, (c) => ({
     items: [...c.items, { kind: "user", id: uid(), text, ...(attachments.length ? { attachments } : {}) }],
     title: first && c.title === "New chat" ? oneLine(text || attachments.map((a) => a.name).join(", ")) : c.title,
@@ -385,9 +413,10 @@ export async function send(chatId: string, text: string, attachments: Attachment
   }
   try {
     if (chat.tool === "claude") await sendClaude(chatId, text, attachments);
-    else await runCodex(chatId, text, attachments);
+    else if (chat.tool === "codex") await runCodex(chatId, text, attachments);
+    else await sendAcp(chatId, text, attachments);
   } catch (e) {
-    fail(chatId, `Couldn't start ${chat.tool === "claude" ? "Claude Code" : "Codex"}: ${String(e)}`);
+    fail(chatId, isAcpAgent(chat.tool) ? (e instanceof Error ? e.message : String(e)) : `Couldn't start ${TOOL_LABEL[chat.tool]}: ${String(e)}`);
   }
 }
 
@@ -398,7 +427,7 @@ function oneLine(text: string) {
 
 function fail(chatId: string, text: string) {
   updateItems(chatId, (items) => [...items, { kind: "notice", id: uid(), text, tone: "error" }]);
-  chats().patch(chatId, { status: "idle", proc: null });
+  chats().patch(chatId, { status: "idle", proc: null, loading: false, startedAt: null });
 }
 
 /** Stops the turn in progress. Claude Code keeps the session open; Codex's process ends. */
@@ -406,7 +435,9 @@ export function stop(chatId: string) {
   const chat = chats().chats[chatId];
   if (!chat || chat.proc == null) return;
   chats().patch(chatId, { stopping: true });
-  if (chat.tool === "claude") {
+  if (isAcpAgent(chat.tool)) {
+    stopAcp(chatId);
+  } else if (chat.tool === "claude") {
     void ipc.chatWrite(chat.proc, JSON.stringify({ type: "control_request", request_id: `stop-${uid()}`, request: { subtype: "interrupt" } })).catch(() => void ipc.chatKill(chat.proc!));
   } else {
     void ipc.chatKill(chat.proc);
@@ -565,6 +596,7 @@ async function startClaude(chatId: string) {
 
 /** Answers a permission question from Claude Code. */
 export function answer(chatId: string, requestId: string, allow: boolean) {
+  if (permissions.has(requestId)) return answerAcp(chatId, requestId, allow);
   const chat = chats().chats[chatId];
   const item = chat?.items.find((i) => i.kind === "approval" && i.id === requestId);
   if (!chat || chat.proc == null || item?.kind !== "approval" || item.state !== "pending") return;
@@ -580,7 +612,8 @@ export function setMode(chatId: string, mode: string) {
   const chat = chats().chats[chatId];
   if (!chat) return;
   chats().patch(chatId, { mode });
-  if (chat.tool === "claude" && chat.proc != null) {
+  if (isAcpAgent(chat.tool)) void applyChoice(chatId, "mode");
+  else if (chat.tool === "claude" && chat.proc != null) {
     // Full access needs a flag at start-up, so that one restarts the process.
     if (mode === "bypassPermissions" || chat.mode === "bypassPermissions") restart(chatId);
     else void ipc.chatWrite(chat.proc, JSON.stringify({ type: "control_request", request_id: `mode-${uid()}`, request: { subtype: "set_permission_mode", mode } })).catch(() => {});
@@ -590,6 +623,11 @@ export function setMode(chatId: string, mode: string) {
 export function setModel(chatId: string, model: string) {
   const chat = chats().chats[chatId];
   if (!chat) return;
+  if (isAcpAgent(chat.tool)) {
+    chats().patch(chatId, { model });
+    void applyChoice(chatId, "model");
+    return;
+  }
   // A Codex model may not offer the effort chosen for the last one.
   const efforts = chat.tool === "codex" ? codexModelList(chat).find((m) => m.id === model)?.efforts : CLAUDE_EFFORTS;
   chats().patch(chatId, { model, ...(chat.effort && efforts && !efforts.includes(chat.effort) ? { effort: "" } : {}) });
@@ -600,7 +638,8 @@ export function setEffort(chatId: string, effort: string) {
   const chat = chats().chats[chatId];
   if (!chat) return;
   chats().patch(chatId, { effort });
-  if (chat.tool === "claude" && chat.proc != null) restart(chatId);
+  if (isAcpAgent(chat.tool)) void applyChoice(chatId, "thought_level");
+  else if (chat.tool === "claude" && chat.proc != null) restart(chatId);
 }
 
 // Pickers
@@ -612,14 +651,19 @@ export function codexModelList(chat: Chat): ModelChoice[] {
   return chats().codexModels[accountDir(chat) ?? ""] ?? [];
 }
 
-export async function loadCodexModels(chat: Chat) {
-  const dir = accountDir(chat);
+export function loadCodexModels(chat: Chat) {
+  return loadCodexModelsFor(accountDir(chat));
+}
+
+/** Codex's model catalog for an account folder, read once. */
+export async function loadCodexModelsFor(dir: string | null) {
   if (chats().codexModels[dir ?? ""]) return;
   const list = await ipc.codexModels(dir).catch(() => []);
   useChats.setState((s) => ({ codexModels: { ...s.codexModels, [dir ?? ""]: list } }));
 }
 
 export function commandList(chat: Chat): SlashCommand[] {
+  if (isAcpAgent(chat.tool)) return chat.acpCommands ?? [];
   return chat.tool === "claude" ? chats().commands[commandKey(chat)] ?? [] : [];
 }
 
@@ -674,15 +718,18 @@ function restart(chatId: string) {
 export function setAccount(chatId: string, accountId: string) {
   const chat = chats().chats[chatId];
   if (!chat || chat.saved || chat.items.length) return;
-  chats().patch(chatId, { accountId });
+  if (isAcpAgent(chat.tool)) dropAcp(chatId);
+  chats().patch(chatId, { accountId, ...seed(desk().accounts.find((a) => a.id === accountId)), options: undefined, proc: null });
 }
 
-export function setTool(chatId: string, tool: Tool) {
+export function setTool(chatId: string, tool: Agent) {
   const chat = chats().chats[chatId];
   if (!chat || chat.saved || chat.items.length || chat.tool === tool) return;
   const project = desk().projects.find((p) => p.id === chat.projectId);
   lastTool = tool;
-  chats().patch(chatId, { tool, accountId: projectAccount(desk().accounts, project, tool).id, sessionId: tool === "claude" ? uid() : null, mode: defaultMode(tool, project), model: "", effort: "" });
+  dropAcp(chatId);
+  const account = projectAccount(desk().accounts, project, tool);
+  chats().patch(chatId, { tool, accountId: account.id, sessionId: tool === "claude" ? uid() : null, mode: defaultMode(tool, project), ...seed(account), options: undefined, acpCommands: undefined, proc: null });
 }
 
 type Json = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -945,4 +992,324 @@ export function chatBusy(chat: Chat | undefined) {
   if (!chat) return null;
   if (chat.items.some((i) => i.kind === "approval" && i.state === "pending")) return "waiting";
   return chat.status === "idle" ? null : "running";
+}
+
+// ACP agents: Gemini CLI, Cursor Agent, Grok, OpenCode
+
+const conns = new Map<string, AcpConnection>();
+const folds = new Map<string, Fold>();
+/** Open permission questions, by approval item id: who asked, and the answers it offered. */
+const permissions = new Map<string, { chatId: string; conn: AcpConnection; rpcId: number | string; options: { optionId: string; kind: string }[] }>();
+/** Whether each running agent takes images in a prompt. */
+const imageCapable = new WeakMap<AcpConnection, boolean>();
+
+const OPTIONS_KEY = "desk-acp-options";
+function readCachedOptions(): Record<string, AcpOption[]> {
+  try { return JSON.parse(localStorage.getItem(OPTIONS_KEY) ?? "{}") ?? {}; } catch { return {}; }
+}
+export const optionsKey = (tool: Agent, dir: string | null) => `${tool}|${dir ?? ""}`;
+
+/** The agent's choices for a chat: live once it runs, else what it offered last time. */
+export function acpOptions(chat: Chat): AcpOption[] {
+  return chat.options ?? chats().acpOptions[optionsKey(chat.tool, accountDir(chat))] ?? [];
+}
+
+function cacheOptions(key: string, options: AcpOption[]) {
+  useChats.setState((s) => {
+    const acp = { ...s.acpOptions, [key]: options };
+    try { localStorage.setItem(OPTIONS_KEY, JSON.stringify(acp)); } catch { /* Only a convenience. */ }
+    return { acpOptions: acp };
+  });
+}
+
+export function untrustedText(tool: Agent) {
+  return `${TOOL_LABEL[tool]} doesn't run in untrusted checkouts. Use Claude Code or Codex here; they start read-only, without this folder's own settings.`;
+}
+
+/** Stops a chat's agent process, answering anything it was still asking. */
+function dropAcp(chatId: string) {
+  const conn = conns.get(chatId);
+  conns.delete(chatId);
+  folds.delete(chatId);
+  for (const [id, p] of permissions) if (p.chatId === chatId) permissions.delete(id);
+  conn?.kill();
+}
+
+/** Takes the agent's choices: from a start-up answer (replace) or a config update (merge). */
+function setOptions(chatId: string, next: AcpOption[], merge: boolean) {
+  const chat = chats().chats[chatId];
+  if (!chat || !next.length) return;
+  const options = merge ? [...(chat.options ?? []).filter((o) => !next.some((n) => n.id === o.id)), ...next] : next;
+  // An effort the new model doesn't offer falls back to the agent's default.
+  const efforts = options.find((o) => o.category === "thought_level");
+  chats().patch(chatId, { options, ...(chat.effort && efforts && !efforts.choices.some((c) => c.value === chat.effort) ? { effort: "" } : {}) });
+  cacheOptions(optionsKey(chat.tool, accountDir(chat)), options);
+}
+
+const CHOICE_FIELD = { mode: "mode", model: "model", thought_level: "effort" } as const;
+
+/** Sends one of the chat's choices to its running agent, if it differs from the agent's. */
+async function applyChoice(chatId: string, category: keyof typeof CHOICE_FIELD) {
+  const chat = chats().chats[chatId];
+  const conn = conns.get(chatId);
+  if (!chat || !conn?.alive || !chat.sessionId) return;
+  const want = chat[CHOICE_FIELD[category]];
+  const option = chat.options?.find((o) => o.category === category);
+  if (!want || !option || option.current === want) return;
+  // A default saved for another model, or one the agent no longer offers: use the agent's own.
+  if (!option.choices.some((c) => c.value === want)) {
+    chats().patch(chatId, { [CHOICE_FIELD[category]]: "" });
+    return;
+  }
+  const [method, params] = optionRequest(option, chat.sessionId, want);
+  try {
+    const result = await conn.request(method, params, 30_000);
+    const updated = readOptions(result);
+    if (updated.length) setOptions(chatId, updated, true);
+    else setOptions(chatId, (chats().chats[chatId]?.options ?? []).map((o) => (o.id === option.id ? { ...o, current: want } : o)), false);
+  } catch (e) {
+    updateItems(chatId, (items) => [...items, { kind: "notice", id: uid(), text: `Couldn't change the ${option.name.toLowerCase()}: ${e instanceof Error ? e.message : String(e)}`, tone: "error" }]);
+  }
+}
+
+/** Starts the chat's agent and opens its conversation: loads a saved one (the agent
+ *  replays it), or starts a new one. Throws a readable message if it can't. */
+async function startAcp(chatId: string): Promise<AcpConnection> {
+  const chat = chats().chats[chatId];
+  const tool = chat.tool as AcpAgent;
+  const label = TOOL_LABEL[tool];
+  const { account, env, unset } = accountFor(chat);
+  dropAcp(chatId);
+  const holder: { conn?: AcpConnection } = {};
+  const conn = await AcpConnection.start({ cwd: chat.cwd, args: ACP_COMMAND[tool], env, unset }, {
+    onNotify: (method, params) => holder.conn && acpNotify(chatId, holder.conn, method, params),
+    onRequest: (req) => holder.conn && acpRequest(chatId, holder.conn, req),
+    onExit: (code, stderr) => holder.conn && acpExit(chatId, holder.conn, code, stderr),
+  }).catch((e) => { throw new Error(`${label} couldn't start: ${String(e)}`); });
+  holder.conn = conn;
+  conns.set(chatId, conn);
+  chats().patch(chatId, { proc: conn.proc, accountId: account.id });
+  try {
+    // Some agents take a while on first run (sign-in checks, MCP servers).
+    const init = await conn.request("initialize", ACP_INIT, 120_000);
+    imageCapable.set(conn, !!init.agentCapabilities?.promptCapabilities?.image);
+    const canLoad = !!init.agentCapabilities?.loadSession;
+    let result;
+    const current = chats().chats[chatId];
+    if (current.saved && current.sessionId && canLoad) {
+      // History is drawn from the replay unless the chat already shows it (a restart).
+      const fold = newFold("h", true);
+      if (current.items.length) fold.n = -1;
+      folds.set(chatId, fold);
+      result = await conn.request("session/load", { sessionId: current.sessionId, cwd: current.cwd, mcpServers: [] }, 120_000);
+      chats().patch(chatId, (c) => ({ loading: false, items: c.items.map((i) => (i.kind === "assistant" && i.streaming ? { ...i, streaming: false } : i)) }));
+    } else {
+      if (current.saved && current.sessionId) updateItems(chatId, (items) => [...items, { kind: "notice", id: uid(), text: `${label} can't reopen this conversation, so this continues in a new one.` }]);
+      result = await conn.request("session/new", { cwd: current.cwd, mcpServers: [] }, 120_000);
+      if (typeof result.sessionId !== "string") throw new Error("it didn't start a conversation.");
+      chats().patch(chatId, { sessionId: result.sessionId, saved: false, loading: false });
+    }
+    folds.delete(chatId);
+    setOptions(chatId, readOptions(result), false);
+    for (const category of ["mode", "model", "thought_level"] as const) await applyChoice(chatId, category);
+    return conn;
+  } catch (e) {
+    const stillOurs = conns.get(chatId) === conn;
+    dropAcp(chatId);
+    if (stillOurs) chats().patch(chatId, { proc: null, loading: false });
+    throw new Error(startError(tool, label, e));
+  }
+}
+
+function acpNotify(chatId: string, conn: AcpConnection, method: string, params: Record<string, any>) { // eslint-disable-line @typescript-eslint/no-explicit-any
+  if (conns.get(chatId) !== conn || method !== "session/update") return;
+  const chat = chats().chats[chatId];
+  const update = params.update ?? {};
+  if (!chat) return;
+  switch (update.sessionUpdate) {
+    case "available_commands_update": {
+      const list = Array.isArray(update.availableCommands) ? update.availableCommands : [];
+      chats().patch(chatId, { acpCommands: list.filter((c: Json) => typeof c?.name === "string").map((c: Json) => ({ name: c.name.replace(/^\//, ""), description: String(c.description ?? ""), argumentHint: c.input?.hint || undefined })) });
+      return;
+    }
+    case "current_mode_update":
+      if (typeof update.currentModeId === "string") setOptions(chatId, (chat.options ?? []).map((o) => (o.category === "mode" ? { ...o, current: update.currentModeId } : o)), false);
+      return;
+    case "config_option_update":
+      setOptions(chatId, readOptions({ configOptions: update.configOptions }), true);
+      return;
+    case "session_info_update":
+      // The agent's own short title, unless you named the conversation.
+      if (typeof update.title === "string" && update.title.trim() && !customTitle(chat.tool, chat.sessionId)) {
+        chats().patch(chatId, { title: oneLine(update.title) });
+        if (chat.saved) rememberAcp(chatId);
+      }
+      return;
+  }
+  const fold = folds.get(chatId);
+  if (!fold || fold.n < 0) return;
+  updateItems(chatId, (items) => foldUpdate(items, update, fold, chat.cwd));
+  if (!fold.replay && chat.status === "starting") chats().patch(chatId, { status: "running" });
+}
+
+function acpRequest(chatId: string, conn: AcpConnection, req: AcpRequest) {
+  const chat = chats().chats[chatId];
+  if (req.method !== "session/request_permission") {
+    // Desk doesn't lend the agent its file system or terminals; it uses its own.
+    void conn.fail(req.id, -32601, `Desk doesn't handle ${req.method}`);
+    return;
+  }
+  if (!chat || conns.get(chatId) !== conn) {
+    void conn.respond(req.id, { outcome: { outcome: "cancelled" } });
+    return;
+  }
+  const call = req.params.toolCall ?? {};
+  const { name, summary } = describeToolCall(call, chat.cwd);
+  const id = `acp:${conn.proc}:${req.id}`;
+  permissions.set(id, { chatId, conn, rpcId: req.id, options: Array.isArray(req.params.options) ? req.params.options : [] });
+  updateItems(chatId, (items) => upsert(items, { kind: "approval", id, tool: name, summary: summary || describeInput(call.rawInput), input: call.rawInput, state: "pending" }));
+  alertChat(chat, `Wants to use ${name}`);
+}
+
+function answerAcp(chatId: string, id: string, allow: boolean) {
+  const p = permissions.get(id);
+  const item = chats().chats[chatId]?.items.find((i) => i.id === id);
+  if (!p || item?.kind !== "approval" || item.state !== "pending") return;
+  permissions.delete(id);
+  const pick = (...kinds: string[]) => kinds.map((k) => p.options.find((o) => o.kind === k)).find(Boolean);
+  const option = allow ? pick("allow_once", "allow_always") : pick("reject_once", "reject_always");
+  void p.conn.respond(p.rpcId, option ? { outcome: { outcome: "selected", optionId: option.optionId } } : { outcome: { outcome: "cancelled" } });
+  updateItems(chatId, (items) => upsert(items, { ...item, state: allow ? "allowed" : "denied" }));
+}
+
+/** Cancels the turn; the agent ends it with "cancelled". If it doesn't, the process goes. */
+function stopAcp(chatId: string) {
+  const chat = chats().chats[chatId];
+  const conn = conns.get(chatId);
+  if (!chat || !conn) return;
+  for (const [id, p] of permissions) {
+    if (p.chatId !== chatId) continue;
+    permissions.delete(id);
+    void p.conn.respond(p.rpcId, { outcome: { outcome: "cancelled" } });
+  }
+  void conn.notify("session/cancel", { sessionId: chat.sessionId });
+  setTimeout(() => { if (chats().chats[chatId]?.stopping && conns.get(chatId) === conn) conn.kill(); }, 8000);
+}
+
+function acpExit(chatId: string, conn: AcpConnection, code: number | null, stderr: string) {
+  if (conns.get(chatId) !== conn) return;
+  conns.delete(chatId);
+  folds.delete(chatId);
+  for (const [id, p] of permissions) if (p.conn === conn) permissions.delete(id);
+  const chat = chats().chats[chatId];
+  if (!chat) return;
+  chats().patch(chatId, { proc: null });
+  if (chat.status === "idle") return;
+  if (!chat.stopping && code !== 0) updateItems(chatId, (items) => [...items, { kind: "notice", id: uid(), text: exitText(chat.tool, code, stderr), tone: "error" }]);
+  finishTurn(chatId);
+}
+
+function exitText(tool: Agent, code: number | null, stderr: string) {
+  if (/command not found|No such file/i.test(stderr) || code === 127) return `${TOOL_LABEL[tool]} isn't installed. Install it from Settings → Accounts, then send again.`;
+  return stderr || `${TOOL_LABEL[tool]} stopped (exit ${code ?? "?"}).`;
+}
+
+async function sendAcp(chatId: string, text: string, attachments: Attachment[] = []) {
+  let conn = conns.get(chatId);
+  if (!conn?.alive) conn = await startAcp(chatId);
+  const chat = chats().chats[chatId];
+  if (!chat?.sessionId) throw new Error(`${TOOL_LABEL[chat.tool]} didn't start a conversation.`);
+  const images = imageCapable.get(conn) ? attachments.filter((a) => a.image) : [];
+  const blocks = await Promise.all(images.map(async (a) => {
+    const { mediaType, data } = await ipc.attachmentImage(a.path);
+    return { type: "image", mimeType: mediaType, data };
+  }));
+  const body = withFiles(text, attachments, !images.length) || "See the attached image.";
+  folds.set(chatId, newFold(uid()));
+  chats().patch(chatId, { status: "running" });
+  rememberAcp(chatId, text);
+  let stopReason = "";
+  try {
+    const result = await conn.request("session/prompt", { sessionId: chat.sessionId, prompt: [...blocks, { type: "text", text: body }] });
+    stopReason = String(result.stopReason ?? "");
+  } catch (e) {
+    const now = chats().chats[chatId];
+    if (!now || now.status === "idle") return; // The exit already ended the turn.
+    if (!now.stopping) updateItems(chatId, (items) => [...items, { kind: "notice", id: uid(), text: e instanceof Error ? e.message : String(e), tone: "error" }]);
+  }
+  const now = chats().chats[chatId];
+  if (!now || now.status === "idle") return;
+  const why: Record<string, string> = { max_tokens: "It stopped at its token limit.", max_turn_requests: "It stopped after too many steps in one turn.", refusal: `${TOOL_LABEL[chat.tool]} declined to continue.` };
+  if (why[stopReason]) updateItems(chatId, (items) => [...items, { kind: "notice", id: uid(), text: why[stopReason], tone: stopReason === "refusal" ? "error" : undefined }]);
+  chats().patch(chatId, { saved: true });
+  folds.delete(chatId);
+  rememberAcp(chatId);
+  finishTurn(chatId);
+}
+
+/** Keeps an ACP chat in Desk's own list, so the sidebar shows it after a restart. */
+function rememberAcp(chatId: string, prompt?: string) {
+  const chat = chats().chats[chatId];
+  const project = desk().projects.find((p) => p.id === chat?.projectId);
+  if (!chat?.sessionId || !project || !isAcpAgent(chat.tool)) return;
+  const list = desk().preferences.acpSessions ?? [];
+  const before = list.find((e) => e.tool === chat.tool && e.id === chat.sessionId);
+  const entry: AcpSessionEntry = {
+    tool: chat.tool,
+    dir: accountDir(chat),
+    id: chat.sessionId,
+    title: chat.title,
+    prompt: before?.prompt ?? prompt ?? null,
+    cwd: chat.cwd,
+    updated: Date.now(),
+    root: rootProject(project).path,
+  };
+  desk().setPreferences({ acpSessions: [entry, ...list.filter((e) => e !== before)].slice(0, 500) });
+}
+
+/** Hands an ACP chat's conversation over (to a terminal tab): its process stops, so
+ *  two never write to one session. The next message starts it again and reloads. */
+export function releaseAcp(chatId: string) {
+  const chat = chats().chats[chatId];
+  if (!chat || !isAcpAgent(chat.tool)) return;
+  dropAcp(chatId);
+  chats().patch(chatId, { proc: null });
+}
+
+/** Removes an ACP conversation from Desk's list. The agent keeps its own copy. */
+export function forgetAcp(tool: Agent, id: string) {
+  const list = desk().preferences.acpSessions ?? [];
+  desk().setPreferences({ acpSessions: list.filter((e) => !(e.tool === tool && e.id === id)) });
+}
+
+const probes = new Map<string, Promise<void>>();
+
+/** Asks an ACP agent which models and efforts it offers, for Settings: starts it,
+ *  opens a conversation, notes the choices, closes the conversation and stops it. */
+export function probeAcpOptions(tool: AcpAgent, account: Account): Promise<void> {
+  const key = optionsKey(tool, account.dir);
+  const running = probes.get(key);
+  if (running) return running;
+  const job = (async () => {
+    const project = desk().projects.find((p) => !p.untrusted && !p.worktreeOf);
+    if (!project) throw new Error("Add a project folder first.");
+    const { env, unset } = sessionEnv(desk().accounts, project, { [tool]: account });
+    const conn = await AcpConnection.start({ cwd: project.path, args: ACP_COMMAND[tool], env, unset }, { onNotify: () => {}, onRequest: (req) => void conn.fail(req.id, -32601, "Not handled"), onExit: () => {} });
+    try {
+      const init = await conn.request("initialize", ACP_INIT, 120_000);
+      const result = await conn.request("session/new", { cwd: project.path, mcpServers: [] }, 120_000);
+      const options = readOptions(result);
+      if (!options.length) throw new Error(`${TOOL_LABEL[tool]} didn't list any models.`);
+      cacheOptions(key, options);
+      const caps = init.agentCapabilities?.sessionCapabilities ?? {};
+      if (typeof result.sessionId === "string" && caps.delete) await conn.request("session/delete", { sessionId: result.sessionId }, 10_000).catch(() => {});
+      else if (typeof result.sessionId === "string" && caps.close) await conn.request("session/close", { sessionId: result.sessionId }, 10_000).catch(() => {});
+    } catch (e) {
+      throw new Error(startError(tool, TOOL_LABEL[tool], e));
+    } finally {
+      conn.kill();
+    }
+  })();
+  probes.set(key, job);
+  return job.finally(() => probes.delete(key));
 }

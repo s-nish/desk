@@ -1,8 +1,8 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { ArrowUp, GitBranch, Pencil, Trash2, FileText, Image as ImageIcon, Paperclip, Asterisk, Check, ChevronDown, ChevronRight, Ellipsis, Gauge, Hexagon, LoaderCircle, MessageSquarePlus, Plus, Search, Server, Slash, Square, SquareTerminal, UserRound, X } from "lucide-react";
-import { AGENTS, TOOL_LABEL, projectTree, useDesk } from "../store";
+import { ArrowUp, GitBranch, Pencil, Trash2, FileText, Image as ImageIcon, Paperclip, Check, ChevronDown, ChevronRight, Ellipsis, Gauge, LoaderCircle, MessageSquarePlus, Plus, Search, Server, Slash, Square, SquareTerminal, UserRound, X } from "lucide-react";
+import { AGENTS, TOOL_LABEL, TOOL_SHORT, projectTree, useDesk } from "../store";
 import { addProjectsFromDialog, closeTab, openTerminal } from "../actions";
 import { TerminalPane, cleanTitle } from "./Workspace";
 import { Home } from "./Home";
@@ -14,10 +14,11 @@ import { openMenu } from "./Menu";
 import { Accounts, Connections } from "./Sidebar";
 import { relativeTime } from "./Sessions";
 import {
-  CLAUDE_EFFORTS, CLAUDE_MODELS, CLAUDE_MODES, CODEX_MODES, LOCAL_COMMANDS, answer, chatBusy, closeChat, codexModelList, commandList, loadAllSessions, loadClaudeCommands,
+  CLAUDE_EFFORTS, CLAUDE_MODELS, CLAUDE_MODES, CODEX_MODES, LOCAL_COMMANDS, acpOptions, answer, releaseAcp, chatBusy, closeChat, codexModelList, commandList, loadAllSessions, loadClaudeCommands,
   attach, attachBlob, detach, closeStripTab, markUnread, setWorktree, moveStripTab, loadCodexModels, loadSessions, newChat, showStripTab, openSession, send, sendNext, enqueue, unqueue, setAccount, setEffort, setMode, setModel, setTool, stop, useChats, type Attachment, type Chat, type ChatItem, type SlashCommand,
 } from "../chat";
-import type { Agent, AgentSession, MenuItem, Project, TerminalTab, Tool } from "../types";
+import type { Agent, AgentSession, MenuItem, Project, TerminalTab } from "../types";
+import { isAcpAgent } from "../acp";
 import { ToolLogo } from "./ToolLogo";
 import { deleteConversation, renameConversation } from "../sessionActions";
 
@@ -87,7 +88,7 @@ export function ChatSidebar() {
   );
 }
 
-interface Row { key: string; title: string; tool: Tool; updated: number; session?: AgentSession; chat?: Chat }
+interface Row { key: string; title: string; tool: Agent; updated: number; session?: AgentSession; chat?: Chat }
 
 function ProjectChats({ project, query }: { project: Project; query: string }) {
   const sessions = useChats((s) => s.sessions[project.path]);
@@ -113,8 +114,7 @@ function ProjectChats({ project, query }: { project: Project; query: string }) {
   if (query && !rows.length && !project.name.toLowerCase().includes(query)) return null;
   const shown = all || query ? rows : rows.slice(0, SHOWN);
   const menu = (at: Element | { x: number; y: number }) => openMenu(at, [
-    { label: "New Claude Code chat", icon: <Asterisk size={14} />, onSelect: () => newChat(project.id, "claude") },
-    { label: "New Codex chat", icon: <Hexagon size={14} />, onSelect: () => newChat(project.id, "codex") },
+    ...chatAgents().map((tool) => ({ label: `New ${TOOL_LABEL[tool]} chat`, icon: <ToolLogo tool={tool} size={14} />, onSelect: () => newChat(project.id, tool) })),
     { separator: true },
     { label: "Refresh", onSelect: () => void loadSessions(project) },
     { label: "Reveal in Finder", onSelect: () => void ipc.reveal(project.path) },
@@ -153,6 +153,12 @@ function ProjectChats({ project, query }: { project: Project; query: string }) {
       </>}
     </section>
   );
+}
+
+/** Claude Code and Codex, plus the other agents once they have an account. */
+export function chatAgents(): Agent[] {
+  const accounts = useDesk.getState().accounts;
+  return AGENTS.filter((a) => a === "claude" || a === "codex" || accounts.some((x) => x.kind === a));
 }
 
 const OPEN_KEY = "desk-open-projects";
@@ -367,11 +373,13 @@ function clock(total: number) {
   return `${s}s`;
 }
 
+const COMMAND_NAME: Record<Agent, string> = { claude: "claude", codex: "codex", gemini: "gemini", cursor: "cursor-agent", grok: "grok", opencode: "opencode" };
+
 function Intro({ chat, project }: { chat: Chat; project: Project }) {
   return (
     <div className="chat-intro">
       <h1>What should {TOOL_LABEL[chat.tool]} work on?</h1>
-      <p>In <strong>{project.name}</strong>. It runs the {chat.tool === "claude" ? "claude" : "codex"} command you already use, with its own sign-in and history, so you can pick this chat up in a terminal later.</p>
+      <p>In <strong>{project.name}</strong>. It runs the <code>{COMMAND_NAME[chat.tool]}</code> command you already use, with its own sign-in and history, so you can pick this chat up in a terminal later.</p>
     </div>
   );
 }
@@ -416,7 +424,7 @@ function Item({ item, chat }: { item: ChatItem; chat: Chat }) {
       );
       return (
         <div className={"chat-approval is-" + item.state}>
-          <div className="chat-approval-head"><strong>{TOOL_LABEL[chat.tool]} wants to use {item.tool}</strong>{item.state !== "pending" && <span>{item.state === "allowed" ? "Allowed" : item.state === "denied" ? "Declined" : "No longer needed"}</span>}</div>
+          <div className="chat-approval-head"><strong>{TOOL_LABEL[chat.tool]} wants to {isAcpAgent(chat.tool) ? (APPROVAL_VERB[item.tool] ?? `use ${item.tool}`) : `use ${item.tool}`}</strong>{item.state !== "pending" && <span>{item.state === "allowed" ? "Allowed" : item.state === "denied" ? "Declined" : "No longer needed"}</span>}</div>
           {item.summary && <code className="chat-approval-input">{item.summary}</code>}
           {item.state === "pending" && (
             <div className="chat-approval-actions">
@@ -448,11 +456,17 @@ function ToolRow({ item }: { item: Extract<ChatItem, { kind: "tool" }> }) {
   );
 }
 
+/** ACP tool kinds, as the thing being asked for. */
+const APPROVAL_VERB: Record<string, string> = { Edit: "edit a file", Delete: "delete a file", Move: "move a file", Shell: "run a command", Read: "read a file", Fetch: "fetch a page", Search: "search" };
+
 const EFFORT_LABEL: Record<string, string> = { low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max", minimal: "Minimal", none: "None" };
 
 /** Continues the chat's conversation in a terminal tab, which switches to the terminal view. */
 function continueInTerminal(chat: Chat) {
   if (!chat.sessionId || !chat.saved) return useDesk.getState().toast("Send a message first; there is no conversation to continue yet.");
+  // An ACP agent writes its conversation as it goes; stop it so the terminal can take over.
+  if (isAcpAgent(chat.tool) && chat.status !== "idle") return useDesk.getState().toast(`Wait for ${TOOL_LABEL[chat.tool]} to finish this turn first.`);
+  releaseAcp(chat.id);
   openTerminal(chat.projectId, chat.tool, { accountId: chat.accountId, cwd: chat.cwd, ...(chat.tool === "claude" ? { sessionId: chat.sessionId } : { resume: chat.sessionId }) });
 }
 
@@ -469,11 +483,25 @@ function Composer({ chat }: { chat: Chat }) {
   const repo = useDesk((s) => (project ? !!s.branches[project.worktreeOf ?? project.id] : false));
   const fresh = !chat.saved && !chat.items.length;
   const busy = chat.status !== "idle";
-  const modes = chat.tool === "claude" ? CLAUDE_MODES : CODEX_MODES;
-  const mode = modes.find((m) => m.id === chat.mode) ?? modes[0];
-  const models = chat.tool === "claude" ? CLAUDE_MODELS : [{ id: "", label: "Default model", description: "The model set in Codex" }, ...codexModelList(chat)];
-  const model = models.find((m) => m.id === chat.model);
-  const efforts = chat.tool === "claude" ? CLAUDE_EFFORTS : (codexModelList(chat).find((m) => m.id === chat.model)?.efforts ?? ["low", "medium", "high", "xhigh"]);
+  useChats((s) => s.acpOptions);
+  const acp = isAcpAgent(chat.tool);
+  const offered = acp ? acpOptions(chat) : [];
+  const offer = (category: string) => offered.find((o) => o.category === category);
+  const acpMode = offer("mode"), acpModel = offer("model"), acpEffort = offer("thought_level");
+  // For ACP agents an empty choice means "whatever the agent is using", shown by name.
+  const acpLabel = (o: typeof acpMode, value: string, fallback: string) => o?.choices.find((c) => c.value === (value || o.current))?.name ?? fallback;
+  const modes = acp
+    ? (acpMode?.choices ?? []).map((c) => ({ id: c.value, label: c.name, hint: c.description ?? "" }))
+    : chat.tool === "claude" ? [...CLAUDE_MODES] : [...CODEX_MODES];
+  const mode = acp ? { id: chat.mode, label: acpLabel(acpMode, chat.mode, "Mode"), hint: acpMode?.choices.find((c) => c.value === (chat.mode || acpMode.current))?.description ?? "What it may do without asking" } : modes.find((m) => m.id === chat.mode) ?? modes[0];
+  const models: { id: string; label: string; description?: string }[] = acp
+    ? [{ id: "", label: "Default model", description: `The model set in ${TOOL_LABEL[chat.tool]}` }, ...(acpModel?.choices ?? []).map((c) => ({ id: c.value, label: c.name, description: c.description }))]
+    : chat.tool === "claude" ? CLAUDE_MODELS : [{ id: "", label: "Default model", description: "The model set in Codex" }, ...codexModelList(chat)];
+  const model = acp ? { id: chat.model, label: chat.model ? acpLabel(acpModel, chat.model, chat.model) : acpModel ? acpLabel(acpModel, "", "Default model") : "Default model" } : models.find((m) => m.id === chat.model);
+  const efforts = acp ? (acpEffort?.choices ?? []).map((c) => c.value) : chat.tool === "claude" ? CLAUDE_EFFORTS : (codexModelList(chat).find((m) => m.id === chat.model)?.efforts ?? ["low", "medium", "high", "xhigh"]);
+  const effortName = (x: string) => acpEffort?.choices.find((c) => c.value === x)?.name ?? EFFORT_LABEL[x] ?? x;
+  const showModes = !acp || modes.length > 0;
+  const showEffort = !acp || efforts.length > 0;
 
   useEffect(() => { ref.current?.focus(); }, [chat.id]);
   useEffect(() => {
@@ -595,6 +623,7 @@ function Composer({ chat }: { chat: Chat }) {
               </button>
             ))}
             {chat.tool === "claude" && !commandList(chat).length && <p className="chat-slash-note"><LoaderCircle size={12} className="is-spinning" />Loading Claude Code's commands…</p>}
+            {acp && !commandList(chat).length && <p className="chat-slash-note">{TOOL_LABEL[chat.tool]}'s own commands show here once it has started.</p>}
           </div>
         )}
         {queue.length > 0 && (
@@ -653,13 +682,13 @@ function Composer({ chat }: { chat: Chat }) {
         <div className="chat-composer-row">
           {fresh
             ? <AgentPicker chat={chat} />
-            : <span className="chat-chip is-static chat-agent-static" title={TOOL_LABEL[chat.tool]}><ToolGlyph tool={chat.tool} size={14} /><span className="chat-agent-name">{chat.tool === "claude" ? "Claude" : "Codex"}</span></span>}
+            : <span className="chat-chip is-static chat-agent-static" title={TOOL_LABEL[chat.tool]}><ToolGlyph tool={chat.tool} size={14} /><span className="chat-agent-name">{TOOL_SHORT[chat.tool]}</span></span>}
           <button className="chat-chip" disabled={!fresh} title={fresh ? "Account" : `Account: ${account?.name}. A conversation stays with the account it started on.`} onClick={(e) => pick(e.currentTarget, accounts.filter((a) => a.kind === chat.tool).map((a) => ({ label: a.name, checked: a.id === chat.accountId, onSelect: () => setAccount(chat.id, a.id) })))}>
-            <UserRound size={12} />{account?.name ?? "Account"}{fresh && <ChevronDown size={11} />}
+            <UserRound size={12} />{account?.name ?? "Default"}{fresh && <ChevronDown size={11} />}
           </button>
-          <button className="chat-chip" title={mode.hint} onClick={(e) => pick(e.currentTarget, modes.map((m) => ({ label: m.label, hint: m.hint, checked: m.id === chat.mode, onSelect: () => setMode(chat.id, m.id) })))}>
+          {showModes && <button className="chat-chip" title={mode.hint} disabled={acp && !modes.length} onClick={(e) => pick(e.currentTarget, modes.map((m) => ({ label: m.label, hint: m.hint, checked: acp ? m.id === (chat.mode || acpMode?.current) : m.id === chat.mode, onSelect: () => setMode(chat.id, m.id) })))}>
             {mode.label}<ChevronDown size={11} />
-          </button>
+          </button>}
           {fresh && repo && !project?.worktreeOf
             ? <button className="chat-chip" role="switch" aria-checked={!!chat.worktree} title={chat.worktree ? "Your first message creates a branch and worktree for this task, from the latest main. Click to work in the project folder instead." : "Click to give this task its own branch and worktree, so it doesn't touch your project folder."} onClick={() => setWorktree(chat.id, !chat.worktree)}>
                 <GitBranch size={12} />{chat.worktree ? "New worktree" : "Project folder"}
@@ -670,9 +699,9 @@ function Composer({ chat }: { chat: Chat }) {
           <button className="chat-chip" disabled={busy} title="Model" onClick={(e) => pick(e.currentTarget, models.map((m) => ({ label: m.label, hint: m.description, checked: m.id === chat.model, onSelect: () => setModel(chat.id, m.id) })))}>
             {model?.label ?? chat.model}<ChevronDown size={11} />
           </button>
-          <button className="chat-chip" disabled={busy} title="Effort: how hard the model thinks" onClick={(e) => pick(e.currentTarget, [{ label: "Default effort", checked: !chat.effort, onSelect: () => setEffort(chat.id, "") }, ...efforts.map((x) => ({ label: EFFORT_LABEL[x] ?? x, checked: x === chat.effort, onSelect: () => setEffort(chat.id, x) }))])}>
-            <Gauge size={12} />{chat.effort ? EFFORT_LABEL[chat.effort] ?? chat.effort : "Effort"}<ChevronDown size={11} />
-          </button>
+          {showEffort && <button className="chat-chip" disabled={busy} title="Effort: how hard the model thinks" onClick={(e) => pick(e.currentTarget, [{ label: "Default effort", checked: !chat.effort, onSelect: () => setEffort(chat.id, "") }, ...efforts.map((x) => ({ label: effortName(x), checked: x === chat.effort, onSelect: () => setEffort(chat.id, x) }))])}>
+            <Gauge size={12} />{chat.effort ? effortName(chat.effort) : "Effort"}<ChevronDown size={11} />
+          </button>}
           {busy && <button className="chat-send is-stop" aria-label="Stop" title="Stop this turn (queued messages wait)" onClick={() => stop(chat.id)}><Square size={11} fill="currentColor" /></button>}
           {(!busy || text.trim() || pending.length > 0) && <button className={"chat-send" + (busy ? " is-queue" : "")} aria-label={busy ? "Queue" : "Send"} title={busy ? "Queue (Enter): sends when this turn finishes" : "Send (Enter)"} disabled={!text.trim() && !pending.length} onClick={submit}><ArrowUp size={15} /></button>}
         </div>
@@ -682,11 +711,9 @@ function Composer({ chat }: { chat: Chat }) {
   );
 }
 
-const CHAT_AGENTS: Tool[] = ["claude", "codex"];
-
 /**
  * Picks the agent for a new chat: a round button that fans the agents out in an arc.
- * Claude Code and Codex chat here; the others open in a terminal tab beside it.
+ * Every agent chats here.
  */
 function AgentPicker({ chat }: { chat: Chat }) {
   const [open, setOpen] = useState(false);
@@ -713,8 +740,7 @@ function AgentPicker({ chat }: { chat: Chat }) {
     }));
   };
   const choose = (agent: Agent) => {
-    if ((CHAT_AGENTS as Agent[]).includes(agent)) setTool(chat.id, agent as Tool);
-    else openTerminal(chat.projectId, agent);
+    setTool(chat.id, agent);
     close();
   };
 
@@ -726,7 +752,7 @@ function AgentPicker({ chat }: { chat: Chat }) {
     return { x: Math.cos(a) * radius + radius * 0.82, y: -Math.sin(a) * radius - lift };
   };
   const label = hover ? TOOL_LABEL[hover] : "";
-  const terminalOnly = hover && !(CHAT_AGENTS as Agent[]).includes(hover);
+  const installed = useDesk((s) => (hover ? hover === "claude" || hover === "codex" || s.accounts.some((a) => a.kind === hover) : true));
 
   return (
     <>
@@ -763,7 +789,7 @@ function AgentPicker({ chat }: { chat: Chat }) {
                   ref={(el) => { items.current[i] = el; }}
                   role="menuitemradio"
                   aria-checked={on}
-                  aria-label={`${TOOL_LABEL[agent]}${(CHAT_AGENTS as Agent[]).includes(agent) ? "" : ", opens in a terminal tab"}`}
+                  aria-label={TOOL_LABEL[agent]}
                   className={"radial-item" + (on ? " is-on" : "")}
                   style={{ "--x": `${p.x}px`, "--y": `${p.y}px`, "--i": i } as React.CSSProperties}
                   onMouseEnter={() => setHover(agent)}
@@ -771,13 +797,12 @@ function AgentPicker({ chat }: { chat: Chat }) {
                   onClick={() => choose(agent)}
                 >
                   <ToolLogo tool={agent} size={20} />
-                  {!(CHAT_AGENTS as Agent[]).includes(agent) && <span className="radial-badge" aria-hidden="true"><SquareTerminal size={9} /></span>}
                 </button>
               );
             })}
             <div className="radial-label" aria-live="polite" style={{ left: radius * 0.82, top: -lift - 34 }}>
               <strong>{label}</strong>
-              <span>{terminalOnly ? "Opens in a terminal tab" : "Chat here"}</span>
+              <span>{installed ? "Chat here" : "Not set up yet"}</span>
             </div>
           </div>
         </div>,

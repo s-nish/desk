@@ -9,6 +9,7 @@ import { terminalTheme, deskTheme as terminalThemeForDesk } from "../terminals";
 import { ANSI_KEYS, BASE_KEYS, COLOR_LABEL, TERMINAL_PRESETS, opaque, presetTheme, type ColorKey } from "../terminalThemes";
 import { EditorSettings } from "./EditorSettings";
 import { AccountRow, ConnectionRow } from "./Sidebar";
+import { AccountDefaults } from "./AccountDefaults";
 
 const sections = [
   { id: "appearance", label: "Appearance", icon: Palette, group: "Personalize" },
@@ -25,7 +26,7 @@ const sections = [
 
 const INTRO: Record<string, string> = {
   appearance: "Themes, accent color and the shape of things.",
-  chat: "How conversations look when Claude Code and Codex run as a chat.",
+  chat: "How conversations look when your agents run as a chat.",
   terminal: "Readable output. Comfortable spacing. Your place in the scrollback.",
   editor: "Distinct syntax colors for every file. Choose a palette that suits your work.",
   workspace: "Keep what you need. Give your work room to breathe.",
@@ -107,7 +108,7 @@ export function Settings({ initial }: { initial?: string }) {
       </>}
       {section === "chat" && <>
         <div className="settings-card">
-          <Row label="Agent view" description="Terminal shows Claude Code and Codex as their own command line. Chat draws the same conversation as messages. Both run the same CLI with the same accounts and history; nothing goes through a proxy."><Choice label="Agent view" value={preferences.uiMode} options={[["terminal", "Terminal"], ["chat", "Chat"]]} onChange={(uiMode) => setPreferences({ uiMode })} /></Row>
+          <Row label="Agent view" description="Terminal shows each agent as its own command line. Chat draws the same conversation as messages. Both run the same CLI with the same accounts and history; nothing goes through a proxy."><Choice label="Agent view" value={preferences.uiMode} options={[["terminal", "Terminal"], ["chat", "Chat"]]} onChange={(uiMode) => setPreferences({ uiMode })} /></Row>
           <Row label="Message text" description="Size of messages and replies."><select aria-label="Message text size" value={preferences.chatFontSize} onChange={(e) => setPreferences({ chatFontSize: Number(e.target.value) })}>{[13, 14, 15, 16, 17].map((size) => <option key={size} value={size}>{size} px</option>)}</select></Row>
           <Row label="Reading width" description="How wide the conversation runs on a big window."><Choice label="Reading width" value={preferences.chatWidth} options={[["narrow", "Narrow"], ["comfortable", "Comfortable"], ["wide", "Wide"]]} onChange={(chatWidth) => setPreferences({ chatWidth })} /></Row>
           <Toggle label="Show tool output open" description="Commands and file reads show their output without a click." checked={preferences.chatToolsOpen} onChange={() => setPreferences({ chatToolsOpen: !preferences.chatToolsOpen })} />
@@ -136,7 +137,7 @@ export function Settings({ initial }: { initial?: string }) {
         </div>
         <p className="settings-note">Desk watches the terminal: an agent that was printing and goes quiet for a few seconds has finished. A terminal bell or a notification from the agent also counts. Press ⌘⇧A to jump to the next waiting tab.</p>
       </>}
-      {section === "accounts" && <>{ACCOUNT_KINDS.map((kind) => { const list = accounts.filter((a) => a.kind === kind); const canAdd = multiAccount(kind) || list.length === 0; return <details className="settings-account-group" key={kind} open={list.length > 0 || kind === "claude" || kind === "codex"}><summary><ToolLogo tool={kind} size={14} />{TOOL_LABEL[kind]}<span className="section-count">{list.length}</span></summary><div>{list.map((account) => <AccountRow key={account.id} account={account} />)}{canAdd ? <button className="text-button" onClick={() => useDesk.getState().setModal({ kind: "addAccount", tool: kind })}><Plus size={14} />Add {TOOL_LABEL[kind]} account</button> : <p className="settings-note">{TOOL_LABEL[kind]} keeps one sign-in per Mac.</p>}</div></details>; })}<p className="settings-note">Choose a project's accounts from its ⋯ menu. Existing sessions keep the account they started with. Gemini CLI, Cursor Agent, Grok and OpenCode open in terminal tabs; chats are Claude Code and Codex. A GitHub account is what gh, pull requests and issues use in that project, including gh run by agents.</p></>}
+      {section === "accounts" && <>{ACCOUNT_KINDS.map((kind) => { const list = accounts.filter((a) => a.kind === kind); const canAdd = multiAccount(kind) || list.length === 0; return <details className="settings-account-group" key={kind} open={list.length > 0 || kind === "claude" || kind === "codex"}><summary><ToolLogo tool={kind} size={14} />{TOOL_LABEL[kind]}<span className="section-count">{list.length}</span></summary><div>{list.map((account) => <div className="settings-account" key={account.id}><AccountRow account={account} /><AccountDefaults account={account} /></div>)}{canAdd ? <button className="text-button" onClick={() => useDesk.getState().setModal({ kind: "addAccount", tool: kind })}><Plus size={14} />Add {TOOL_LABEL[kind]} account</button> : <p className="settings-note">{TOOL_LABEL[kind]} keeps one sign-in per Mac.</p>}</div></details>; })}<p className="settings-note">Choose a project's accounts from its ⋯ menu. Existing sessions keep the account they started with. Every agent chats in the chat view and runs in terminal tabs. Default model and effort apply to new chats; each chat can change them. A GitHub account is what gh, pull requests and issues use in that project, including gh run by agents.</p></>}
       {section === "usage" && <UsageSettings />}
       {section === "shortcuts" && <div className="shortcut-list">{[["New Claude Code tab in selected project", "⌘ D  /  ⌘ T"], ["New Codex tab in selected project", "⌘ E"], ["New shell tab in selected project", "⌘ J"], ["New SSH connection", "⌘ ⇧ N"], ["New worktree for selected project", "⌘ ⇧ T"], ["Jump to next waiting agent", "⌘ ⇧ A"], ["Move focused tab left / right", "⌥ ⇧ ← / →"], ["Command palette", "⌘ ⇧ P"], ["Search project", "⌘ ⇧ F"], ["Split panes", "⌘ \\"], ["Side by side / stacked", "⌘ ⌥ \\"], ["Focus left / right pane", "⌘ ⌥ ← / →"], ["Add project folder", "⌘ O"], ["Open file", "⌘ P"], ["Save file", "⌘ S"], ["Close tab", "⌘ W"], ["Toggle projects", "⌘ B"], ["Toggle files", "⌘ ⇧ B"], ["Switch tabs", "⌃ Tab"], ["Switch projects", "⌥ ⌘ ↑ / ↓"], ["Clear terminal", "⌘ K"], ["Open settings", "⌘ ,"]].map(([label, key]) => <div key={label}><span>{label}</span><kbd>{key}</kbd></div>)}</div>}
     </div>

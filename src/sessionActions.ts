@@ -1,15 +1,17 @@
-// Renaming and deleting past conversations (Claude Code and Codex sessions).
-// Names live in Desk's preferences; deleting moves the transcript to the Trash.
-import { useDesk } from "./store";
+// Renaming and deleting past conversations.
+// Names live in Desk's preferences. Deleting a Claude Code or Codex conversation moves
+// its transcript to the Trash; the ACP agents keep their own, so Desk just forgets it.
+import { TOOL_LABEL, useDesk } from "./store";
 import { ipc, errorText } from "./ipc";
 import { closeTab } from "./actions";
-import { closeChat, useChats, type Chat } from "./chat";
-import type { AgentSession, Tool } from "./types";
+import { closeChat, forgetAcp, useChats, type Chat } from "./chat";
+import { isAcpAgent } from "./acp";
+import type { Agent, AgentSession } from "./types";
 
-const key = (tool: Tool, id: string) => `${tool}:${id}`;
+const key = (tool: Agent, id: string) => `${tool}:${id}`;
 
 /** The name you gave a conversation in Desk, if any. */
-export function customTitle(tool: Tool, id: string | null | undefined) {
+export function customTitle(tool: Agent, id: string | null | undefined) {
   return id ? useDesk.getState().preferences.sessionTitles?.[key(tool, id)] : undefined;
 }
 
@@ -25,9 +27,9 @@ function changed() {
 }
 
 /** A conversation in the sidebar: a past session, an open chat, or both. */
-export interface Target { tool: Tool; title: string; session?: AgentSession; chat?: Chat }
+export interface Target { tool: Agent; title: string; session?: AgentSession; chat?: Chat }
 
-function setTitle(tool: Tool, id: string, title: string | null) {
+function setTitle(tool: Agent, id: string, title: string | null) {
   const s = useDesk.getState();
   const titles = { ...(s.preferences.sessionTitles ?? {}) };
   if (title) titles[key(tool, id)] = title;
@@ -63,13 +65,16 @@ export function deleteConversation(t: Target) {
   const desk = useDesk.getState();
   const id = t.session?.id ?? t.chat?.sessionId ?? null;
   const saved = !!t.session || !!t.chat?.saved;
-  const label = t.tool === "claude" ? "Claude Code" : "Codex";
+  const label = TOOL_LABEL[t.tool];
+  const acp = isAcpAgent(t.tool);
   desk.setModal({
     kind: "confirm",
     title: `Delete “${t.title}”?`,
-    body: saved
-      ? `Its transcript moves to the Trash, so ${label} no longer lists or resumes it, and its tab in Desk closes. You can put it back from the Trash.`
-      : "This chat hasn't been saved yet. Closing it discards it.",
+    body: !saved
+      ? "This chat hasn't been saved yet. Closing it discards it."
+      : acp
+        ? `Desk stops listing it and its tab closes. ${label} keeps its own copy of the conversation.`
+        : `Its transcript moves to the Trash, so ${label} no longer lists or resumes it, and its tab in Desk closes. You can put it back from the Trash.`,
     confirm: "Delete",
     danger: true,
     onConfirm: async () => {
@@ -83,10 +88,20 @@ export function deleteConversation(t: Target) {
         }
       }
       if (!saved || !id) return;
+      if (acp) {
+        forgetAcp(t.tool, id);
+        setTitle(t.tool, id, null);
+        useChats.setState((s) => ({
+          sessions: Object.fromEntries(Object.entries(s.sessions).map(([path, list]) => [path, list.filter((x) => !(x.tool === t.tool && x.id === id))])),
+        }));
+        changed();
+        useDesk.getState().toast("Removed from Desk.");
+        return;
+      }
       const dir = t.session?.dir ?? desk.accounts.find((a) => a.id === t.chat?.accountId)?.dir ?? null;
       const cwd = t.session?.cwd ?? t.chat?.cwd ?? "";
       try {
-        await ipc.sessionTrash(t.tool, dir, cwd, id);
+        await ipc.sessionTrash(t.tool as "claude" | "codex", dir, cwd, id);
         setTitle(t.tool, id, null);
         useChats.setState((s) => ({
           sessions: Object.fromEntries(Object.entries(s.sessions).map(([path, list]) => [path, list.filter((x) => !(x.tool === t.tool && x.id === id))])),
