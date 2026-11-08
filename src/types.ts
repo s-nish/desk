@@ -38,6 +38,9 @@ export interface Project {
   /** Branch checked out in the worktree, and the branch it started from. */
   branch?: string;
   base?: string;
+  /** Someone else's code (a pull request checkout). Agents start without the folder's
+   *  own settings, hooks or MCP servers, and in a read-only mode. */
+  untrusted?: boolean;
 }
 
 /** A saved command, usually ssh, opened in its own tab. Its password is kept in

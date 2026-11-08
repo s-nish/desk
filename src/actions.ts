@@ -18,6 +18,12 @@ const inShell = (script: string) => `"$SHELL" -c ${shellWord(script)}`;
 /** Cursor's CLI is `cursor-agent`, newer installs also call it `agent`. */
 const CURSOR = "if command -v cursor-agent >/dev/null 2>&1; then exec cursor-agent \"$@\"; else exec agent \"$@\"; fi";
 
+/** Claude Code in someone else's checkout: only the user's own settings, so the folder's
+ *  .claude/settings*.json (hooks, permissions) and .mcp.json servers are never loaded. */
+export const UNTRUSTED_CLAUDE_ARGS = ["--setting-sources", "user", "--strict-mcp-config"];
+/** Codex in someone else's checkout: a read-only sandbox, and it asks before running commands. */
+export const UNTRUSTED_CODEX_ARGS = ["-c", 'sandbox_mode="read-only"', "-c", 'approval_policy="untrusted"'];
+
 const COMMAND: Record<TabTool, string | null> = { claude: "claude", codex: "codex", gemini: "gemini", cursor: inShell(CURSOR), grok: "grok", opencode: "opencode", shell: null };
 const SIGN_IN: Record<AccountKind, string> = {
   github: "gh auth login --hostname github.com",
@@ -114,7 +120,11 @@ export async function terminalSpec(tabId: string): Promise<SessionSpec> {
   const overrides = Object.fromEntries(AGENTS.map((k) => [k, resolve(k)])) as Record<Agent, Account>;
   s.patchTab(tabId, { runAs: Object.fromEntries(AGENTS.map((k) => [k, overrides[k].id])) });
   const env = sessionEnv(s.accounts, project, overrides);
-  const claude = tab.tool === "claude" && !tab.sshId ? await claudeCommand(overrides.claude.dir, tab.cwd, env.env) : "claude";
+  const untrusted = !!project?.untrusted && !tab.sshId;
+  const claude = tab.tool === "claude" && !tab.sshId
+    ? `${await claudeCommand(overrides.claude.dir, tab.cwd, env.env)}${untrusted ? ` ${UNTRUSTED_CLAUDE_ARGS.join(" ")} --permission-mode plan` : ""}`
+    : "claude";
+  const codex = untrusted ? `codex ${UNTRUSTED_CODEX_ARGS.map(shellWord).join(" ")}` : "codex";
   if (tab.sshId) {
     const connection = s.connections.find((c) => c.id === tab.sshId);
     // The session ends with the command, so Enter reconnects (and fills the password again).
@@ -131,14 +141,14 @@ export async function terminalSpec(tabId: string): Promise<SessionSpec> {
     return { cwd: tab.cwd, command: `${claude} --session-id ${id}`, ...env };
   }
   if (tab.tool === "codex" && tab.resume && SAFE_ID.test(tab.resume)) {
-    return { cwd: tab.cwd, command: `codex resume ${tab.resume}`, ...env };
+    return { cwd: tab.cwd, command: `${codex} resume ${tab.resume}`, ...env };
   }
   if (tab.tool === "shell" && tab.command) {
     // Runs once; restarting the tab gives a plain shell.
     s.patchTab(tabId, { command: undefined });
     return { cwd: tab.cwd, command: tab.command, ...env };
   }
-  return { cwd: tab.cwd, command: tab.tool === "claude" ? claude : COMMAND[tab.tool], ...env };
+  return { cwd: tab.cwd, command: tab.tool === "claude" ? claude : tab.tool === "codex" ? codex : COMMAND[tab.tool], ...env };
 }
 
 /**
@@ -339,8 +349,9 @@ export function rootProject(project: Project) {
 }
 
 /** Adds a worktree folder as a project nested under its repository, sharing its accounts. */
-export function addWorktreeProject(parent: Project, path: string, branch: string | null, base?: string) {
+export function addWorktreeProject(parent: Project, path: string, branch: string | null, base?: string, untrusted = false) {
   const id = desk().addProject(path, {
+    ...(untrusted ? { untrusted: true } : {}),
     name: branch ?? path.split("/").pop() ?? path,
     worktreeOf: parent.id,
     branch: branch ?? undefined,

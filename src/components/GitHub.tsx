@@ -250,12 +250,26 @@ export function GitHubPanel({ project }: { project: Project }) {
       setBusy(null);
     }
   };
-  const checkout = async (row: PrRow, review: boolean) => {
+  // A pull request is someone else's code. Its checkout may carry its own agent settings
+  // (.claude/settings.json hooks, .mcp.json servers) that would run on this Mac, so ask
+  // first, and mark the worktree untrusted: agents there start without those settings,
+  // in plan mode (Claude) or a read-only sandbox (Codex).
+  const checkout = (row: PrRow, review: boolean) => {
+    useDesk.getState().setModal({
+      kind: "confirm",
+      title: `Check out #${row.number} by ${row.author || "someone else"}?`,
+      body: `This puts the pull request's code on your Mac, in its own worktree. Desk treats it as untrusted: agents there ignore the branch's own settings, hooks and MCP servers, and start in plan mode or a read-only sandbox. Only switch an agent to a mode that edits files or runs commands once you've read the changes.`,
+      confirm: review ? "Check out and review" : "Check out",
+      onConfirm: () => void checkoutNow(row, review),
+    });
+  };
+  const checkoutNow = async (row: PrRow, review: boolean) => {
     setBusy(row.number);
     try {
       const made = await ipc.ghPrWorktree(repo.path, row.number, ghConfig(repo.path));
       const known = useDesk.getState().projects.find((p) => p.path === made.path);
-      const id = known?.id ?? addWorktreeProject(repo, made.path, made.branch);
+      if (known && !known.untrusted) useDesk.setState((s) => ({ projects: s.projects.map((p) => (p.id === known.id ? { ...p, untrusted: true } : p)) }));
+      const id = known?.id ?? addWorktreeProject(repo, made.path, made.branch, undefined, true);
       useDesk.getState().selectProject(id);
       if (review) handToAgent(made.path, `Review pull request #${row.number}: ${row.title}. Read the description with \`gh pr view ${row.number}\` and the diff with \`gh pr diff ${row.number}\`. Point out bugs, risky changes and missing tests, with file and line for each. Don't change any files.`);
       else toast(`Checked out #${row.number} in its own worktree.`);

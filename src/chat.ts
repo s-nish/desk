@@ -11,7 +11,7 @@
 import { create } from "zustand";
 import { ipc } from "./ipc";
 import { chatView, projectAccount, sessionEnv, uid, useDesk } from "./store";
-import { addWorktreeProject, branchSlug, refreshLimits, rootProject } from "./actions";
+import { addWorktreeProject, branchSlug, refreshLimits, rootProject, UNTRUSTED_CLAUDE_ARGS } from "./actions";
 import { notify } from "./notify";
 import type { AgentSession, Project, Tool } from "./types";
 
@@ -232,7 +232,7 @@ export function newChat(projectId: string, tool: Tool = lastTool) {
   // Reuse an untouched blank chat rather than piling them up.
   const blank = Object.values(chats().chats).find((c) => c.projectId === projectId && !c.items.length && !c.saved && c.status === "idle");
   if (blank) {
-    chats().patch(blank.id, { tool, accountId: projectAccount(s.accounts, project, tool).id, sessionId: tool === "claude" ? uid() : null, mode: defaultMode(tool), model: "", effort: "", worktree: s.preferences.chatWorktree && !project.worktreeOf });
+    chats().patch(blank.id, { tool, accountId: projectAccount(s.accounts, project, tool).id, sessionId: tool === "claude" ? uid() : null, mode: defaultMode(tool, project), model: "", effort: "", worktree: s.preferences.chatWorktree && !project.worktreeOf });
     chats().select(blank.id);
     s.selectProject(projectId);
     return blank.id;
@@ -249,7 +249,7 @@ export function newChat(projectId: string, tool: Tool = lastTool) {
     items: [],
     status: "idle",
     proc: null,
-    mode: defaultMode(tool),
+    mode: defaultMode(tool, project),
     model: "",
     effort: "",
     truncated: false,
@@ -264,7 +264,10 @@ export function newChat(projectId: string, tool: Tool = lastTool) {
 }
 
 let lastTool: Tool = "claude";
-const defaultMode = (tool: Tool) => (tool === "claude" ? "default" : "workspace-write");
+/** Someone else's checkout starts read-only: plan mode for Claude, a read-only sandbox for Codex. */
+const defaultMode = (tool: Tool, project?: Project) =>
+  project?.untrusted ? (tool === "claude" ? "plan" : "read-only") : tool === "claude" ? "default" : "workspace-write";
+const untrusted = (chat: Chat) => !!desk().projects.find((p) => p.id === chat.projectId)?.untrusted;
 
 /** Opens a past conversation as a chat, with its history, or shows the chat already open. */
 export function openSession(session: AgentSession, project: Project) {
@@ -287,7 +290,7 @@ export function openSession(session: AgentSession, project: Project) {
     items: [],
     status: "idle",
     proc: null,
-    mode: defaultMode(session.tool),
+    mode: defaultMode(session.tool, project),
     model: "",
     effort: "",
     truncated: false,
@@ -506,6 +509,7 @@ async function startClaude(chatId: string) {
     "--verbose",
     "--include-partial-messages",
     "--permission-prompt-tool", "stdio",
+    ...(untrusted(chat) ? UNTRUSTED_CLAUDE_ARGS : []),
     "--permission-mode", chat.mode,
     ...(chat.mode === "bypassPermissions" ? ["--allow-dangerously-skip-permissions"] : []),
     ...(chat.model ? ["--model", chat.model] : []),
@@ -594,7 +598,7 @@ export async function loadClaudeCommands(chat: Chat) {
   const timer = setTimeout(done, 20_000);
   try {
     proc = await ipc.chatSpawn(
-      { cwd: chat.cwd, args: ["claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--no-session-persistence"], env, unset, stdin: true },
+      { cwd: chat.cwd, args: ["claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--no-session-persistence", ...(untrusted(chat) ? UNTRUSTED_CLAUDE_ARGS : [])], env, unset, stdin: true },
       (line) => {
         let record: Json;
         try { record = JSON.parse(line); } catch { return; }
@@ -639,7 +643,7 @@ export function setTool(chatId: string, tool: Tool) {
   if (!chat || chat.saved || chat.items.length || chat.tool === tool) return;
   const project = desk().projects.find((p) => p.id === chat.projectId);
   lastTool = tool;
-  chats().patch(chatId, { tool, accountId: projectAccount(desk().accounts, project, tool).id, sessionId: tool === "claude" ? uid() : null, mode: defaultMode(tool), model: "", effort: "" });
+  chats().patch(chatId, { tool, accountId: projectAccount(desk().accounts, project, tool).id, sessionId: tool === "claude" ? uid() : null, mode: defaultMode(tool, project), model: "", effort: "" });
 }
 
 type Json = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
