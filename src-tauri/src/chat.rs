@@ -280,6 +280,60 @@ pub fn codex_models(dir: Option<String>) -> Value {
     json!(out)
 }
 
+/// Largest image sent to an agent; Claude rejects bigger ones.
+const MAX_IMAGE_BYTES: u64 = 5 * 1024 * 1024;
+
+/// Desk's own folder for pasted images, so Codex (which takes file paths) can read them.
+fn attachment_dir() -> PathBuf {
+    dirs::cache_dir().unwrap_or_else(std::env::temp_dir).join("dev.desk.Desk").join("attachments")
+}
+
+/// Saves a pasted image and returns its path. Old pastes are cleared after a week.
+pub fn save_attachment(name: &str, data: &str) -> Result<String, String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(data).map_err(|e| e.to_string())?;
+    let dir = attachment_dir();
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    if let Ok(entries) = fs::read_dir(&dir) {
+        let week = std::time::Duration::from_secs(7 * 24 * 3600);
+        for entry in entries.flatten() {
+            let old = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > week);
+            if old {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
+    let safe: String = name.chars().map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' { c } else { '-' }).collect();
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+    let path = dir.join(format!("{stamp}-{safe}"));
+    fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// The media type of an image Claude accepts, from the file name.
+pub fn image_type(path: &str) -> Option<&'static str> {
+    let ext = Path::new(path).extension()?.to_str()?.to_ascii_lowercase();
+    Some(match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => return None,
+    })
+}
+
+/// An image file as `{mediaType, data}` (base64), for Claude's image content blocks.
+pub fn read_image(path: &str) -> Result<Value, String> {
+    use base64::Engine;
+    let media = image_type(path).ok_or("Not a PNG, JPEG, GIF or WebP image.")?;
+    let size = fs::metadata(path).map_err(|e| e.to_string())?.len();
+    if size > MAX_IMAGE_BYTES {
+        return Err(format!("{} is over 5 MB.", Path::new(path).file_name().unwrap_or_default().to_string_lossy()));
+    }
+    let bytes = fs::read(path).map_err(|e| e.to_string())?;
+    Ok(json!({ "mediaType": media, "data": base64::engine::general_purpose::STANDARD.encode(bytes) }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

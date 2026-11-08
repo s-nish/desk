@@ -354,6 +354,66 @@ pub fn add_worktree(root: &str, branch: &str, base: &str) -> Result<String, Stri
     Ok(path)
 }
 
+#[derive(Debug, Serialize)]
+pub struct TaskWorktree {
+    pub path: String,
+    pub branch: String,
+    pub base: String,
+}
+
+/// The branch new work starts from: the remote's default (`origin/main`), freshly
+/// fetched when the network allows, else the branch checked out now.
+fn default_base(top: &str) -> Result<String, String> {
+    let has_origin = run(top, &["remote"]).map(|r| r.lines().any(|l| l.trim() == "origin")).unwrap_or(false);
+    if has_origin {
+        // Never waits on a password or passphrase prompt; offline just uses what's there.
+        let _ = Command::new("git")
+            .args(["-C", top, "fetch", "--quiet", "origin"])
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=8")
+            .output();
+        if let Ok(head) = run(top, &["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]) {
+            return Ok(head.trim().to_string());
+        }
+        for name in ["origin/main", "origin/master"] {
+            if run(top, &["rev-parse", "--verify", "--quiet", &format!("{name}^{{commit}}")]).is_ok() {
+                return Ok(name.into());
+            }
+        }
+    }
+    let current = run(top, &["rev-parse", "--abbrev-ref", "HEAD"])?.trim().to_string();
+    if current == "HEAD" {
+        return Ok(run(top, &["rev-parse", "HEAD"])?.trim().to_string());
+    }
+    Ok(current)
+}
+
+/// A worktree for one task: branch `desk/<slug>` (numbered if taken) from the default base.
+pub fn task_worktree(root: &str, slug: &str) -> Result<TaskWorktree, String> {
+    let top = run(root, &["rev-parse", "--show-toplevel"]).map_err(|_| "This folder isn't a Git repository.".to_string())?.trim().to_string();
+    let base = default_base(&top)?;
+    let stem = format!("desk/{}", if slug.is_empty() { "task" } else { slug });
+    let mut branch = stem.clone();
+    for n in 2..100 {
+        let taken = run(&top, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")]).is_ok()
+            || Path::new(&worktree_path(&top, &branch)?).exists();
+        if !taken {
+            break;
+        }
+        branch = format!("{stem}-{n}");
+    }
+    let path = add_worktree(&top, &branch, &base)?;
+    Ok(TaskWorktree { path, branch, base })
+}
+
+/// Subjects and bodies of the commits on HEAD that `base` (preferably `origin/<base>`) lacks, oldest first.
+pub fn commits_since(root: &str, base: &str) -> Result<Vec<String>, String> {
+    let remote = format!("origin/{base}");
+    let from = if run(root, &["rev-parse", "--verify", "--quiet", &format!("{remote}^{{commit}}")]).is_ok() { remote } else { base.to_string() };
+    let out = run(root, &["log", "--reverse", "--format=%B%x1e", &format!("{from}..HEAD")])?;
+    Ok(out.split('\u{1e}').map(|c| c.trim().to_string()).filter(|c| !c.is_empty()).collect())
+}
+
 /// Removes a worktree folder. Without `force`, git refuses when it has
 /// uncommitted or untracked files, and that refusal is passed on as is.
 pub fn remove_worktree(root: &str, path: &str, force: bool) -> Result<(), String> {
@@ -488,5 +548,22 @@ mod tests {
             "changed\n"
         );
         std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn task_worktrees_get_unique_branches_from_current_branch() {
+        let dir = std::env::temp_dir().join(format!("desk-task-{}", std::process::id()));
+        let repo = dir.join("app");
+        std::fs::create_dir_all(&repo).unwrap();
+        let root = repo.to_str().unwrap();
+        for args in [&["init", "-q", "-b", "main"][..], &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "first"]] {
+            run(root, args).unwrap();
+        }
+        let first = task_worktree(root, "fix-login").unwrap();
+        assert_eq!(first.branch, "desk/fix-login");
+        assert_eq!(first.base, "main");
+        assert!(Path::new(&first.path).is_dir());
+        let second = task_worktree(root, "fix-login").unwrap();
+        assert_eq!(second.branch, "desk/fix-login-2");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

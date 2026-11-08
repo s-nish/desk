@@ -40,7 +40,7 @@ fi
 exit 0
 "#;
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Window {
     /// Percent of the allowance used, 0 to 100.
@@ -50,7 +50,7 @@ pub struct Window {
     pub minutes: u64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Limits {
     pub tool: &'static str,

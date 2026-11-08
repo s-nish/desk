@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Bell, Command, GitBranch, MessagesSquare, Settings2, SquareTerminal } from "lucide-react";
+import { Bell, Command, GitBranch, Globe, MessagesSquare, Settings2, SquareTerminal } from "lucide-react";
 import { homeDir } from "@tauri-apps/api/path";
 import { useShallow } from "zustand/react/shallow";
 import { TOOL_LABEL, isChatTool, projectAccount, shortPath, tabAccount, useDesk, focusedTabId, waitingTabs } from "../store";
@@ -63,6 +63,7 @@ export function TitleBar() {
       <div className="titlebar-right" data-tauri-drag-region>
         <WaitingButton />
         <ViewSwitch />
+        <button className={"icon-btn" + (layout.browserOpen ? " is-on" : "")} aria-label="Toggle browser" aria-pressed={!!layout.browserOpen} title="Browser (⌘⇧L)" onClick={() => useDesk.getState().setLayout({ browserOpen: !layout.browserOpen })}><Globe size={15} /></button>
         <button className="icon-btn" aria-label="Open command palette" title="Command palette (⌘⇧P)" onClick={() => useDesk.getState().setCommandOpen(true)}><Command size={15} /></button>
         <button className="icon-btn" aria-label="Open settings" title="Settings (⌘,)" onClick={() => useDesk.getState().setModal({ kind: "settings" })}><Settings2 size={15} /></button>
         <button

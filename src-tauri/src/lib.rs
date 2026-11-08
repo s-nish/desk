@@ -1,13 +1,16 @@
 mod accounts;
 mod files;
+mod gh;
 mod git;
 mod limits;
 mod bridge;
+mod browser;
 mod chat;
 mod pty;
 mod search;
 mod sessions;
 mod ssh;
+mod usage_live;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -125,6 +128,16 @@ fn chat_kill(chats: State<'_, Arc<chat::ChatManager>>, id: u32) {
 }
 
 #[tauri::command]
+async fn attachment_save(name: String, data: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || chat::save_attachment(&name, &data)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn attachment_image(path: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || chat::read_image(&path)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn chat_history(tool: String, dir: Option<String>, cwd: String, id: String) -> Value {
     tauri::async_runtime::spawn_blocking(move || chat::history(&tool, dir, &cwd, &id)).await.unwrap_or(Value::Null)
 }
@@ -198,6 +211,19 @@ async fn fs_list_files(root: String) -> Vec<String> {
 #[tauri::command]
 fn fs_read(path: String) -> Result<files::FileContent, String> {
     files::read_file(&path)
+}
+
+/// Sent as raw bytes (no JSON or base64), so a big image or PDF costs one copy.
+#[tauri::command]
+async fn fs_read_bytes(path: String) -> Result<tauri::ipc::Response, String> {
+    let bytes = tauri::async_runtime::spawn_blocking(move || files::read_bytes(&path)).await.map_err(|e| e.to_string())??;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// Opens a file in its default app (Preview, Numbers, ...).
+#[tauri::command]
+fn open_default(path: String) -> Result<(), String> {
+    std::process::Command::new("/usr/bin/open").arg(path).spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -323,6 +349,45 @@ async fn git_worktree_add(root: String, branch: String, base: String) -> Result<
         .map_err(|e| e.to_string())?
 }
 #[tauri::command]
+async fn git_commits_since(root: String, base: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || git::commits_since(&root, &base)).await.map_err(|e| e.to_string())?
+}
+// Async so they run off the main thread, which creating the webview needs.
+#[tauri::command]
+async fn browser_open(app: AppHandle, url: String, x: f64, y: f64, width: f64, height: f64) -> Result<(), String> {
+    browser::open(&app, &url, x, y, width, height)
+}
+#[tauri::command]
+async fn browser_bounds(app: AppHandle, x: f64, y: f64, width: f64, height: f64, visible: bool) -> Result<(), String> {
+    browser::bounds(&app, x, y, width, height, visible)
+}
+#[tauri::command]
+async fn browser_command(app: AppHandle, action: String) -> Result<(), String> {
+    browser::command(&app, &action)
+}
+#[tauri::command]
+async fn browser_close(app: AppHandle) -> Result<(), String> {
+    browser::close(&app)
+}
+#[tauri::command]
+async fn gh_run(cwd: String, args: Vec<String>, config: Option<String>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || gh::run(&cwd, &args, config.as_deref())).await.map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn git_push(root: String, config: Option<String>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || gh::push(&root, config.as_deref())).await.map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn gh_pr_worktree(root: String, number: u32, config: Option<String>) -> Result<gh::PrWorktree, String> {
+    tauri::async_runtime::spawn_blocking(move || gh::pr_worktree(&root, number, config.as_deref())).await.map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn git_task_worktree(root: String, slug: String) -> Result<git::TaskWorktree, String> {
+    tauri::async_runtime::spawn_blocking(move || git::task_worktree(&root, &slug))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
 async fn git_worktree_remove(root: String, path: String, force: bool) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || git::remove_worktree(&root, &path, force))
         .await
@@ -352,9 +417,21 @@ async fn claude_session_state(dir: Option<String>, cwd: String, id: String) -> &
 
 #[tauri::command]
 async fn usage_limits(claude: Vec<Option<String>>, codex: Vec<Option<String>>) -> Vec<limits::Limits> {
-    tauri::async_runtime::spawn_blocking(move || limits::list(claude, codex))
+    tauri::async_runtime::spawn_blocking(move || usage_live::merge(limits::list(claude, codex)))
         .await
         .unwrap_or_default()
+}
+/// Asks each provider for live numbers (in the background, every few minutes), then lists as above.
+#[tauri::command]
+async fn usage_refresh(claude: Vec<Option<String>>, codex: Vec<Option<String>>) -> Vec<limits::Limits> {
+    tauri::async_runtime::spawn_blocking(move || {
+        for e in usage_live::refresh(claude.clone(), codex.clone()) {
+            eprintln!("usage: {e}");
+        }
+        usage_live::merge(limits::list(claude, codex))
+    })
+    .await
+    .unwrap_or_default()
 }
 #[tauri::command]
 fn claude_limits_hook(dir: Option<String>, cwd: String) -> Result<limits::ClaudeHook, String> {
@@ -497,12 +574,15 @@ pub fn run() {
     bridge::start(Arc::clone(&ptys));
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(ptys)
         .manage(Arc::new(chat::ChatManager::default()))
         .manage(files::Watchers::default())
         .manage(QuitState::default())
         .menu(build_menu)
-        .invoke_handler(tauri::generate_handler![
+        // Only Desk's own page may call its commands; the built-in browser's pages never can.
+        .invoke_handler({
+            let handler: Box<dyn Fn(tauri::ipc::Invoke) -> bool + Send + Sync> = Box::new(tauri::generate_handler![
             workspace_exit,
             pty_spawn,
             pty_write,
@@ -514,8 +594,11 @@ pub fn run() {
             chat_write,
             chat_kill,
             chat_history,
+            attachment_save,
+            attachment_image,
             codex_models,
             usage_limits,
+            usage_refresh,
             claude_limits_hook,
             accounts_detect,
             account_inspect,
@@ -527,6 +610,8 @@ pub fn run() {
             fs_list_dir,
             fs_list_files,
             fs_read,
+            fs_read_bytes,
+            open_default,
             fs_write,
             fs_create_file,
             fs_create_dir,
@@ -546,6 +631,15 @@ pub fn run() {
             git_branches,
             git_worktree_path,
             git_worktree_add,
+            git_task_worktree,
+            gh_run,
+            browser_open,
+            browser_bounds,
+            browser_command,
+            browser_close,
+            git_commits_since,
+            git_push,
+            gh_pr_worktree,
             git_worktree_remove,
             git_branch_delete,
             sessions_list,
@@ -559,7 +653,15 @@ pub fn run() {
             ssh_save_password,
             ssh_forget_password,
             ssh_has_password,
-        ])
+            ]);
+            move |invoke: tauri::ipc::Invoke| {
+                if invoke.message.webview().label() != "main" {
+                    invoke.resolver.reject("Not allowed from this page");
+                    return true;
+                }
+                handler(invoke)
+            }
+        })
         .build(tauri::generate_context!())
         .expect("failed to start Desk");
 

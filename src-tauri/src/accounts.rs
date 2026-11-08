@@ -17,6 +17,9 @@ pub enum Kind {
     Gemini,
     Cursor,
     Grok,
+    OpenCode,
+    #[serde(rename = "github")]
+    GitHub,
 }
 
 impl Kind {
@@ -27,6 +30,9 @@ impl Kind {
             Kind::Gemini => ".gemini",
             Kind::Cursor => ".cursor",
             Kind::Grok => ".grok",
+            Kind::OpenCode => ".opencode",
+            // gh's own default; extra accounts are `~/.config/gh-<name>` (GH_CONFIG_DIR).
+            Kind::GitHub => ".config/gh",
         }
     }
 
@@ -38,7 +44,8 @@ impl Kind {
             // `GEMINI_CLI_HOME=<dir>` keeps its files in `<dir>/.gemini`.
             Kind::Gemini => &["settings.json", "oauth_creds.json", "google_accounts.json", ".gemini"],
             Kind::Cursor => &["cli-config.json"],
-            Kind::Grok => &[],
+            Kind::Grok | Kind::OpenCode => &[],
+            Kind::GitHub => &["hosts.yml", "config.yml"],
         }
     }
 
@@ -49,6 +56,8 @@ impl Kind {
             "gemini" => Ok(Kind::Gemini),
             "cursor" => Ok(Kind::Cursor),
             "grok" => Ok(Kind::Grok),
+            "opencode" => Ok(Kind::OpenCode),
+            "github" => Ok(Kind::GitHub),
             _ => Err(format!("unknown account kind: {s}")),
         }
     }
@@ -136,6 +145,25 @@ fn gemini_identity(dir: &Path, is_default: bool) -> (Option<String>, Option<Stri
     (email, None, signed_in)
 }
 
+/// gh records who is signed in to github.com in `hosts.yml` (the token itself is in the keychain).
+fn github_identity(dir: &Path) -> (Option<String>, Option<String>, bool) {
+    let Ok(text) = fs::read_to_string(dir.join("hosts.yml")) else { return (None, None, false) };
+    let mut in_github = false;
+    for line in text.lines() {
+        if !line.starts_with(' ') {
+            in_github = line.trim_end() == "github.com:";
+        } else if in_github {
+            if let Some(user) = line.trim().strip_prefix("user:") {
+                let user = user.trim().trim_matches('"');
+                if !user.is_empty() {
+                    return (Some(format!("@{user}")), None, true);
+                }
+            }
+        }
+    }
+    (None, None, false)
+}
+
 fn describe(kind: Kind, path: &Path, is_default: bool) -> DetectedAccount {
     let (email, org, signed_in) = match kind {
         Kind::Claude => claude_identity(path, is_default),
@@ -143,6 +171,9 @@ fn describe(kind: Kind, path: &Path, is_default: bool) -> DetectedAccount {
         Kind::Gemini => gemini_identity(path, is_default),
         // Cursor Agent and Grok don't expose who is signed in; the UI says so.
         Kind::Cursor | Kind::Grok => (None, None, false),
+        // OpenCode keeps provider keys in ~/.local/share/opencode/auth.json (never read here).
+        Kind::OpenCode => (None, None, home().join(".local/share/opencode/auth.json").exists()),
+        Kind::GitHub => github_identity(path),
     };
     DetectedAccount {
         kind,
@@ -186,6 +217,18 @@ pub fn detect() -> Vec<DetectedAccount> {
                 continue;
             }
             found.push(describe(kind, &path, rest.is_empty()));
+        }
+    }
+    // GitHub (gh) folders live in ~/.config: `gh` itself and `gh-<name>`.
+    let config = home.join(".config");
+    if let Ok(entries) = fs::read_dir(&config) {
+        let mut dirs: Vec<String> = entries.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n == "gh" || n.starts_with("gh-")).collect();
+        dirs.sort();
+        for name in dirs {
+            let path = config.join(&name);
+            if path.join("hosts.yml").exists() {
+                found.push(describe(Kind::GitHub, &path, name == "gh"));
+            }
         }
     }
     found
@@ -293,7 +336,7 @@ fn slug(name: &str) -> String {
 /// An existing directory is reused, never cleared.
 pub fn create(kind: &str, name: &str) -> Result<String, String> {
     let kind = Kind::parse(kind)?;
-    if matches!(kind, Kind::Cursor | Kind::Grok) {
+    if matches!(kind, Kind::Cursor | Kind::Grok | Kind::OpenCode) {
         return Err("This tool keeps one sign-in per Mac, so it can't have extra accounts".into());
     }
     let s = slug(name);
@@ -415,5 +458,15 @@ mod tests {
         assert_eq!((usage[0].sessions, usage[0].exact), (1, true));
         // Subfolder sessions count; a sibling like /p/appx does not.
         assert_eq!((usage[1].sessions, usage[1].exact), (1, false));
+    }
+    #[test]
+    fn reads_the_github_user_from_hosts_yml() {
+        let dir = std::env::temp_dir().join(format!("desk-gh-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("hosts.yml"), "gitlab.com:\n    user: other\ngithub.com:\n    git_protocol: https\n    users:\n        octo:\n    user: octo\n").unwrap();
+        assert_eq!(github_identity(&dir), (Some("@octo".into()), None, true));
+        fs::write(dir.join("hosts.yml"), "").unwrap();
+        assert!(!github_identity(&dir).2);
+        let _ = fs::remove_dir_all(&dir);
     }
 }

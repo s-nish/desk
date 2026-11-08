@@ -11,11 +11,15 @@
 import { create } from "zustand";
 import { ipc } from "./ipc";
 import { chatView, projectAccount, sessionEnv, uid, useDesk } from "./store";
-import { refreshLimits } from "./actions";
+import { addWorktreeProject, branchSlug, refreshLimits, rootProject } from "./actions";
+import { notify } from "./notify";
 import type { AgentSession, Project, Tool } from "./types";
 
+/** A file sent with a message. Images go to the agent as images; other files as their paths. */
+export interface Attachment { name: string; path: string; image: boolean }
+
 export type ChatItem =
-  | { kind: "user"; id: string; text: string }
+  | { kind: "user"; id: string; text: string; attachments?: Attachment[] }
   | { kind: "assistant"; id: string; text: string; streaming?: boolean }
   | { kind: "tool"; id: string; name: string; summary: string; output?: string; state: "running" | "done" | "error" }
   | { kind: "approval"; id: string; tool: string; summary: string; input: unknown; state: "pending" | "allowed" | "denied" | "expired" }
@@ -83,6 +87,16 @@ export interface Chat {
   stopping?: boolean;
   /** Reasoning effort; empty uses the CLI's own setting. */
   effort: string;
+  /** Finished or asked something while you weren't looking at it. */
+  unread?: boolean;
+  /** Files waiting in the composer, sent with the next message. */
+  pending?: Attachment[];
+  /** Text to drop into the composer (review comments), taken once it's on screen. */
+  draft?: string;
+  /** The first message creates a worktree on a new branch and the chat moves there. */
+  worktree?: boolean;
+  /** Branch name to use for that worktree instead of one made from the message. */
+  branchHint?: string;
 }
 
 interface ChatState {
@@ -120,7 +134,12 @@ export const useChats = create<ChatState>((set) => ({
       if (!chat) return s;
       return { chats: { ...s.chats, [id]: { ...chat, ...(typeof patch === "function" ? patch(chat) : patch) } } };
     }),
-  select: (activeId) => set((s) => ({ activeId, termId: null, strip: activeId ? withTab(s, `c:${activeId}`) : s.strip })),
+  select: (activeId) => set((s) => ({
+    activeId,
+    termId: null,
+    strip: activeId ? withTab(s, `c:${activeId}`) : s.strip,
+    chats: activeId && s.chats[activeId]?.unread ? { ...s.chats, [activeId]: { ...s.chats[activeId], unread: false } } : s.chats,
+  })),
 }));
 
 /** The strip with `key` in it, placed after the tab on screen when it is new. */
@@ -213,7 +232,7 @@ export function newChat(projectId: string, tool: Tool = lastTool) {
   // Reuse an untouched blank chat rather than piling them up.
   const blank = Object.values(chats().chats).find((c) => c.projectId === projectId && !c.items.length && !c.saved && c.status === "idle");
   if (blank) {
-    chats().patch(blank.id, { tool, accountId: projectAccount(s.accounts, project, tool).id, sessionId: tool === "claude" ? uid() : null, mode: defaultMode(tool), model: "", effort: "" });
+    chats().patch(blank.id, { tool, accountId: projectAccount(s.accounts, project, tool).id, sessionId: tool === "claude" ? uid() : null, mode: defaultMode(tool), model: "", effort: "", worktree: s.preferences.chatWorktree && !project.worktreeOf });
     chats().select(blank.id);
     s.selectProject(projectId);
     return blank.id;
@@ -237,6 +256,7 @@ export function newChat(projectId: string, tool: Tool = lastTool) {
     loading: false,
     startedAt: null,
     lastTurnMs: null,
+    worktree: s.preferences.chatWorktree && !project.worktreeOf,
   };
   addChat(chat);
   s.selectProject(projectId);
@@ -305,20 +325,28 @@ function accountFor(chat: Chat) {
   return { account, env, unset };
 }
 
-export async function send(chatId: string, text: string) {
+export async function send(chatId: string, text: string, attachments: Attachment[] = []) {
   const chat = chats().chats[chatId];
-  if (!chat || !text.trim()) return;
+  if (!chat || (!text.trim() && !attachments.length)) return;
   lastTool = chat.tool;
   const first = !chat.items.some((i) => i.kind === "user");
   chats().patch(chatId, (c) => ({
-    items: [...c.items, { kind: "user", id: uid(), text }],
-    title: first && c.title === "New chat" ? oneLine(text) : c.title,
+    items: [...c.items, { kind: "user", id: uid(), text, ...(attachments.length ? { attachments } : {}) }],
+    title: first && c.title === "New chat" ? oneLine(text || attachments.map((a) => a.name).join(", ")) : c.title,
     status: c.proc != null ? "running" : "starting",
     startedAt: Date.now(),
   }));
+  if (first && chat.worktree) {
+    try {
+      await moveToWorktree(chatId, text || attachments.map((a) => a.name).join(" "));
+    } catch (e) {
+      fail(chatId, `Couldn't create a worktree: ${String(e)}`);
+      return;
+    }
+  }
   try {
-    if (chat.tool === "claude") await sendClaude(chatId, text);
-    else await runCodex(chatId, text);
+    if (chat.tool === "claude") await sendClaude(chatId, text, attachments);
+    else await runCodex(chatId, text, attachments);
   } catch (e) {
     fail(chatId, `Couldn't start ${chat.tool === "claude" ? "Claude Code" : "Codex"}: ${String(e)}`);
   }
@@ -359,20 +387,109 @@ function finishTurn(chatId: string) {
   }));
   const chat = chats().chats[chatId];
   const project = desk().projects.find((p) => p.id === chat?.projectId);
+  if (chat && !chat.stopping) alertChat(chat, "Finished");
   if (project) setTimeout(() => void loadSessions(project), 800);
   setTimeout(() => void refreshLimits(), 1500);
 }
 
+/** Whether the chat is what you're looking at right now. */
+export function chatOnScreen(chatId: string) {
+  const s = chats();
+  return document.hasFocus() && desk().preferences.uiMode === "chat" && s.activeId === chatId && !s.termId;
+}
+
+/** Shows a chat: its project, its tab, and the chat view. */
+export function showChat(chatId: string) {
+  const chat = chats().chats[chatId];
+  if (!chat) return;
+  if (desk().preferences.uiMode !== "chat") desk().setPreferences({ uiMode: "chat" });
+  chats().select(chatId);
+  desk().selectProject(chat.projectId);
+}
+
+/** Marks a chat unread and notifies, unless you're looking at it. */
+function alertChat(chat: Chat, reason: string) {
+  if (chatOnScreen(chat.id)) return;
+  chats().patch(chat.id, { unread: true });
+  const project = desk().projects.find((p) => p.id === chat.projectId);
+  notify(`${chat.title} · ${project?.name ?? "Desk"}`, reason, () => showChat(chat.id));
+}
+
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
+
+/** Adds files (by path) to a chat's composer. */
+export function attach(chatId: string, paths: string[]) {
+  chats().patch(chatId, (c) => {
+    const have = new Set((c.pending ?? []).map((a) => a.path));
+    const added = paths.filter((p) => !have.has(p)).map((p) => ({ name: p.split("/").pop() || p, path: p, image: IMAGE_EXT.test(p) }));
+    return { pending: [...(c.pending ?? []), ...added] };
+  });
+}
+
+export function detach(chatId: string, path: string) {
+  chats().patch(chatId, (c) => ({ pending: (c.pending ?? []).filter((a) => a.path !== path) }));
+}
+
+/** Saves a pasted image to Desk's attachment folder and adds it to the composer. */
+export async function attachBlob(chatId: string, file: Blob, name: string) {
+  const data = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).replace(/^data:[^,]*,/, ""));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+  attach(chatId, [await ipc.attachmentSave(name, data)]);
+}
+
+/** Sets or clears the unread dot by hand. */
+export function markUnread(chatId: string, unread = true) {
+  chats().patch(chatId, { unread });
+}
+
 // Claude Code
 
-async function sendClaude(chatId: string, text: string) {
+/** Makes a worktree for the chat's task (branch named from the message) and moves the chat there. */
+async function moveToWorktree(chatId: string, text: string) {
+  const chat = chats().chats[chatId];
+  const project = desk().projects.find((p) => p.id === chat?.projectId);
+  if (!chat || !project) return;
+  const parent = rootProject(project);
+  const slug = chat.branchHint ? branchSlug(chat.branchHint) : branchSlug(text.split(/\s+/).slice(0, 6).join(" ").replace(/\//g, " ")).slice(0, 40).replace(/[-.]+$/, "");
+  updateItems(chatId, (items) => [...items, { kind: "notice", id: "worktree", text: "Creating a worktree for this task…" }]);
+  const made = await ipc.gitTaskWorktree(parent.path, slug).finally(() => updateItems(chatId, (items) => items.filter((i) => i.id !== "worktree")));
+  const id = addWorktreeProject(parent, made.path, made.branch, made.base);
+  chats().patch(chatId, { projectId: id, cwd: made.path, worktree: false });
+  updateItems(chatId, (items) => [...items, { kind: "notice", id: uid(), text: `Working in a new worktree on ${made.branch}, from ${made.base}.` }]);
+  if (chats().activeId === chatId) desk().selectProject(id);
+}
+
+/** Starts or stops the next message making a worktree (fresh chats only). */
+export function setWorktree(chatId: string, on: boolean) {
+  chats().patch(chatId, { worktree: on });
+  if (desk().preferences.chatWorktree !== on) desk().setPreferences({ chatWorktree: on });
+}
+
+/** The message text with non-image attachments listed as paths the agent can open. */
+function withFiles(text: string, attachments: Attachment[], images: boolean) {
+  const files = attachments.filter((a) => images || !a.image);
+  if (!files.length) return text;
+  return `${text}${text ? "\n\n" : ""}Attached files:\n${files.map((a) => `- ${a.path}`).join("\n")}`;
+}
+
+async function sendClaude(chatId: string, text: string, attachments: Attachment[] = []) {
   let chat = chats().chats[chatId];
   if (chat.proc == null) {
     await startClaude(chatId);
     chat = chats().chats[chatId];
   }
   if (chat.proc == null) return;
-  await ipc.chatWrite(chat.proc, JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "text", text }] }, parent_tool_use_id: null }));
+  const images = await Promise.all(attachments.filter((a) => a.image).map(async (a) => {
+    const { mediaType, data } = await ipc.attachmentImage(a.path);
+    return { type: "image", source: { type: "base64", media_type: mediaType, data } };
+  }));
+  const body = withFiles(text, attachments, false);
+  const content = [...images, ...(body ? [{ type: "text", text: body }] : [])];
+  await ipc.chatWrite(chat.proc, JSON.stringify({ type: "user", message: { role: "user", content }, parent_tool_use_id: null }));
 }
 
 async function startClaude(chatId: string) {
@@ -586,7 +703,9 @@ function applyClaude(items: ChatItem[], record: Json, live: boolean): ChatItem[]
     }
     if (live) return items; // What the user sent is already shown.
     const text = claudeUserText(record);
-    return text ? [...items, { kind: "user", id: record.uuid ?? uid(), text }] : items;
+    const images = record.isMeta || !Array.isArray(content) ? 0 : content.filter((p: Json) => p?.type === "image").length;
+    const attachments = Array.from({ length: images }, (_, i) => ({ name: images > 1 ? `Image ${i + 1}` : "Image", path: "", image: true }));
+    return text || images ? [...items, { kind: "user", id: record.uuid ?? uid(), text: text ?? "", ...(images ? { attachments } : {}) }] : items;
   }
   return items;
 }
@@ -630,6 +749,7 @@ function claudeParser(chatId: string) {
         if (request.subtype !== "can_use_tool") return;
         const name = request.tool_name ?? "a tool";
         updateItems(chatId, (items) => upsert(items, { kind: "approval", id: record.request_id, tool: name, summary: toolSummary(name, request.input) || describeInput(request.input), input: request.input, state: "pending" }));
+        alertChat(chat, `Wants to use ${name}`);
         return;
       }
       case "control_response":
@@ -673,11 +793,13 @@ function describeInput(input: unknown) {
 
 // Codex
 
-async function runCodex(chatId: string, text: string) {
+async function runCodex(chatId: string, text: string, attachments: Attachment[] = []) {
   const chat = chats().chats[chatId];
   const { account, env, unset } = accountFor(chat);
   const access = chat.mode === "danger-full-access" ? ["--dangerously-bypass-approvals-and-sandbox"] : ["-c", `sandbox_mode="${chat.mode === "read-only" ? "read-only" : "workspace-write"}"`];
-  const common = ["--json", "--skip-git-repo-check", ...access, ...(chat.model ? ["-m", chat.model] : []), ...(chat.effort ? ["-c", `model_reasoning_effort="${chat.effort}"`] : [])];
+  const images = attachments.filter((a) => a.image).map((a) => `--image=${a.path}`);
+  const common = ["--json", "--skip-git-repo-check", ...access, ...(chat.model ? ["-m", chat.model] : []), ...(chat.effort ? ["-c", `model_reasoning_effort="${chat.effort}"`] : []), ...images];
+  text = withFiles(text, attachments, false) || "See the attached image.";
   const args = chat.sessionId
     ? ["codex", "exec", "resume", ...common, "--", chat.sessionId, text]
     : ["codex", "exec", ...common, "--", text];

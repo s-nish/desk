@@ -5,9 +5,11 @@ import { closeOtherTabs, closeTab, connectionLabel, flipSplit, markAttention, op
 import { isTerminalVisible, mountTerminal, setTerminalVisible, unmountTerminal } from "../terminals";
 import { focusEditor, keepEditorVersion, mountEditor, reloadEditor } from "../editors";
 import { useTabReorder } from "./useTabReorder";
+import { FileViewer, OpenDefaultButton, TableView } from "./FileViewer";
+import { isBinaryPreview, onDiskChange, previewKind } from "../preview";
 import { Home } from "./Home";
 import { openMenu } from "./Menu";
-import type { FileTab, MenuItem, Project, Tab, TerminalTab } from "../types";
+import type { Account, Agent, FileTab, MenuItem, Project, Tab, TerminalTab } from "../types";
 
 export function Workspace() {
   const project = useDesk((s) => s.projects.find((p) => p.id === s.activeProjectId));
@@ -44,7 +46,7 @@ export function newTabMenu(project: Project): MenuItem[] {
     items.push({ separator: true });
     for (const c of connections) items.push({ label: c.name, hint: connectionLabel(c), icon: <Server size={14} />, onSelect: () => openConnection(c.id) });
   }
-  const others = accounts.filter((a) => a.id !== projectAccount(accounts, project, a.kind).id);
+  const others = accounts.filter((a): a is Account & { kind: Agent } => a.kind !== "github" && a.id !== projectAccount(accounts, project, a.kind).id);
   if (others.length) {
     items.push({ separator: true });
     for (const a of others) {
@@ -357,14 +359,22 @@ function EditorPane({ tab, visible, focused }: { tab: FileTab; visible: boolean;
   const ref = useRef<HTMLDivElement>(null);
   const project = useDesk((s) => s.projects.find((p) => p.id === tab.projectId));
   const rel = project && tab.path.startsWith(project.path + "/") ? tab.path.slice(project.path.length + 1) : tab.path;
+  const kind = previewKind(tab.path);
+  const viewer = isBinaryPreview(tab.path);
+  const [asText, setAsText] = useState(false);
+  const [info, setInfo] = useState("");
+  // The table re-reads the editor when shown and when the file changes on disk.
+  const [rev, setRev] = useState(0);
+  useEffect(() => (kind === "table" ? onDiskChange((paths) => { if (paths.has(tab.path)) setRev((r) => r + 1); }) : undefined), [kind, tab.path]);
+  const table = kind === "table" && !asText && tab.ready && !tab.error;
 
   useLayoutEffect(() => {
-    if (tab.ready && ref.current) mountEditor(tab.id, ref.current);
-  }, [tab.ready, tab.id]);
+    if (tab.ready && !viewer && ref.current) mountEditor(tab.id, ref.current);
+  }, [tab.ready, tab.id, viewer]);
 
   useEffect(() => {
-    if (visible && focused && tab.ready) focusEditor(tab.id);
-  }, [visible, focused, tab.ready, tab.id]);
+    if (visible && focused && tab.ready && !viewer && !table) focusEditor(tab.id);
+  }, [visible, focused, tab.ready, tab.id, viewer, table]);
 
   return (
     <div className={"pane editor-pane" + (visible ? " is-visible" : "")}>
@@ -374,7 +384,14 @@ function EditorPane({ tab, visible, focused }: { tab: FileTab; visible: boolean;
             {part}
           </span>
         ))}
-        <span className="crumbs-state">{tab.dirty ? "Unsaved changes" : ""}</span>
+        <span className="crumbs-state">{tab.dirty ? "Unsaved changes" : viewer ? info : ""}</span>
+        {kind === "table" && tab.ready && !tab.error && (
+          <span className="crumbs-switch" role="group" aria-label="View as">
+            <button className={"mini-btn" + (!asText ? " is-on" : "")} aria-pressed={!asText} onClick={() => { setAsText(false); setRev((r) => r + 1); }}>Table</button>
+            <button className={"mini-btn" + (asText ? " is-on" : "")} aria-pressed={asText} onClick={() => setAsText(true)}>Text</button>
+          </span>
+        )}
+        {viewer && <OpenDefaultButton path={tab.path} />}
       </div>
       {tab.conflict && (
         <div className="banner">
@@ -394,14 +411,22 @@ function EditorPane({ tab, visible, focused }: { tab: FileTab; visible: boolean;
       {tab.error ? (
         <div className="pane-message">
           <p>{tab.error}</p>
-          <button className="btn" onClick={() => closeTab(tab.id)}>
-            Close tab
-          </button>
+          <div className="pane-actions">
+            <OpenDefaultButton path={tab.path} />
+            <button className="btn" onClick={() => closeTab(tab.id)}>
+              Close tab
+            </button>
+          </div>
         </div>
+      ) : viewer ? (
+        tab.ready && <FileViewer path={tab.path} onInfo={setInfo} />
       ) : (
-        <div className="editor-mount" ref={ref}>
-          {!tab.ready && <div className="pane-message is-quiet">Opening…</div>}
-        </div>
+        <>
+          {table && <TableView tabId={tab.id} path={tab.path} rev={rev} />}
+          <div className="editor-mount" ref={ref} hidden={table}>
+            {!tab.ready && <div className="pane-message is-quiet">Opening…</div>}
+          </div>
+        </>
       )}
     </div>
   );

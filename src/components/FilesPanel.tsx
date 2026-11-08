@@ -170,6 +170,8 @@ function Node({ entry, depth, project }: { entry: DirEntry; depth: number; proje
           openMenu({ x: e.clientX, y: e.clientY }, nodeMenu(entry, project));
         }}
         title={entry.path}
+        draggable
+        onDragStart={(e) => { e.dataTransfer.setData("desk/path", entry.path); e.dataTransfer.setData("text/plain", entry.path); e.dataTransfer.effectAllowed = "copy"; }}
       >
         {entry.isDir ? (
           <>

@@ -1,13 +1,15 @@
 /** Tools with chats, session history and usage limits. */
 export type Tool = "claude" | "codex";
 /** Every coding agent Desk can run in a terminal tab, each with its own accounts. */
-export type Agent = Tool | "gemini" | "cursor" | "grok";
+export type Agent = Tool | "gemini" | "cursor" | "grok" | "opencode";
 export type TabTool = Agent | "shell";
+/** Anything Desk keeps accounts for: the agents, and GitHub (through gh). */
+export type AccountKind = Agent | "github";
 
 /** An account is a config directory. `dir: null` is the tool's default (~/.claude, ~/.codex). */
 export interface Account {
   id: string;
-  kind: Agent;
+  kind: AccountKind;
   name: string;
   dir: string | null;
   color: string;
@@ -29,8 +31,8 @@ export interface Project {
   /** Set once the user picks an account by hand; automatic detection then leaves it alone. */
   claudeChosen?: boolean;
   codexChosen?: boolean;
-  /** Accounts for the other agents (Gemini CLI, Cursor Agent, Grok); missing means default. */
-  agentAccounts?: Partial<Record<Agent, string | null>>;
+  /** Accounts for the other agents (Gemini CLI, Cursor Agent, Grok, OpenCode) and GitHub; missing means default. */
+  agentAccounts?: Partial<Record<AccountKind, string | null>>;
   /** Set for a git worktree: the project it was branched from. Shown nested under it. */
   worktreeOf?: string;
   /** Branch checked out in the worktree, and the branch it started from. */
@@ -58,7 +60,7 @@ export interface TerminalTab {
   /** Account picked explicitly for this tab, overriding the project's (claude/codex tabs). */
   accountId: string | null;
   /** Accounts the running session was actually started with; set at every spawn. */
-  runAs?: Partial<Record<Agent, string>>;
+  runAs?: Partial<Record<AccountKind, string>>;
   /** Saved connection this tab runs (a shell tab running its command). */
   sshId?: string;
   cwd: string;
@@ -103,10 +105,14 @@ export interface Layout {
   claudeOpen: boolean;
   codexOpen: boolean;
   sshOpen: boolean;
-  panel: "files" | "search" | "git" | "sessions";
+  panel: "files" | "search" | "git" | "github" | "sessions";
   splitRatio: number;
   /** Split side by side ("row") or stacked ("column"). */
   splitDir: "row" | "column";
+  /** The built-in browser, docked between the workspace and the project tools. */
+  browserOpen?: boolean;
+  browserWidth?: number;
+  browserUrl?: string;
 }
 
 export interface DirEntry {
@@ -117,7 +123,7 @@ export interface DirEntry {
 }
 
 export interface DetectedAccount {
-  kind: Agent;
+  kind: AccountKind;
   dir: string | null;
   path: string;
   email: string | null;

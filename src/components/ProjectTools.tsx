@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowDown, ArrowUp, Eye, FileText, GitBranch, GitCommitHorizontal, GitMerge, History, Minus, Plus, RefreshCw, Search, Undo2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Eye, FileText, GitBranch, GitPullRequest, GitCommitHorizontal, GitMerge, History, Minus, Plus, RefreshCw, Search, Undo2 } from "lucide-react";
 import { useDesk } from "../store";
 import { errorText, ipc } from "../ipc";
 import { gitChanged, mergeWorktree, onGitChange, openFile, rootProject } from "../actions";
 import { handleDiskChanges } from "../editors";
 import { FilesPanel } from "./FilesPanel";
+import { GitHubPanel, PrCard } from "./GitHub";
 import { SessionsPanel } from "./Sessions";
 import { LineCounts, isStaged, isUnstaged, splitPath, statusLetter, statusWord } from "./Review";
 import type { GitChange, GitStatus, Project, SearchFile, SearchResults } from "../types";
@@ -18,10 +19,10 @@ export function ProjectTools() {
   const changes = useChangeCount(project?.path);
   // The Git tab's count for a project just switched to.
   useEffect(() => { if (project) gitChanged(project.path); }, [project?.path]);
-  const tabs = [["files", FileText, "Files"], ["search", Search, "Search"], ["git", GitBranch, "Git"], ["sessions", History, "History"]] as const;
+  const tabs = [["files", FileText, "Files"], ["search", Search, "Search"], ["git", GitBranch, "Git"], ["github", GitPullRequest, "GitHub"], ["sessions", History, "History"]] as const;
   return <aside className="project-tools">
     <nav className="tools-nav" aria-label="Project tools">{tabs.map(([id, Icon, label]) => <button key={id} className={panel === id ? "is-active" : ""} aria-pressed={panel === id} title={id === "sessions" ? "Past Claude Code and Codex conversations" : label} onClick={() => useDesk.getState().setLayout({ panel: id })}><span className="tools-icon"><Icon size={14} />{id === "git" && changes > 0 && <span className="tools-count">{changes > 99 ? "99+" : changes}</span>}</span><span>{label}</span></button>)}</nav>
-    {!project ? <p className="tree-note">Add a project to explore its files, search, and changes.</p> : panel === "files" ? <FilesPanel /> : panel === "search" ? <ProjectSearch key={project.id} project={project} /> : panel === "git" ? <GitPanel key={project.id} project={project} /> : <SessionsPanel key={project.id} project={project} />}
+    {!project ? <p className="tree-note">Add a project to explore its files, search, and changes.</p> : panel === "files" ? <FilesPanel /> : panel === "search" ? <ProjectSearch key={project.id} project={project} /> : panel === "git" ? <GitPanel key={project.id} project={project} /> : panel === "github" ? <GitHubPanel key={project.id} project={project} /> : <SessionsPanel key={project.id} project={project} />}
   </aside>;
 }
 
@@ -167,6 +168,7 @@ function GitPanel({ project }: { project: Project }) {
         </div>}
         {status.root !== project.path && <p className="settings-note">Repository: {status.root}</p>}
       </div>
+      {status.branch && status.branch !== "HEAD" && <PrCard project={project} root={status.root} branch={status.branch} />}
       <div className="commit-box">
         <textarea aria-label="Commit message" placeholder={commitAll ? `Message for all ${unstaged.length} changes` : "Commit message"} value={message} disabled={busy}
           onChange={(e) => setMessage(e.target.value)}

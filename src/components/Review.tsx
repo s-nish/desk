@@ -1,6 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronUp, FileText, Minus, Plus, Undo2 } from "lucide-react";
-import { useDesk } from "../store";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, ChevronUp, FileText, MessageSquarePlus, Minus, Plus, Send, Trash2, Undo2 } from "lucide-react";
+import { TOOL_LABEL, useDesk } from "../store";
+import { addComment, removeComment, reviewTargets, sendReview, useReview, type ReviewComment } from "../review";
+import { newChat, useChats } from "../chat";
+import { openMenu } from "./Menu";
 import { errorText, ipc } from "../ipc";
 import { openFile, projectForPath } from "../actions";
 import type { GitChange, GitStatus } from "../types";
@@ -120,6 +123,8 @@ export function Review({ root, path, staged }: { root: string; path: string; sta
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState<"unified" | "split">(() => (localStorage.getItem("desk-diff-mode") === "split" ? "split" : "unified"));
   const body = useRef<HTMLDivElement>(null);
+  const comments = useReview((s) => s.comments[root]) ?? NO_COMMENTS;
+  const [editing, setEditing] = useState<Spot | null>(null);
 
   const refresh = async () => {
     try { setStatus(await ipc.gitStatus(root)); } catch (e) { setError(errorText(e)); }
@@ -199,6 +204,24 @@ export function Review({ root, path, staged }: { root: string; path: string; sta
   };
 
   const rows = useMemo(() => (diff ? parseDiff(diff) : []), [diff]);
+  const here = comments.filter((c) => c.path === selected.path);
+  const notes: Notes = {
+    comments: here,
+    editing,
+    edit: setEditing,
+    save: (text) => { if (editing && text.trim()) addComment(root, { ...editing, path: selected.path, text }); setEditing(null); },
+    remove: (id) => removeComment(root, id),
+  };
+  const sendTo = (at: Element) => {
+    const { chats, tabs } = reviewTargets(root);
+    const project = projectForPath(root);
+    openMenu(at, [
+      ...chats.map((c) => ({ label: c.title, hint: `${TOOL_LABEL[c.tool]} chat`, onSelect: () => sendReview(root, { chat: c }) })),
+      ...tabs.map((t) => ({ label: t.title || TOOL_LABEL[t.tool], hint: `${TOOL_LABEL[t.tool]} tab`, onSelect: () => sendReview(root, { tab: t }) })),
+      ...(chats.length || tabs.length ? [{ separator: true }] : []),
+      ...(project ? [{ label: "New chat", hint: "Start one with these comments", onSelect: () => { const id = newChat(project.id); const chat = id && useChats.getState().chats[id]; if (chat) sendReview(root, { chat }); } }] : []),
+    ]);
+  };
   const { dir, name } = splitPath(selected.path);
   const code = current ? (current.staged ? current.change.index : current.change.worktree) : "";
   const lines = current ? (current.staged ? current.change.stagedLines : current.change.unstagedLines) : null;
@@ -253,40 +276,120 @@ export function Review({ root, path, staged }: { root: string; path: string; sta
           </div>
         </header>
         <div className="review-body" ref={body}>
-          {error ? <p className="tool-error">{error}</p> : diff === null ? <p className="tree-note">Loading the diff…</p> : !rows.length ? <p className="tree-note">No text changes to show. The file may be binary, or only its permissions changed.</p> : mode === "unified" ? <Unified rows={rows} /> : <Split rows={rows} />}
+          {error ? <p className="tool-error">{error}</p> : diff === null ? <p className="tree-note">Loading the diff…</p> : !rows.length ? <p className="tree-note">No text changes to show. The file may be binary, or only its permissions changed.</p> : mode === "unified" ? <Unified rows={rows} notes={notes} /> : <Split rows={rows} notes={notes} />}
         </div>
+        {comments.length > 0 && (
+          <footer className="review-comments-bar">
+            <MessageSquarePlus size={14} />
+            <span>{comments.length} comment{comments.length === 1 ? "" : "s"}{comments.length > here.length ? ` in ${new Set(comments.map((c) => c.path)).size} files` : ""}</span>
+            <span className="review-comments-gap" />
+            <button className="mini-btn is-primary" onClick={(e) => sendTo(e.currentTarget)}><Send size={12} />Send to agent</button>
+          </footer>
+        )}
       </div>
     </div>
   );
 }
 
-function Unified({ rows }: { rows: DiffRow[] }) {
+const NO_COMMENTS: ReviewComment[] = [];
+
+/** A line a comment is attached to. */
+interface Spot { line: number; side: "old" | "new"; code: string }
+interface Notes {
+  comments: ReviewComment[];
+  editing: Spot | null;
+  edit(spot: Spot | null): void;
+  save(text: string): void;
+  remove(id: string): void;
+}
+
+const spotOf = (r: DiffRow): Spot | null => (r.kind === "del" ? (r.old ? { line: r.old, side: "old", code: r.text } : null) : r.new ? { line: r.new, side: "new", code: r.text } : null);
+const same = (a: Spot | null, b: Spot | null) => !!a && !!b && a.line === b.line && a.side === b.side;
+
+function CommentButton({ spot, notes }: { spot: Spot | null; notes: Notes }) {
+  if (!spot) return null;
+  return <button className="diff-comment-btn" aria-label={`Comment on line ${spot.line}`} title="Comment on this line" onClick={() => notes.edit(spot)}><Plus size={11} /></button>;
+}
+
+/** Comments on these lines, and the editor when one of them is being commented on. */
+function Thread({ spots, notes }: { spots: (Spot | null)[]; notes: Notes }) {
+  const list = notes.comments.filter((c) => spots.some((s) => s && s.line === c.line && s.side === c.side));
+  const open = spots.some((s) => same(s, notes.editing));
+  if (!list.length && !open) return null;
   return (
-    <div className="diff-table is-unified">
-      {rows.map((r, i) => r.kind === "hunk" || r.kind === "meta"
-        ? <div key={i} className={"diff-row is-" + r.kind}><span className="diff-hunk-text">{r.kind === "hunk" ? (r.text || "Changes") : r.text}</span></div>
-        : (
-          <div key={i} className={"diff-row is-" + r.kind}>
-            <span className="diff-num">{r.old ?? ""}</span>
-            <span className="diff-num">{r.new ?? ""}</span>
-            <span className="diff-sign">{r.kind === "add" ? "+" : r.kind === "del" ? "−" : ""}</span>
-            <span className="diff-code">{r.text || " "}</span>
-          </div>
-        ))}
+    <div className="diff-thread">
+      {list.map((c) => (
+        <div key={c.id} className="diff-comment">
+          <p>{c.text}</p>
+          <button className="icon-btn" aria-label="Delete comment" title="Delete comment" onClick={() => notes.remove(c.id)}><Trash2 size={12} /></button>
+        </div>
+      ))}
+      {open && <CommentEditor notes={notes} />}
     </div>
   );
 }
 
-function Split({ rows }: { rows: DiffRow[] }) {
+function CommentEditor({ notes }: { notes: Notes }) {
+  const [text, setText] = useState("");
+  return (
+    <form className="diff-comment-editor" onSubmit={(e) => { e.preventDefault(); notes.save(text); }}>
+      <textarea
+        autoFocus
+        rows={2}
+        value={text}
+        placeholder="What should change here? ⌘Enter to add"
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); notes.save(text); }
+          if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); notes.edit(null); }
+        }}
+      />
+      <div>
+        <button type="button" className="mini-btn" onClick={() => notes.edit(null)}>Cancel</button>
+        <button className="mini-btn is-primary" disabled={!text.trim()}>Add comment</button>
+      </div>
+    </form>
+  );
+}
+
+function Unified({ rows, notes }: { rows: DiffRow[]; notes: Notes }) {
+  return (
+    <div className="diff-table is-unified">
+      {rows.map((r, i) => {
+        if (r.kind === "hunk" || r.kind === "meta") return <div key={i} className={"diff-row is-" + r.kind}><span className="diff-hunk-text">{r.kind === "hunk" ? (r.text || "Changes") : r.text}</span></div>;
+        const spot = spotOf(r);
+        return (
+          <Fragment key={i}>
+            <div className={"diff-row is-" + r.kind}>
+              <span className="diff-num">{r.old ?? ""}</span>
+              <span className="diff-num">{r.new ?? ""}</span>
+              <span className="diff-sign">{r.kind === "add" ? "+" : r.kind === "del" ? "−" : ""}<CommentButton spot={spot} notes={notes} /></span>
+              <span className="diff-code">{r.text || " "}</span>
+            </div>
+            <Thread spots={[spot]} notes={notes} />
+          </Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
+function Split({ rows, notes }: { rows: DiffRow[]; notes: Notes }) {
   const pairs = useMemo(() => pairRows(rows), [rows]);
+  const spotIn = (r: DiffRow | null, side: "old" | "new"): Spot | null => {
+    const line = r && (side === "old" ? r.old : r.new);
+    // Unchanged lines are commented on from the new side only.
+    if (!r || !line || (side === "old" && r.kind !== "del")) return null;
+    return { line, side, code: r.text };
+  };
   const cell = (r: DiffRow | null, side: "old" | "new") => r
-    ? <><span className="diff-num">{side === "old" ? r.old : r.new}</span><span className={"diff-code is-" + r.kind}>{r.text || " "}</span></>
+    ? <><span className="diff-num">{side === "old" ? r.old : r.new}<CommentButton spot={spotIn(r, side)} notes={notes} /></span><span className={"diff-code is-" + r.kind}>{r.text || " "}</span></>
     : <><span className="diff-num" /><span className="diff-code is-empty" /></>;
   return (
     <div className="diff-table is-split">
       {pairs.map((p, i) => p.kind
         ? <div key={i} className={"diff-row is-" + p.kind}><span className="diff-hunk-text">{p.kind === "hunk" ? (p.left?.text || "Changes") : p.left?.text}</span></div>
-        : <div key={i} className="diff-row is-pair">{cell(p.left, "old")}{cell(p.right, "new")}</div>)}
+        : <Fragment key={i}><div className="diff-row is-pair">{cell(p.left, "old")}{cell(p.right, "new")}</div><Thread spots={[spotIn(p.left, "old"), spotIn(p.right, "new")]} notes={notes} /></Fragment>)}
     </div>
   );
 }

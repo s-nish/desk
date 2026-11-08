@@ -1,6 +1,7 @@
 // CodeMirror views, kept alive per file tab so undo history and scroll survive tab switches.
 
 import { basicSetup } from "codemirror";
+import { notifyDiskChange } from "./preview";
 import { EditorView, keymap } from "@codemirror/view";
 import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import { indentWithTab } from "@codemirror/commands";
@@ -266,6 +267,8 @@ export async function handleDiskChanges(paths: string[]) {
     }
     reportRecovery(entry);
   }
+  // After the editors update, so the CSV table reads the new text.
+  notifyDiskChange(paths);
 }
 
 export function renameEditorPath(from: string, to: string) {
@@ -273,6 +276,11 @@ export function renameEditorPath(from: string, to: string) {
     if (entry.path === from) entry.path = to;
     else if (entry.path.startsWith(from + "/")) entry.path = to + entry.path.slice(from.length);
   }
+}
+
+/** The editor's current text (for the CSV table view). */
+export function editorText(key: string) {
+  return entries.get(key)?.view.state.doc.toString() ?? null;
 }
 
 export function disposeEditor(key: string) {

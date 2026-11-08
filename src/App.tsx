@@ -27,6 +27,8 @@ import {
   pruneWorktrees,
   refreshChangeCounts,
   refreshLimits,
+  refreshLiveLimits,
+  LIVE_LIMITS_MS,
 } from "./actions";
 import { isLightTheme, resolvedTheme } from "./appearance";
 import { PIXEL_THEMES } from "./themeCatalog";
@@ -34,8 +36,10 @@ import { updateEditorAppearance } from "./editors";
 import { clearTerminal, pasteIntoTerminal, updateTerminalAppearance } from "./terminals";
 import { Sidebar } from "./components/Sidebar";
 import { ChatSidebar, ChatView } from "./components/Chat";
-import { closeChat, closeStripTab, newChat, showStripTab, useChats } from "./chat";
+import { takeNotified } from "./notify";
+import { attach, closeChat, closeStripTab, markUnread, newChat, showStripTab, useChats } from "./chat";
 import { Workspace } from "./components/Workspace";
+import { BrowserPane } from "./components/Browser";
 import { ProjectTools } from "./components/ProjectTools";
 import { Splitter, StatusBar, TitleBar } from "./components/Chrome";
 import { ModalLayer } from "./components/Modals";
@@ -55,7 +59,7 @@ async function boot() {
   await refreshIdentities();
   void syncConnectionPasswords();
   void pruneWorktrees().then(refreshChangeCounts);
-  void refreshLimits();
+  void refreshLimits().then(() => refreshLiveLimits());
   for (const p of useDesk.getState().projects) {
     void watchProject(p.id);
     void detectProjectAccount(p.id);
@@ -135,6 +139,7 @@ function onKeyDown(e: KeyboardEvent) {
   else if (e.key === "s" && !e.shiftKey) tab && void saveTab(tab.id);
   else if (e.key === "p" && !e.shiftKey) project && s.setQuickOpen(!s.quickOpen);
   else if (e.key === "o" && !e.shiftKey) void addProjectsFromDialog();
+  else if (e.key.toLowerCase() === "l" && e.shiftKey) s.setLayout({ browserOpen: !s.layout.browserOpen });
   else if (e.key.toLowerCase() === "b") s.setLayout(e.shiftKey ? { filesOpen: !s.layout.filesOpen } : { sidebarOpen: !s.layout.sidebarOpen });
   else if (e.key === "k" && !e.shiftKey && tab?.type === "terminal") clearTerminal(tab.id);
   else if (e.code === "BracketLeft" && e.shiftKey) cycleTab(-1);
@@ -177,7 +182,13 @@ function clearVisibleAttention() {
 
 /** Folders dropped anywhere become projects; files dropped on a terminal are pasted as paths. */
 async function onDrop(paths: string[], x: number, y: number) {
-  const target = document.elementFromPoint(x, y)?.closest<HTMLElement>(".term-host");
+  const over = document.elementFromPoint(x, y);
+  const chats = useChats.getState();
+  if (over?.closest(".chat-main") && chats.activeId && !chats.termId) {
+    attach(chats.activeId, paths);
+    return;
+  }
+  const target = over?.closest<HTMLElement>(".term-host");
   if (target?.dataset.terminal) {
     pasteIntoTerminal(target.dataset.terminal, paths.map(shellQuote).join(" ") + " ");
     return;
@@ -235,17 +246,23 @@ export function App() {
     const unwatch = watchAttention();
     // Limits move slowly and are only re-read while Desk is on screen.
     const limits = setInterval(() => { if (!document.hidden) void refreshLimits(); }, 60_000);
+    // Live numbers from Claude and Codex themselves, so they move even when nothing runs.
+    const live = setInterval(() => { if (!document.hidden) void refreshLiveLimits(); }, LIVE_LIMITS_MS);
     const unlisten = [
       listen("desk-quit", () => void quit()),
       getCurrentWindow().onCloseRequested((e) => { e.preventDefault(); void quit(); }),
       listen<{ root: string; paths: string[] }>("fs-change", ({ payload }) => handleFsChange(payload.root, payload.paths)),
       getCurrentWindow().onFocusChanged(({ payload: focused }) => {
         if (!focused) return;
+        takeNotified();
+        const chat = useChats.getState();
+        if (useDesk.getState().preferences.uiMode === "chat" && chat.activeId && !chat.termId && chat.chats[chat.activeId]?.unread) markUnread(chat.activeId, false);
         void refreshIdentities();
         clearVisibleAttention();
         // Catches anything the file watcher can't see, like staging in a worktree from outside.
         refreshChangeCounts();
         void refreshLimits();
+        void refreshLiveLimits(60_000);
       }),
       getCurrentWebview().onDragDropEvent(({ payload }) => {
         if (payload.type !== "drop") return;
@@ -261,6 +278,7 @@ export function App() {
       unsubscribe();
       unwatch();
       clearInterval(limits);
+      clearInterval(live);
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("contextmenu", noContextMenu);
       unlisten.forEach((p) => void p.then((f) => f()));
@@ -282,6 +300,14 @@ export function App() {
           </>
         )}
         {preferences.uiMode === "chat" ? <ChatView /> : <Workspace />}
+        {layout.browserOpen && (
+          <>
+            <Splitter value={layout.browserWidth ?? 560} side="right" min={320} max={1400} onChange={(v) => setLayout({ browserWidth: v })} />
+            <div className="col browser-col" style={{ width: layout.browserWidth ?? 560 }}>
+              <BrowserPane />
+            </div>
+          </>
+        )}
         {layout.filesOpen && (
           <>
             <Splitter value={layout.filesWidth} side="right" min={200} max={520} onChange={(v) => setLayout({ filesWidth: v })} />

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Search, ChevronDown, ChevronRight, Copy, Ellipsis, Eye, Folder, FolderOpen, FolderSearch, GitBranch, GitBranchPlus, GitMerge, KeyRound, LogIn, Palette, Pencil, Plug, Plus, Server, SquareTerminal, Trash2 } from "lucide-react";
-import { ACCOUNT_COLORS, AGENTS, EXTRA_AGENTS, TOOL_LABEL, isChatTool, projectAccount, projectTree, useDesk } from "../store";
+import { ACCOUNT_COLORS, ACCOUNT_KINDS, EXTRA_AGENTS, TOOL_LABEL, isChatTool, projectAccount, projectTree, useDesk } from "../store";
 import { ToolLogo } from "./ToolLogo";
 import { addProjectsFromDialog, chooseProjectAccount, resumeSession, connectionLabel, deleteConnection, mergeWorktree, openConnection, openTerminal, removeAccount, removeProject, removeWorktree, saveConnection } from "../actions";
 import { ipc } from "../ipc";
@@ -9,7 +9,7 @@ import { SidebarFooter } from "./SidebarFooter";
 import { ToolGlyph, shortTime, useExpanded } from "./Chat";
 import { loadSessions, useChats } from "../chat";
 import { openMenu } from "./Menu";
-import type { Account, Agent, MenuItem, Project, SshConnection } from "../types";
+import type { Account, AccountKind, Agent, MenuItem, Project, SshConnection } from "../types";
 
 export function Sidebar() {
   return (
@@ -24,7 +24,7 @@ export function Sidebar() {
 }
 
 /** The accounts a project can use for one tool, with the current one checked. */
-export function accountChoices(project: Project, kind: Agent, withAdd = true): MenuItem[] {
+export function accountChoices(project: Project, kind: AccountKind, withAdd = true): MenuItem[] {
   const { accounts, identities } = useDesk.getState();
   const current = projectAccount(accounts, project, kind);
   const items: MenuItem[] = accounts
@@ -46,7 +46,7 @@ export function accountChoices(project: Project, kind: Agent, withAdd = true): M
   return items;
 }
 
-/** Gemini CLI, Cursor Agent and Grok, once they have an account. */
+/** Gemini CLI, Cursor Agent, Grok and OpenCode, once they have an account. */
 function extraAgents(): Agent[] {
   const { accounts } = useDesk.getState();
   return EXTRA_AGENTS.filter((k) => accounts.some((a) => a.kind === k));
@@ -141,7 +141,7 @@ function ProjectRow({ project, index }: { project: Project; index: number }) {
       ...extraAgents().map((k) => ({ label: `New ${TOOL_LABEL[k]} tab`, icon: <ToolLogo tool={k} size={14} />, onSelect: () => openTerminal(project.id, k) })),
       { label: "New worktree…", hint: "⌘⇧T", icon: <GitBranchPlus size={14} />, onSelect: () => useDesk.getState().setModal({ kind: "worktree", projectId: project.id }) },
       { separator: true },
-      ...(["claude", "codex", ...extraAgents()] as Agent[]).flatMap((k): MenuItem[] =>
+      ...(["claude", "codex", ...extraAgents(), "github"] as AccountKind[]).flatMap((k): MenuItem[] =>
         isChatTool(k) || useDesk.getState().accounts.filter((a) => a.kind === k).length > 1
           ? [{ label: `${TOOL_LABEL[k]} account`, disabled: true }, ...accountChoices(project, k, false)]
           : []),
@@ -357,9 +357,9 @@ export function Accounts() {
   const layout = useDesk((s) => s.layout);
   const setLayout = useDesk((s) => s.setLayout);
   // Claude Code and Codex always; the others once they have an account.
-  const groups = AGENTS.filter((k) => isChatTool(k) || accounts.some((a) => a.kind === k));
-  const openKey = (kind: Agent) => (kind === "claude" ? "claudeOpen" : kind === "codex" ? "codexOpen" : null);
-  const isOpen = (kind: Agent) => { const k = openKey(kind); return k ? layout[k] : true; };
+  const groups = ACCOUNT_KINDS.filter((k) => isChatTool(k) || accounts.some((a) => a.kind === k));
+  const openKey = (kind: AccountKind) => (kind === "claude" ? "claudeOpen" : kind === "codex" ? "codexOpen" : null);
+  const isOpen = (kind: AccountKind) => { const k = openKey(kind); return k ? layout[k] : true; };
   return (
     <section className="side-section accounts">
       <header className="side-header">
@@ -367,7 +367,7 @@ export function Accounts() {
         <button
           className="icon-btn"
           aria-label="Add account"
-          title="Add an account: Claude Code, Codex, Gemini CLI, Cursor Agent or Grok"
+          title="Add an account: Claude Code, Codex, Gemini CLI, Cursor Agent, Grok or OpenCode"
           onClick={() => useDesk.getState().setModal({ kind: "addAccount", tool: "claude" })}
         >
           <Plus size={15} />

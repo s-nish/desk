@@ -1,13 +1,15 @@
 // User-level operations that touch both the store and the terminal/editor registries.
 
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { isBinaryPreview } from "./preview";
 import { ipc, errorText } from "./ipc";
+import { notify } from "./notify";
 import { ACCOUNT_COLORS, AGENTS, ENV_VAR, TOOL_LABEL, accountId, isChatTool, projectAccount, sessionEnv, uid, useDesk, focusedTabId } from "./store";
 import { disposeTerminal } from "./terminals";
 import { disposeEditor, focusEditor, handleDiskChanges, openEditor, saveEditor, revealEditorLine } from "./editors";
 import { useTree } from "./tree";
 import { openSession } from "./chat";
-import type { Account, Agent, AgentSession, FileTab, Project, SshConnection, TabTool, TerminalTab, Tool, Worktree } from "./types";
+import type { Account, AccountKind, Agent, AgentSession, FileTab, Project, SshConnection, TabTool, TerminalTab, Tool, Worktree } from "./types";
 import type { DropZone } from "./store";
 import type { SessionSpec } from "./terminals";
 
@@ -16,30 +18,34 @@ const inShell = (script: string) => `"$SHELL" -c ${shellWord(script)}`;
 /** Cursor's CLI is `cursor-agent`, newer installs also call it `agent`. */
 const CURSOR = "if command -v cursor-agent >/dev/null 2>&1; then exec cursor-agent \"$@\"; else exec agent \"$@\"; fi";
 
-const COMMAND: Record<TabTool, string | null> = { claude: "claude", codex: "codex", gemini: "gemini", cursor: inShell(CURSOR), grok: "grok", shell: null };
-const SIGN_IN: Record<Agent, string> = {
+const COMMAND: Record<TabTool, string | null> = { claude: "claude", codex: "codex", gemini: "gemini", cursor: inShell(CURSOR), grok: "grok", opencode: "opencode", shell: null };
+const SIGN_IN: Record<AccountKind, string> = {
+  github: "gh auth login --hostname github.com",
   claude: "claude",
   codex: "codex login",
   gemini: "gemini",
   cursor: "if command -v cursor-agent >/dev/null 2>&1; then cursor-agent login; else agent login; fi",
   grok: "grok",
+  opencode: "opencode auth login",
 };
 
 /** How each CLI is found and, if missing, installed. Shown to the user before anything runs. */
-export const INSTALL: Record<Agent, { bins: string[]; command: string; source: string }> = {
+export const INSTALL: Record<AccountKind, { bins: string[]; command: string; source: string }> = {
+  github: { bins: ["gh"], command: "brew install gh", source: "Homebrew (gh)" },
   claude: { bins: ["claude"], command: "curl -fsSL https://claude.ai/install.sh | bash", source: "claude.ai" },
   codex: { bins: ["codex"], command: "npm install -g @openai/codex", source: "npm (@openai/codex)" },
   gemini: { bins: ["gemini"], command: "npm install -g @google/gemini-cli", source: "npm (@google/gemini-cli)" },
   cursor: { bins: ["cursor-agent", "agent"], command: "curl https://cursor.com/install -fsS | bash", source: "cursor.com" },
   grok: { bins: ["grok"], command: "curl -fsSL https://x.ai/cli/install.sh | bash", source: "x.ai" },
+  opencode: { bins: ["opencode"], command: "npm install -g opencode-ai", source: "npm (opencode-ai)" },
 };
 
 /** Agents that can hold several accounts (their CLI reads a config-folder variable). */
-export const multiAccount = (kind: Agent) => ENV_VAR[kind] !== null;
+export const multiAccount = (kind: AccountKind) => ENV_VAR[kind] !== null;
 
 /** Sign-in, preceded by an install when the CLI is missing. Installers that use npm
  *  need npm; curl installers drop the binary in ~/.local/bin, added to PATH here. */
-function signInScript(kind: Agent) {
+function signInScript(kind: AccountKind) {
   const { bins, command } = INSTALL[kind];
   const have = bins.map((b) => `command -v ${b} >/dev/null 2>&1`).join(" || ");
   const needsNpm = command.startsWith("npm ");
@@ -154,6 +160,27 @@ async function claudeCommand(dir: string | null, cwd: string, env: Record<string
 // Usage limits
 
 let readingLimits = false;
+let askingProviders = false;
+let askedAt = 0;
+/** How often Claude and Codex are asked for live numbers while Desk is open. */
+export const LIVE_LIMITS_MS = 5 * 60_000;
+
+/** Asks Claude and Codex for every account's live usage, like /usage and /status do,
+ *  so the numbers move without a request. `ifOlderThan` skips it when asked recently. */
+export async function refreshLiveLimits(ifOlderThan = 0) {
+  if (askingProviders || Date.now() - askedAt < ifOlderThan) return;
+  askingProviders = true;
+  askedAt = Date.now();
+  try {
+    const { claude, codex } = accountDirs();
+    // Claude's numbers follow the same switch as its status line wrapper.
+    desk().setLimits(await ipc.usageRefresh(desk().preferences.usageLimits ? claude : [], codex));
+  } catch (e) {
+    console.warn("live usage limits", e);
+  } finally {
+    askingProviders = false;
+  }
+}
 
 /** Re-reads every account's usage limits. Cheap: a few small files per account. */
 export async function refreshLimits() {
@@ -187,6 +214,8 @@ export function markAttention(tabId: string, reason: string, visible: boolean) {
   const project = s.projects.find((p) => p.id === tab.projectId);
   if (document.hasFocus()) {
     s.toast(`${TOOL_LABEL[tab.tool]} in ${project?.name ?? "a project"}: ${reason.toLowerCase()}.`, "info", { label: "Show", run: () => desk().selectTab(tabId) });
+  } else {
+    notify(`${TOOL_LABEL[tab.tool]} · ${project?.name ?? "Desk"}`, reason, () => desk().selectTab(tabId));
   }
 }
 
@@ -548,6 +577,8 @@ export async function openFile(projectId: string, path: string, line?: number) {
     error: null,
   };
   s.addTab(tab);
+  // Images, PDFs and media open in a viewer; it loads the bytes itself.
+  if (isBinaryPreview(path)) { desk().patchTab(tab.id, { ready: true }); return; }
   try {
     await openEditor(tab.id, path, {
       onDirty: (dirty) => desk().patchTab(tab.id, { dirty }),
@@ -740,7 +771,7 @@ export async function detectProjectAccount(projectId: string) {
 }
 
 /** Sets a project's account by hand and says what happens to tabs already open. */
-export function chooseProjectAccount(projectId: string, kind: Agent, id: string) {
+export function chooseProjectAccount(projectId: string, kind: AccountKind, id: string) {
   const s = desk();
   const project = s.projects.find((p) => p.id === projectId);
   const account = s.accounts.find((a) => a.id === id);
@@ -749,8 +780,12 @@ export function chooseProjectAccount(projectId: string, kind: Agent, id: string)
   s.setProjectAccount(projectId, kind, id);
   if (before.id === account.id) return;
   const stale = s.tabs.filter(
-    (t) => t.type === "terminal" && t.projectId === projectId && t.status === "running" && t.runAs?.[kind] === before.id && (t.tool === kind || t.tool === "shell"),
+    (t) => t.type === "terminal" && t.projectId === projectId && t.status === "running" && t.runAs?.[kind] === before.id && (t.tool === kind || t.tool === "shell" || kind === "github"),
   ).length;
+  if (kind === "github") {
+    s.toast(`${project.name} uses the ${account.name} GitHub account for pull requests, issues and gh.` + (stale ? ` ${stale} open tab${stale > 1 ? "s" : ""} keep${stale > 1 ? "" : "s"} ${before.name} until closed.` : ""));
+    return;
+  }
   s.toast(
     `New ${TOOL_LABEL[kind]} tabs in ${project.name} use ${account.name}.` +
       (stale ? ` ${stale} open tab${stale > 1 ? "s" : ""} keep${stale > 1 ? "" : "s"} ${before.name} until closed.` : ""),
@@ -774,7 +809,7 @@ export async function refreshIdentities() {
   }
 }
 
-export async function createAccount(kind: Agent, name: string, color: string) {
+export async function createAccount(kind: AccountKind, name: string, color: string) {
   // Agents without a config-folder variable get one account: the CLI's own default.
   if (!multiAccount(kind)) {
     const account: Account = { id: accountId(kind, null), kind, dir: null, name: name.trim() || "Default", color: color || ACCOUNT_COLORS[0] };
@@ -881,6 +916,7 @@ export function confirmTrash(path: string) {
 /** Reconstruct editor buffers before enabling persistence; terminals wait for Restart. */
 export async function restoreWorkspace() {
   await Promise.all(desk().tabs.filter((t): t is FileTab => t.type === "file").map(async (tab) => {
+    if (isBinaryPreview(tab.path)) { desk().patchTab(tab.id, { ready: true, error: null }); return; }
     try {
       await openEditor(tab.id, tab.path, {
         onDirty: (dirty) => desk().patchTab(tab.id, { dirty }),

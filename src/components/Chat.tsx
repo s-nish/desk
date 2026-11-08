@@ -1,18 +1,20 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, Asterisk, Check, ChevronDown, ChevronRight, Ellipsis, Gauge, Hexagon, LoaderCircle, MessageSquarePlus, Plus, Search, Server, Slash, Square, SquareTerminal, UserRound, X } from "lucide-react";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { ArrowUp, GitBranch, FileText, Image as ImageIcon, Paperclip, Asterisk, Check, ChevronDown, ChevronRight, Ellipsis, Gauge, Hexagon, LoaderCircle, MessageSquarePlus, Plus, Search, Server, Slash, Square, SquareTerminal, UserRound, X } from "lucide-react";
 import { TOOL_LABEL, projectTree, useDesk } from "../store";
 import { addProjectsFromDialog, closeTab, openTerminal } from "../actions";
 import { TerminalPane, cleanTitle } from "./Workspace";
 import { Home } from "./Home";
 import { SidebarFooter } from "./SidebarFooter";
 import { useTabReorder } from "./useTabReorder";
+import { openBrowser } from "./Browser";
 import { ipc } from "../ipc";
 import { openMenu } from "./Menu";
 import { Accounts, Connections } from "./Sidebar";
 import { relativeTime } from "./Sessions";
 import {
   CLAUDE_EFFORTS, CLAUDE_MODELS, CLAUDE_MODES, CODEX_MODES, LOCAL_COMMANDS, answer, chatBusy, closeChat, codexModelList, commandList, loadAllSessions, loadClaudeCommands,
-  closeStripTab, moveStripTab, loadCodexModels, loadSessions, newChat, showStripTab, openSession, send, setAccount, setEffort, setMode, setModel, setTool, stop, useChats, type Chat, type ChatItem, type SlashCommand,
+  attach, attachBlob, detach, closeStripTab, markUnread, setWorktree, moveStripTab, loadCodexModels, loadSessions, newChat, showStripTab, openSession, send, setAccount, setEffort, setMode, setModel, setTool, stop, useChats, type Attachment, type Chat, type ChatItem, type SlashCommand,
 } from "../chat";
 import type { Agent, AgentSession, MenuItem, Project, TerminalTab, Tool } from "../types";
 import { ToolLogo } from "./ToolLogo";
@@ -129,13 +131,14 @@ function ProjectChats({ project, query }: { project: Project; query: string }) {
       </div>
       {open && <>
         {shown.map((r) => {
-          const busy = chatBusy(r.chat);
+          const busy = chatBusy(r.chat) ?? (r.chat?.unread ? "unread" : null);
           return (
             <button
               key={r.key}
               className={"chat-row" + (r.chat && r.chat.id === activeId && !termId ? " is-active" : "")}
               title={`${r.title}${r.session ? `\n${TOOL_LABEL[r.tool]}, ${relativeTime(r.updated)}` : ""}`}
               onClick={() => (r.chat ? (useChats.getState().select(r.chat.id), useDesk.getState().selectProject(project.id)) : r.session && openSession(r.session, project))}
+              onContextMenu={(e) => { if (!r.chat) return; e.preventDefault(); chatMenu(r.chat, { x: e.clientX, y: e.clientY }); }}
             >
               <ToolGlyph tool={r.tool} />
               <span className="chat-row-title">{r.title}</span>
@@ -207,6 +210,14 @@ export function ChatView() {
   );
 }
 
+/** Right-click menu for a chat, in the sidebar and the tab strip. */
+function chatMenu(chat: Chat, at: { x: number; y: number }) {
+  openMenu(at, [
+    { label: chat.unread ? "Mark as read" : "Mark as unread", onSelect: () => markUnread(chat.id, !chat.unread) },
+    { label: "Close", onSelect: () => closeChat(chat.id) },
+  ]);
+}
+
 /** Open chats and terminal tabs, side by side, like the terminal view's tabs. */
 function ChatTabs() {
   const strip = useChats((s) => s.strip);
@@ -228,7 +239,7 @@ function ChatTabs() {
     if (key.startsWith("c:")) {
       const chat = chats[key.slice(2)];
       if (!chat) return [];
-      return [{ key, title: chat.items.length || chat.saved ? chat.title : "New chat", icon: <ToolGlyph tool={chat.tool} size={12} />, busy: chatBusy(chat), close: () => closeChat(chat.id) }];
+      return [{ key, title: chat.items.length || chat.saved ? chat.title : "New chat", icon: <ToolGlyph tool={chat.tool} size={12} />, busy: chatBusy(chat) ?? (chat.unread ? "unread" : null), close: () => closeChat(chat.id), menu: (at: { x: number; y: number }) => chatMenu(chat, at) }];
     }
     const tab = tabs.find((t): t is TerminalTab => t.id === key.slice(2) && t.type === "terminal");
     if (!tab) return [];
@@ -239,6 +250,7 @@ function ChatTabs() {
       icon: tab.sshId ? <Server size={12} /> : <SquareTerminal size={12} />,
       busy: tab.busy && tab.status === "running" ? "running" : tab.attention ? "waiting" : null,
       close: () => { closeStripTab(key); closeTab(tab.id); },
+      menu: undefined as ((at: { x: number; y: number }) => void) | undefined,
     }];
   });
 
@@ -262,6 +274,7 @@ function ChatTabs() {
               else if (e.altKey && e.shiftKey && e.key === "ArrowRight" && i < items.length - 1) moveStripTab(t.key, items[i + 2]?.key ?? null);
             }}
             onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); t.close(); } }}
+            onContextMenu={(e) => { if (!t.menu) return; e.preventDefault(); t.menu({ x: e.clientX, y: e.clientY }); }}
           >
             {t.busy ? <span className={"chat-dot is-" + t.busy} /> : t.icon}
             <span className="chat-tab-title">{t.title}</span>
@@ -348,7 +361,12 @@ function Working({ chat }: { chat: Chat }) {
 function Item({ item, chat }: { item: ChatItem; chat: Chat }) {
   switch (item.kind) {
     case "user":
-      return <div className="chat-user"><div className="chat-bubble">{item.text}</div></div>;
+      return (
+        <div className="chat-user">
+          {item.attachments && <div className="chat-attachments is-sent">{item.attachments.map((a, i) => <AttachmentChip key={a.path || i} attachment={a} />)}</div>}
+          {item.text && <div className="chat-bubble">{item.text}</div>}
+        </div>
+      );
     case "assistant":
       return <div className={"chat-assistant" + (item.streaming ? " is-streaming" : "")}><Markdown text={item.text} /></div>;
     case "tool":
@@ -418,6 +436,8 @@ function Composer({ chat }: { chat: Chat }) {
   useChats((s) => s.codexModels);
   useChats((s) => s.commands);
   const account = accounts.find((a) => a.id === chat.accountId);
+  const project = useDesk((s) => s.projects.find((p) => p.id === chat.projectId));
+  const repo = useDesk((s) => (project ? !!s.branches[project.worktreeOf ?? project.id] : false));
   const fresh = !chat.saved && !chat.items.length;
   const busy = chat.status !== "idle";
   const modes = chat.tool === "claude" ? CLAUDE_MODES : CODEX_MODES;
@@ -427,6 +447,13 @@ function Composer({ chat }: { chat: Chat }) {
   const efforts = chat.tool === "claude" ? CLAUDE_EFFORTS : (codexModelList(chat).find((m) => m.id === chat.model)?.efforts ?? ["low", "medium", "high", "xhigh"]);
 
   useEffect(() => { ref.current?.focus(); }, [chat.id]);
+  useEffect(() => {
+    if (!chat.draft) return;
+    const draft = chat.draft;
+    setText((t) => (t.trim() ? `${t}\n\n${draft}` : draft));
+    useChats.getState().patch(chat.id, { draft: undefined });
+    ref.current?.focus();
+  }, [chat.draft, chat.id]);
   useEffect(() => { if (chat.tool === "codex") void loadCodexModels(chat); }, [chat.tool, chat.accountId]); // eslint-disable-line react-hooks/exhaustive-deps
   useLayoutEffect(() => {
     const el = ref.current;
@@ -483,21 +510,47 @@ function Composer({ chat }: { chat: Chat }) {
     ref.current?.focus();
   };
 
+  const pending = chat.pending ?? [];
   const submit = () => {
-    if (!text.trim() || busy) return;
+    if ((!text.trim() && !pending.length) || busy) return;
     const local = /^\/(\w+)(?:\s+([\s\S]*))?$/.exec(text.trim());
     if (local && LOCAL_COMMANDS.some((c) => c.name === local[1]) && runLocal(local[1], local[2] ?? "")) {
       setText("");
       return;
     }
-    void send(chat.id, text);
+    void send(chat.id, text, pending);
+    useChats.getState().patch(chat.id, { pending: [] });
     setText("");
+  };
+  const paste = (e: React.ClipboardEvent) => {
+    const images = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith("image/"));
+    if (!images.length) return;
+    e.preventDefault();
+    for (const f of images) {
+      const ext = f.type.split("/")[1]?.replace("jpeg", "jpg") || "png";
+      void attachBlob(chat.id, f, f.name && f.name !== "image.png" ? f.name : `pasted.${ext}`).catch((err) => useDesk.getState().toast(`Couldn't attach the image: ${String(err)}`, "error"));
+    }
+  };
+  const browse = async () => {
+    const picked = await openDialog({ multiple: true, defaultPath: chat.cwd });
+    if (picked) attach(chat.id, Array.isArray(picked) ? picked : [picked]);
+    ref.current?.focus();
   };
   const pick = (at: Element, items: MenuItem[]) => openMenu(at, items);
 
   return (
     <div className="chat-composer-wrap">
-      <div className="chat-composer">
+      <div
+        className="chat-composer"
+        onDragOver={(e) => { if (e.dataTransfer.types.includes("desk/path")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; } }}
+        onDrop={(e) => {
+          const path = e.dataTransfer.getData("desk/path");
+          if (!path) return;
+          e.preventDefault();
+          attach(chat.id, [path]);
+          ref.current?.focus();
+        }}
+      >
         {slashOpen && (
           <div className="chat-slash" role="listbox" aria-label="Slash commands">
             {commands.map((c, i) => (
@@ -510,9 +563,15 @@ function Composer({ chat }: { chat: Chat }) {
             {chat.tool === "claude" && !commandList(chat).length && <p className="chat-slash-note"><LoaderCircle size={12} className="is-spinning" />Loading Claude Code's commands…</p>}
           </div>
         )}
+        {pending.length > 0 && (
+          <div className="chat-attachments">
+            {pending.map((a) => <AttachmentChip key={a.path} attachment={a} onRemove={() => detach(chat.id, a.path)} />)}
+          </div>
+        )}
         <textarea
           ref={ref}
           rows={1}
+          onPaste={paste}
           value={text}
           placeholder={busy ? `${TOOL_LABEL[chat.tool]} is working…` : `Ask ${TOOL_LABEL[chat.tool]}, or type / for commands`}
           aria-label="Message"
@@ -553,6 +612,12 @@ function Composer({ chat }: { chat: Chat }) {
           <button className="chat-chip" title={mode.hint} onClick={(e) => pick(e.currentTarget, modes.map((m) => ({ label: m.label, hint: m.hint, checked: m.id === chat.mode, onSelect: () => setMode(chat.id, m.id) })))}>
             {mode.label}<ChevronDown size={11} />
           </button>
+          {fresh && repo && !project?.worktreeOf
+            ? <button className="chat-chip" role="switch" aria-checked={!!chat.worktree} title={chat.worktree ? "Your first message creates a branch and worktree for this task, from the latest main. Click to work in the project folder instead." : "Click to give this task its own branch and worktree, so it doesn't touch your project folder."} onClick={() => setWorktree(chat.id, !chat.worktree)}>
+                <GitBranch size={12} />{chat.worktree ? "New worktree" : "Project folder"}
+              </button>
+            : project?.worktreeOf && <span className="chat-chip is-static" title={`Worktree: ${project.path}`}><GitBranch size={12} />{project.branch ?? project.name}</span>}
+          <button className="chat-chip is-icon" aria-label="Attach files" title="Attach files or images (or paste, or drop them here)" onClick={() => void browse()}><Paperclip size={13} /></button>
           <span className="chat-composer-gap" />
           <button className="chat-chip" disabled={busy} title="Model" onClick={(e) => pick(e.currentTarget, models.map((m) => ({ label: m.label, hint: m.description, checked: m.id === chat.model, onSelect: () => setModel(chat.id, m.id) })))}>
             {model?.label ?? chat.model}<ChevronDown size={11} />
@@ -562,11 +627,39 @@ function Composer({ chat }: { chat: Chat }) {
           </button>
           {busy
             ? <button className="chat-send is-stop" aria-label="Stop" title="Stop" onClick={() => stop(chat.id)}><Square size={11} fill="currentColor" /></button>
-            : <button className="chat-send" aria-label="Send" title="Send (Enter)" disabled={!text.trim()} onClick={submit}><ArrowUp size={15} /></button>}
+            : <button className="chat-send" aria-label="Send" title="Send (Enter)" disabled={!text.trim() && !pending.length} onClick={submit}><ArrowUp size={15} /></button>}
         </div>
       </div>
       <p className="chat-composer-hint"><Slash size={10} />commands · Enter to send · Shift+Enter for a new line</p>
     </div>
+  );
+}
+
+/** Image previews, read once per path. */
+const thumbs = new Map<string, Promise<string>>();
+function thumb(path: string) {
+  if (!thumbs.has(path)) {
+    // A few recent previews only: each holds a whole image in memory.
+    if (thumbs.size >= 24) thumbs.delete(thumbs.keys().next().value!);
+    thumbs.set(path, ipc.attachmentImage(path).then((r) => `data:${r.mediaType};base64,${r.data}`));
+  }
+  return thumbs.get(path)!;
+}
+
+function AttachmentChip({ attachment, onRemove }: { attachment: Attachment; onRemove?: () => void }) {
+  const [src, setSrc] = useState("");
+  useEffect(() => {
+    if (!attachment.image || !attachment.path) return;
+    let live = true;
+    void thumb(attachment.path).then((s) => live && setSrc(s)).catch(() => {});
+    return () => { live = false; };
+  }, [attachment.path, attachment.image]);
+  return (
+    <span className={"chat-attachment" + (src ? " has-thumb" : "")} title={attachment.path || attachment.name}>
+      {src ? <img src={src} alt="" /> : attachment.image ? <ImageIcon size={13} /> : <FileText size={13} />}
+      <span className="chat-attachment-name">{attachment.name}</span>
+      {onRemove && <button aria-label={`Remove ${attachment.name}`} onClick={onRemove}><X size={11} /></button>}
+    </span>
   );
 }
 
@@ -685,5 +778,7 @@ function inline(text: string): React.ReactNode[] {
 
 function Link({ href, children }: { href: string; children: React.ReactNode }) {
   const web = /^https?:\/\//.test(href);
-  return <a href={web ? href : undefined} title={href} onClick={(e) => { e.preventDefault(); if (web) void ipc.openExternal(href); }}>{children}</a>;
+  // Local servers open in Desk's browser (⌘-click for your own); everything else in your browser.
+  const local = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?(\/|$)/.test(href);
+  return <a href={web ? href : undefined} title={local ? `${href}\nOpens in Desk's browser. ⌘-click for your own.` : href} onClick={(e) => { e.preventDefault(); if (local && !e.metaKey) openBrowser(href); else if (web) void ipc.openExternal(href); }}>{children}</a>;
 }

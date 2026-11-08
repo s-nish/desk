@@ -1,13 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowLeftRight, CircleCheck, Download, Eye, EyeOff, KeyRound, Server, X } from "lucide-react";
-import { ACCOUNT_COLORS, AGENTS, ENV_VAR, TOOL_LABEL, TOOL_SHORT, isChatTool, uid, useDesk, type Modal } from "../store";
+import { ACCOUNT_COLORS, ACCOUNT_KINDS, ENV_VAR, TOOL_LABEL, TOOL_SHORT, isChatTool, uid, useDesk, type Modal } from "../store";
 import { INSTALL, connectionLabel, createAccount, multiAccount, openConnection, parseSsh, refreshIdentities, saveConnection, signInSpec } from "../actions";
 import { disposeTerminal, mountTerminal, setTerminalVisible } from "../terminals";
 import { errorText, ipc } from "../ipc";
 import { Review } from "./Review";
 import { WorktreeDialog } from "./Worktrees";
+import { CreatePrDialog } from "./GitHub";
 import { Settings } from "./Settings";
-import type { Agent } from "../types";
+import type { AccountKind } from "../types";
 import { ToolLogo } from "./ToolLogo";
 
 export function ModalLayer() {
@@ -18,6 +19,8 @@ export function ModalLayer() {
       return <Shell title="Review changes" wide review><Review root={modal.root} path={modal.path} staged={modal.staged} /></Shell>;
     case "worktree":
       return <WorktreeDialog projectId={modal.projectId} />;
+    case "createPr":
+      return <CreatePrDialog root={modal.root} branch={modal.branch} base={modal.base} />;
     case "settings":
       return <Shell title="Settings" wide settings><Settings initial={modal.section} /></Shell>;
     case "ssh":
@@ -75,9 +78,9 @@ function slug(name: string) {
     .replace(/^-+|-+$/g, "");
 }
 
-function AddAccount({ initial }: { initial: Agent }) {
+function AddAccount({ initial }: { initial: AccountKind }) {
   const accounts = useDesk((s) => s.accounts);
-  const [tool, setTool] = useState<Agent>(initial);
+  const [tool, setTool] = useState<AccountKind>(initial);
   const [name, setName] = useState("");
   const [color, setColor] = useState(() => ACCOUNT_COLORS.find((c) => !accounts.some((a) => a.color === c)) ?? ACCOUNT_COLORS[1]);
   const [error, setError] = useState("");
@@ -115,7 +118,7 @@ function AddAccount({ initial }: { initial: Agent }) {
     <Shell title="Add account">
       <form className="modal-body" onSubmit={submit}>
         <div className="tool-picker" role="radiogroup" aria-label="Tool">
-          {AGENTS.map((t) => (
+          {ACCOUNT_KINDS.map((t) => (
             <button type="button" key={t} role="radio" aria-checked={tool === t} aria-label={TOOL_LABEL[t]} className={tool === t ? "is-on" : ""} onClick={() => (setTool(t), setError(""))}>
               <ToolLogo tool={t} size={20} />
               <span>{TOOL_SHORT[t]}</span>
@@ -198,12 +201,14 @@ function SignIn({ accountId }: { accountId: string }) {
   }, [key]);
 
   if (!account) return null;
-  const HOW: Record<Agent, string> = {
+  const HOW: Record<AccountKind, string> = {
+    github: "gh auth login runs below using this account's folder. Choose GitHub.com and sign in through the browser, then close this window.",
     claude: "Claude Code opens below using this account's folder. Follow its sign-in steps (run /login if it doesn't ask), then close this window.",
     codex: "codex login runs below using this account's folder. Finish in the browser, then close this window.",
     gemini: "Gemini CLI opens below using this account's folder. Pick \"Login with Google\" and finish in the browser, then close this window.",
     cursor: "Cursor Agent's login runs below. Finish in the browser, then close this window.",
     grok: "Grok opens below and signs you in through the browser. Finish there, then close this window.",
+    opencode: "opencode auth login runs below. Pick a provider and finish signing in, then close this window.",
   };
   const how = (INSTALL[account.kind] ? "If it isn't installed yet, Desk installs it first. " : "") + HOW[account.kind];
 

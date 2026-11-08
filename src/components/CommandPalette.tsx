@@ -34,6 +34,8 @@ function Palette() {
       { id: "settings", label: "Open settings", group: "Preferences", shortcut: "⌘,", run: () => s.setModal({ kind: "settings" }) },
       { id: "sidebar", label: "Toggle projects sidebar", group: "View", shortcut: "⌘B", run: () => s.setLayout({ sidebarOpen: !useDesk.getState().layout.sidebarOpen }) },
       { id: "files", label: "Show file explorer", group: "View", run: () => s.setLayout({ filesOpen: true, panel: "files" }) },
+      { id: "browser", label: "Toggle browser", group: "View", shortcut: "⌘⇧L", run: () => s.setLayout({ browserOpen: !useDesk.getState().layout.browserOpen }) },
+      { id: "github", label: "GitHub issues and pull requests", group: "Source control", run: () => s.setLayout({ filesOpen: true, panel: "github" }) },
     ];
     if (activeProject()) items.push(
       { id: "open-file", label: "Open file", group: "Workspace", shortcut: "⌘P", run: () => s.setQuickOpen(true) },
@@ -43,7 +45,7 @@ function Palette() {
       { id: "sessions", label: "Search past conversations", group: "Terminal", run: () => searchConversations() },
       { id: "ui-mode", label: useDesk.getState().preferences.uiMode === "chat" ? "Switch to terminal view" : "Switch to chat view", group: "View", run: () => s.setPreferences({ uiMode: useDesk.getState().preferences.uiMode === "chat" ? "terminal" : "chat" }) },
       ...([...(["claude", "codex"] as const), ...EXTRA_AGENTS.filter((k) => useDesk.getState().accounts.some((a) => a.kind === k)), "shell" as const] as TabTool[]).map((tool) => ({ id: `new-${tool}`, label: `New ${TOOL_LABEL[tool]} session`, group: "Terminal", shortcut: ({ claude: "⌘D", codex: "⌘E", shell: "⌘J" } as Partial<Record<TabTool, string>>)[tool], run: () => { const project = activeProject(); if (project) openTerminal(project.id, tool); } })),
-      { id: "add-account", label: "Add account (Claude Code, Codex, Gemini, Cursor, Grok)…", group: "Accounts", run: () => useDesk.getState().setModal({ kind: "addAccount", tool: "claude" }) },
+      { id: "add-account", label: "Add account (Claude Code, Codex, Gemini, Cursor, Grok, OpenCode)…", group: "Accounts", run: () => useDesk.getState().setModal({ kind: "addAccount", tool: "claude" }) },
       { id: "usage", label: "Show usage limits", group: "Accounts", run: () => useDesk.getState().setModal({ kind: "settings", section: "usage" }) },
     );
     if (focusedId) items.push(

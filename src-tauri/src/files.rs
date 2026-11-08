@@ -121,7 +121,7 @@ pub fn read_file(path: &str) -> Result<FileContent, String> {
     }
     let bytes = fs::read(p).map_err(|e| e.to_string())?;
     if bytes.iter().take(8192).any(|&b| b == 0) {
-        return Err("This looks like a binary file, so Desk won't open it as text.".into());
+        return Err("Desk can't show this kind of file. Open it in its default app instead.".into());
     }
     let content =
         String::from_utf8(bytes).map_err(|_| "File isn't valid UTF-8 text.".to_string())?;
@@ -129,6 +129,18 @@ pub fn read_file(path: &str) -> Result<FileContent, String> {
         content,
         mtime: mtime(p),
     })
+}
+
+/// Largest file the image, PDF and media viewers load.
+const MAX_VIEW_BYTES: u64 = 200 * 1024 * 1024;
+
+/// The raw bytes of a file for the viewers (images, PDFs, audio and video).
+pub fn read_bytes(path: &str) -> Result<Vec<u8>, String> {
+    let size = fs::metadata(path).map_err(|e| e.to_string())?.len();
+    if size > MAX_VIEW_BYTES {
+        return Err(format!("File is {} MB. Desk shows files up to 200 MB; open it in its default app instead.", size / 1_048_576));
+    }
+    fs::read(path).map_err(|e| e.to_string())
 }
 
 /// Writes via a temp file and rename so a crash never leaves a half-written file.

@@ -2,9 +2,9 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ArrowUpRight, Gauge } from "lucide-react";
 import { AGENTS, TOOL_LABEL, isChatTool, limitKey, projectAccount, useDesk } from "../store";
-import { refreshLimits } from "../actions";
+import { refreshLimits, refreshLiveLimits } from "../actions";
 import { relativeTime } from "./Sessions";
-import type { Account, UsageLimits, UsageWindow } from "../types";
+import type { Account, Agent, UsageLimits, UsageWindow } from "../types";
 import { ToolLogo } from "./ToolLogo";
 
 /** A window whose reset time has passed starts over at 0. */
@@ -78,7 +78,7 @@ export function UsageChip({ account }: { account: Account }) {
   const label = windows.length ? `${TOOL_LABEL[account.kind]} usage: ${windows.map((w) => `${windowName(w).toLowerCase()} ${Math.round(w.used)}%`).join(", ")}` : `${TOOL_LABEL[account.kind]} usage limits`;
   return (
     <>
-      <button ref={ref} className={"status-usage" + (open ? " is-open" : "")} aria-label={label} aria-expanded={open} title={windows.length ? windows.map((w) => `${windowName(w)} limit: ${usedText(w.used, mode)}${w.resetsAt ? `, ${resetText(w.resetsAt, now).toLowerCase()}` : ""}`).join("\n") : "Usage limits"} onClick={() => { setOpen(!open); if (!open) void refreshLimits(); }}>
+      <button ref={ref} className={"status-usage" + (open ? " is-open" : "")} aria-label={label} aria-expanded={open} title={windows.length ? windows.map((w) => `${windowName(w)} limit: ${usedText(w.used, mode)}${w.resetsAt ? `, ${resetText(w.resetsAt, now).toLowerCase()}` : ""}`).join("\n") : "Usage limits"} onClick={() => { setOpen(!open); if (!open) { void refreshLimits(); void refreshLiveLimits(30_000); } }}>
         {windows.length ? windows.map((w) => (
           <span key={w.minutes} className="usage-pair">
             <span className="usage-window-tag">{short(w)}</span>
@@ -162,8 +162,8 @@ function UsagePopover({ anchor, focus, onClose, placement = "status" }: { anchor
 }
 
 /** Ring gauges in the sidebar footer: one per account (Claude Code and Codex), the
- *  selected project's accounts first. Each ring fills with its tightest window's
- *  percent *used*. More rings than fit scroll sideways (wheel or trackpad), with
+ *  selected project's accounts first. The ring fills with the 5-hour window; the
+ *  badge shows the 7-day window. More rings than fit scroll sideways (wheel or trackpad), with
  *  faded edges showing there's more; click any ring for every account's details. */
 export function UsageRings() {
   const project = useDesk((s) => s.projects.find((p) => p.id === s.activeProjectId));
@@ -179,9 +179,9 @@ export function UsageRings() {
   const mode = useUsageShow();
   const current = new Set(AGENTS.map((k) => (accounts.some((a) => a.kind === k) ? projectAccount(accounts, project, k).id : "")));
   const rings = accounts
-    .filter((a) => a.kind !== "claude" || claudeOn)
+    .filter((a) => a.kind !== "github" && (a.kind !== "claude" || claudeOn))
     .map((a, i) => ({ a, i }))
-    .sort((x, y) => Number(current.has(y.a.id)) - Number(current.has(x.a.id)) || AGENTS.indexOf(x.a.kind) - AGENTS.indexOf(y.a.kind) || x.i - y.i)
+    .sort((x, y) => Number(current.has(y.a.id)) - Number(current.has(x.a.id)) || AGENTS.indexOf(x.a.kind as Agent) - AGENTS.indexOf(y.a.kind as Agent) || x.i - y.i)
     .map(({ a }) => a);
   const sameKind = (a: Account) => accounts.filter((b) => b.kind === a.kind).length > 1;
 
@@ -220,30 +220,36 @@ export function UsageRings() {
         {rings.map((account) => {
           const kind = account.kind;
           const lim = limits[limitKey(account.kind, account.dir)];
-          const windows = [lim?.session, lim?.weekly].filter(Boolean).map((w) => effective(w!, now));
-          const tight = windows.length ? windows.reduce((a, b) => (b.used > a.used ? b : a)) : null;
-          const used = tight ? Math.min(100, Math.max(0, tight.used)) : 0;
+          // The ring is the 5-hour window; the badge is the 7-day one.
+          const session = lim?.session ? effective(lim.session, now) : null;
+          const weekly = lim?.weekly ? effective(lim.weekly, now) : null;
+          const pct = (w: UsageWindow | null) => (w ? Math.min(100, Math.max(0, w.used)) : 0);
+          const sUsed = pct(session), wUsed = pct(weekly);
+          const worst = Math.max(session ? sUsed : 0, weekly ? wUsed : 0);
           const r = 15, c = 2 * Math.PI * r;
-          const fill = mode === "remaining" ? 100 - used : used;
-          const label = tight
-            ? `${TOOL_LABEL[kind]} · ${account.name}: ${mode === "remaining" ? `${shown(used, mode)}% of the ${windowName(tight).toLowerCase()} limit left` : `${Math.round(used)}% of the ${windowName(tight).toLowerCase()} limit used`}${tight.resetsAt ? `, ${resetText(tight.resetsAt, now).toLowerCase()}` : ""}`
+          const fill = mode === "remaining" ? 100 - sUsed : sUsed;
+          const part = (w: UsageWindow | null, used: number) =>
+            w ? `${windowName(w)}: ${usedText(used, mode)}${w.resetsAt ? `, ${resetText(w.resetsAt, now).toLowerCase()}` : ""}` : null;
+          const parts = [part(session, sUsed), part(weekly, wUsed)].filter(Boolean);
+          const label = parts.length
+            ? `${TOOL_LABEL[kind]} · ${account.name}\n${parts.join("\n")}`
             : `${TOOL_LABEL[kind]} · ${account.name}: ${isChatTool(kind) ? "no usage reported yet" : "doesn't report usage limits"}`;
           return (
             <button
               key={account.id}
-              className={"usage-ring" + (tight ? level(used) : " is-empty") + (current.has(account.id) ? " is-current" : "")}
+              className={"usage-ring" + (session || weekly ? level(worst) : " is-empty") + (current.has(account.id) ? " is-current" : "")}
               style={{ "--acct": account.color } as React.CSSProperties}
               aria-label={label}
               title={label}
-              onClick={() => { setOpen(open?.id === account.id ? null : account); void refreshLimits(); }}
+              onClick={() => { setOpen(open?.id === account.id ? null : account); void refreshLimits(); void refreshLiveLimits(30_000); }}
             >
               <svg viewBox="0 0 36 36" aria-hidden="true">
                 <circle className="usage-ring-track" cx="18" cy="18" r={r} />
-                {tight && <circle className="usage-ring-fill" cx="18" cy="18" r={r} strokeDasharray={c} strokeDashoffset={c * (1 - Math.max(fill, 2) / 100)} />}
+                {session && <circle className={"usage-ring-fill" + level(sUsed)} cx="18" cy="18" r={r} strokeDasharray={c} strokeDashoffset={c * (1 - Math.max(fill, 2) / 100)} />}
               </svg>
               <span className="usage-ring-glyph"><ToolLogo tool={kind} size={16} /></span>
               {sameKind(account) && <span className="usage-ring-acct" aria-hidden="true" />}
-              {tight && <span className="usage-ring-value">{shown(used, mode)}%</span>}
+              {weekly && <span className={"usage-ring-value" + level(wUsed)}>{shown(wUsed, mode)}%</span>}
             </button>
           );
         })}
@@ -261,7 +267,7 @@ export function UsageSettings() {
   const mode = useUsageShow();
   const set = useDesk((s) => s.setPreferences);
   const now = useNow();
-  useEffect(() => { void refreshLimits(); }, []);
+  useEffect(() => { void refreshLimits(); void refreshLiveLimits(30_000); }, []);
   const kinds = AGENTS.filter((k) => accounts.some((a) => a.kind === k));
   return (
     <div className="usage-settings">
@@ -294,7 +300,7 @@ export function UsageSettings() {
           )}
         </section>
       ))}
-      <p className="settings-note">Claude Code and Codex report limits with each reply, so numbers can be a few minutes old. Gemini CLI, Cursor Agent and Grok don't report limits to other apps.</p>
+      <p className="settings-note">Claude Code and Codex report limits with each reply, so numbers can be a few minutes old. Gemini CLI, Cursor Agent, Grok and OpenCode don't report limits to other apps.</p>
     </div>
   );
 }
