@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Desk: pixel D, white on black. No gradients. -->
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="#000000"/>
+  <path d="M346 278h60v60h-60zM414 278h60v60h-60zM482 278h60v60h-60zM550 278h60v60h-60zM346 346h60v60h-60zM618 346h60v60h-60zM346 414h60v60h-60zM618 414h60v60h-60zM346 482h60v60h-60zM618 482h60v60h-60zM346 550h60v60h-60zM618 550h60v60h-60zM346 618h60v60h-60zM618 618h60v60h-60zM346 686h60v60h-60zM414 686h60v60h-60zM482 686h60v60h-60zM550 686h60v60h-60z" fill="#FFFFFF"/>
+  <rect x="100.75" y="100.75" width="822.5" height="822.5" rx="185.25" fill="none" stroke="#FFFFFF" stroke-opacity="0.12" stroke-width="1.5"/>
+</svg>
