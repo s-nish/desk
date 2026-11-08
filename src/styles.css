@@ -2575,3 +2575,70 @@ body.is-resizing-rows, body.is-resizing-rows * { cursor: row-resize !important; 
 .viewer-table .tree-note { padding: 10px 16px; }
 .usage-ring-value.is-high { color: var(--warm, #f2b457); border-color: currentColor; }
 .usage-ring-value.is-full { color: var(--danger); border-color: currentColor; }
+
+/* ───────── Chat: agent picker (radial) ───────── */
+.chat-agent {
+  position: relative; flex: none; width: 30px; height: 30px; border-radius: 999px; display: grid; place-items: center;
+  color: var(--text); background: var(--bg-hover); border: 1px solid var(--line-strong);
+  transition: transform .25s cubic-bezier(.2,.8,.2,1.2), border-color .2s, box-shadow .2s;
+}
+.chat-agent:hover { border-color: var(--accent); }
+.chat-agent.is-open { border-color: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent); }
+.chat-agent-icon { display: grid; place-items: center; transition: transform .25s ease, opacity .2s ease; }
+.chat-agent.is-open .chat-agent-icon { transform: scale(.6) rotate(-30deg); opacity: .35; }
+.chat-agent-plus {
+  position: absolute; right: -3px; bottom: -3px; width: 14px; height: 14px; border-radius: 999px; display: grid; place-items: center;
+  color: var(--accent-ink, #fff); background: var(--accent); border: 2px solid var(--bg-raised, var(--bg));
+  transition: transform .3s cubic-bezier(.2,.8,.2,1.3);
+}
+.chat-agent.is-open .chat-agent-plus { transform: rotate(135deg) scale(1.15); }
+.chat-agent-name { font-size: 12.5px; color: var(--text-2); margin: 0 6px 0 2px; white-space: nowrap; }
+.chat-agent-static { gap: 6px; }
+
+.radial { position: fixed; inset: 0; z-index: 1000; background: transparent; transition: background .25s ease; }
+.radial.is-shown { background: color-mix(in srgb, var(--bg) 45%, transparent); }
+.radial-hub { position: fixed; width: 0; height: 0; }
+.radial-arc { position: absolute; overflow: visible; pointer-events: none; }
+.radial-arc path {
+  fill: none; stroke: var(--line-strong); stroke-width: 1.5; stroke-dasharray: 3 5;
+  stroke-dashoffset: 40; opacity: 0; transition: opacity .3s ease, stroke-dashoffset .6s ease;
+}
+.radial.is-shown .radial-arc path { opacity: 1; stroke-dashoffset: 0; }
+.radial-item {
+  position: absolute; left: 0; top: 0; width: 46px; height: 46px; border-radius: 999px; display: grid; place-items: center;
+  color: var(--text); background: var(--bg-raised, var(--bg)); border: 1px solid var(--line-strong);
+  box-shadow: 0 10px 30px -8px rgba(0, 0, 0, .55);
+  transform: translate(-50%, -50%) scale(.3); opacity: 0;
+  transition: transform .42s cubic-bezier(.2, .9, .25, 1.25), opacity .25s ease, border-color .2s, background .2s;
+  transition-delay: calc(var(--i) * 28ms);
+}
+.radial.is-shown .radial-item { transform: translate(calc(-50% + var(--x)), calc(-50% + var(--y))) scale(1); opacity: 1; }
+.radial-item:hover, .radial-item:focus-visible { border-color: var(--accent); background: var(--bg-hover); outline: none; }
+.radial.is-shown .radial-item:hover, .radial.is-shown .radial-item:focus-visible { transform: translate(calc(-50% + var(--x)), calc(-50% + var(--y))) scale(1.12); transition-delay: 0s; }
+.radial-item.is-on { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent), 0 10px 30px -8px rgba(0, 0, 0, .55); }
+.radial-badge {
+  position: absolute; right: -2px; bottom: -2px; width: 16px; height: 16px; border-radius: 999px; display: grid; place-items: center;
+  color: var(--text-2); background: var(--bg-hover); border: 1px solid var(--line-strong);
+}
+.radial-label {
+  position: absolute; transform: translate(-50%, -50%); display: grid; justify-items: center; gap: 2px;
+  text-align: center; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity .25s ease .12s;
+}
+.radial.is-shown .radial-label { opacity: 1; }
+.radial-label strong { font-size: 13px; font-weight: 600; color: var(--text); }
+.radial-label span { font-size: 11px; color: var(--muted); }
+
+/* ───────── Chat: queued messages ───────── */
+.chat-queue { display: grid; gap: 2px; margin: 0 0 8px; padding: 6px; border-radius: 12px; background: var(--bg-hover); border: 1px solid var(--line); }
+.chat-queue-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 6px 4px; font-size: 11px; letter-spacing: .02em; color: var(--muted); }
+.chat-queue-row { display: flex; align-items: center; gap: 8px; min-height: 28px; padding: 0 2px 0 6px; border-radius: 8px; font-size: 12.5px; color: var(--text-2); }
+.chat-queue-row:hover { background: var(--bg-press, var(--bg-hover)); }
+.chat-queue-n { flex: none; width: 16px; height: 16px; border-radius: 999px; display: grid; place-items: center; font-size: 10px; color: var(--accent-ink, #fff); background: var(--accent); }
+.chat-queue-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-queue-files { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; color: var(--muted); }
+.chat-queue-row .icon-btn { width: 22px; height: 22px; }
+.chat-send.is-queue { margin-left: 4px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .radial-item, .radial-arc path, .chat-agent, .chat-agent-plus, .chat-agent-icon { transition-duration: .01ms !important; transition-delay: 0s !important; }
+}

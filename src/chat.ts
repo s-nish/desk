@@ -97,6 +97,29 @@ export interface Chat {
   worktree?: boolean;
   /** Branch name to use for that worktree instead of one made from the message. */
   branchHint?: string;
+  /** Messages typed while a turn was running, sent one by one as each turn finishes. */
+  queue?: QueuedMessage[];
+}
+
+export interface QueuedMessage { id: string; text: string; attachments: Attachment[] }
+
+/** Holds a message until the current turn finishes. */
+export function enqueue(chatId: string, text: string, attachments: Attachment[] = []) {
+  if (!text.trim() && !attachments.length) return;
+  chats().patch(chatId, (c) => ({ queue: [...(c.queue ?? []), { id: uid(), text, attachments }] }));
+}
+
+export function unqueue(chatId: string, id: string) {
+  chats().patch(chatId, (c) => ({ queue: (c.queue ?? []).filter((q) => q.id !== id) }));
+}
+
+/** Sends the next queued message, if the chat is free. */
+export function sendNext(chatId: string) {
+  const chat = chats().chats[chatId];
+  const next = chat?.queue?.[0];
+  if (!chat || !next || chat.status !== "idle") return;
+  chats().patch(chatId, (c) => ({ queue: (c.queue ?? []).slice(1) }));
+  void send(chatId, next.text, next.attachments);
 }
 
 interface ChatState {
@@ -390,6 +413,7 @@ export function stop(chatId: string) {
 }
 
 function finishTurn(chatId: string) {
+  const stopped = !!chats().chats[chatId]?.stopping;
   chats().patch(chatId, (c) => ({
     status: "idle",
     stopping: false,
@@ -405,6 +429,8 @@ function finishTurn(chatId: string) {
   if (chat && !chat.stopping) alertChat(chat, "Finished");
   if (project) setTimeout(() => void loadSessions(project), 800);
   setTimeout(() => void refreshLimits(), 1500);
+  // Queued messages go out one per turn. Stopping pauses the queue until you send again.
+  if (!stopped && chat?.queue?.length) setTimeout(() => sendNext(chatId), 0);
 }
 
 /** Whether the chat is what you're looking at right now. */

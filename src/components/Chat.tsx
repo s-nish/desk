@@ -1,7 +1,8 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { ArrowUp, GitBranch, FileText, Image as ImageIcon, Paperclip, Asterisk, Check, ChevronDown, ChevronRight, Ellipsis, Gauge, Hexagon, LoaderCircle, MessageSquarePlus, Plus, Search, Server, Slash, Square, SquareTerminal, UserRound, X } from "lucide-react";
-import { TOOL_LABEL, projectTree, useDesk } from "../store";
+import { AGENTS, TOOL_LABEL, projectTree, useDesk } from "../store";
 import { addProjectsFromDialog, closeTab, openTerminal } from "../actions";
 import { TerminalPane, cleanTitle } from "./Workspace";
 import { Home } from "./Home";
@@ -14,7 +15,7 @@ import { Accounts, Connections } from "./Sidebar";
 import { relativeTime } from "./Sessions";
 import {
   CLAUDE_EFFORTS, CLAUDE_MODELS, CLAUDE_MODES, CODEX_MODES, LOCAL_COMMANDS, answer, chatBusy, closeChat, codexModelList, commandList, loadAllSessions, loadClaudeCommands,
-  attach, attachBlob, detach, closeStripTab, markUnread, setWorktree, moveStripTab, loadCodexModels, loadSessions, newChat, showStripTab, openSession, send, setAccount, setEffort, setMode, setModel, setTool, stop, useChats, type Attachment, type Chat, type ChatItem, type SlashCommand,
+  attach, attachBlob, detach, closeStripTab, markUnread, setWorktree, moveStripTab, loadCodexModels, loadSessions, newChat, showStripTab, openSession, send, sendNext, enqueue, unqueue, setAccount, setEffort, setMode, setModel, setTool, stop, useChats, type Attachment, type Chat, type ChatItem, type SlashCommand,
 } from "../chat";
 import type { Agent, AgentSession, MenuItem, Project, TerminalTab, Tool } from "../types";
 import { ToolLogo } from "./ToolLogo";
@@ -333,9 +334,23 @@ function showDuration(chat: Chat, index: number) {
   return chat.status === "idle" && chat.lastTurnMs != null && index === chat.items.length - 1 && chat.lastTurnMs > 2000;
 }
 
+const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? "" : "s"}`;
+
+/** "42 seconds", "9 minutes 20 seconds", "1 hour 5 minutes". */
 function duration(ms: number) {
-  const s = Math.round(ms / 1000);
-  return s < 60 ? `${s} seconds` : `${Math.floor(s / 60)} min ${s % 60 ? `${s % 60} s` : ""}`.trim();
+  const total = Math.round(ms / 1000);
+  const h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), s = total % 60;
+  if (h) return [plural(h, "hour"), m ? plural(m, "minute") : ""].filter(Boolean).join(" ");
+  if (m) return [plural(m, "minute"), s ? plural(s, "second") : ""].filter(Boolean).join(" ");
+  return plural(s, "second");
+}
+
+/** A compact running clock: "42s", "9m 20s", "1h 05m". */
+function clock(total: number) {
+  const h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), s = total % 60;
+  if (h) return `${h}h ${String(m).padStart(2, "0")}m`;
+  if (m) return `${m}m ${String(s).padStart(2, "0")}s`;
+  return `${s}s`;
 }
 
 function Intro({ chat, project }: { chat: Chat; project: Project }) {
@@ -355,7 +370,7 @@ function Working({ chat }: { chat: Chat }) {
   }, []);
   const waiting = chat.items.some((i) => i.kind === "approval" && i.state === "pending");
   const seconds = chat.startedAt ? Math.round((Date.now() - chat.startedAt) / 1000) : 0;
-  return <p className="chat-working"><LoaderCircle size={13} className={waiting ? "" : "is-spinning"} />{waiting ? "Waiting for your answer" : chat.status === "starting" ? "Starting…" : `Working${seconds > 1 ? ` · ${seconds}s` : "…"}`}</p>;
+  return <p className="chat-working"><LoaderCircle size={13} className={waiting ? "" : "is-spinning"} />{waiting ? "Waiting for your answer" : chat.status === "starting" ? "Starting…" : `Working${seconds > 1 ? ` · ${clock(seconds)}` : "…"}`}</p>;
 }
 
 function Item({ item, chat }: { item: ChatItem; chat: Chat }) {
@@ -511,14 +526,19 @@ function Composer({ chat }: { chat: Chat }) {
   };
 
   const pending = chat.pending ?? [];
+  const queue = chat.queue ?? [];
   const submit = () => {
-    if ((!text.trim() && !pending.length) || busy) return;
+    if (!text.trim() && !pending.length) return;
     const local = /^\/(\w+)(?:\s+([\s\S]*))?$/.exec(text.trim());
     if (local && LOCAL_COMMANDS.some((c) => c.name === local[1]) && runLocal(local[1], local[2] ?? "")) {
       setText("");
       return;
     }
-    void send(chat.id, text, pending);
+    // While a turn runs (or others are already waiting), the message joins the queue.
+    // A paused queue (after Stop) resumes in order when you send again.
+    if (busy) enqueue(chat.id, text, pending);
+    else if (queue.length) { enqueue(chat.id, text, pending); sendNext(chat.id); }
+    else void send(chat.id, text, pending);
     useChats.getState().patch(chat.id, { pending: [] });
     setText("");
   };
@@ -563,6 +583,22 @@ function Composer({ chat }: { chat: Chat }) {
             {chat.tool === "claude" && !commandList(chat).length && <p className="chat-slash-note"><LoaderCircle size={12} className="is-spinning" />Loading Claude Code's commands…</p>}
           </div>
         )}
+        {queue.length > 0 && (
+          <div className="chat-queue" aria-label="Queued messages">
+            <div className="chat-queue-head">
+              <span>{busy ? `Queued · sends after this turn` : "Queued · paused"}</span>
+              {!busy && <button className="text-button" onClick={() => sendNext(chat.id)}>Send next</button>}
+            </div>
+            {queue.map((q, i) => (
+              <div key={q.id} className="chat-queue-row">
+                <span className="chat-queue-n">{i + 1}</span>
+                <span className="chat-queue-text" title={q.text}>{q.text.trim().split(/\s+/).join(" ") || q.attachments.map((a) => a.name).join(", ")}</span>
+                {q.attachments.length > 0 && <span className="chat-queue-files"><Paperclip size={11} />{q.attachments.length}</span>}
+                <button className="icon-btn" aria-label="Remove from queue" title="Remove" onClick={() => unqueue(chat.id, q.id)}><X size={12} /></button>
+              </div>
+            ))}
+          </div>
+        )}
         {pending.length > 0 && (
           <div className="chat-attachments">
             {pending.map((a) => <AttachmentChip key={a.path} attachment={a} onRemove={() => detach(chat.id, a.path)} />)}
@@ -573,7 +609,7 @@ function Composer({ chat }: { chat: Chat }) {
           rows={1}
           onPaste={paste}
           value={text}
-          placeholder={busy ? `${TOOL_LABEL[chat.tool]} is working…` : `Ask ${TOOL_LABEL[chat.tool]}, or type / for commands`}
+          placeholder={busy ? `Queue a message for when ${TOOL_LABEL[chat.tool]} finishes…` : `Ask ${TOOL_LABEL[chat.tool]}, or type / for commands`}
           aria-label="Message"
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
@@ -601,11 +637,9 @@ function Composer({ chat }: { chat: Chat }) {
           }}
         />
         <div className="chat-composer-row">
-          {fresh ? (
-            <div className="segmented is-small chat-tool-switch" role="radiogroup" aria-label="Agent">
-              {(["claude", "codex"] as const).map((t) => <button key={t} role="radio" aria-checked={chat.tool === t} className={chat.tool === t ? "is-on" : ""} onClick={() => setTool(chat.id, t)}><ToolGlyph tool={t} size={12} />{t === "claude" ? "Claude" : "Codex"}</button>)}
-            </div>
-          ) : <span className="chat-chip is-static"><ToolGlyph tool={chat.tool} size={12} />{chat.tool === "claude" ? "Claude" : "Codex"}</span>}
+          {fresh
+            ? <AgentPicker chat={chat} />
+            : <span className="chat-chip is-static chat-agent-static" title={TOOL_LABEL[chat.tool]}><ToolGlyph tool={chat.tool} size={14} /><span className="chat-agent-name">{chat.tool === "claude" ? "Claude" : "Codex"}</span></span>}
           <button className="chat-chip" disabled={!fresh} title={fresh ? "Account" : `Account: ${account?.name}. A conversation stays with the account it started on.`} onClick={(e) => pick(e.currentTarget, accounts.filter((a) => a.kind === chat.tool).map((a) => ({ label: a.name, checked: a.id === chat.accountId, onSelect: () => setAccount(chat.id, a.id) })))}>
             <UserRound size={12} />{account?.name ?? "Account"}{fresh && <ChevronDown size={11} />}
           </button>
@@ -625,13 +659,117 @@ function Composer({ chat }: { chat: Chat }) {
           <button className="chat-chip" disabled={busy} title="Effort: how hard the model thinks" onClick={(e) => pick(e.currentTarget, [{ label: "Default effort", checked: !chat.effort, onSelect: () => setEffort(chat.id, "") }, ...efforts.map((x) => ({ label: EFFORT_LABEL[x] ?? x, checked: x === chat.effort, onSelect: () => setEffort(chat.id, x) }))])}>
             <Gauge size={12} />{chat.effort ? EFFORT_LABEL[chat.effort] ?? chat.effort : "Effort"}<ChevronDown size={11} />
           </button>
-          {busy
-            ? <button className="chat-send is-stop" aria-label="Stop" title="Stop" onClick={() => stop(chat.id)}><Square size={11} fill="currentColor" /></button>
-            : <button className="chat-send" aria-label="Send" title="Send (Enter)" disabled={!text.trim() && !pending.length} onClick={submit}><ArrowUp size={15} /></button>}
+          {busy && <button className="chat-send is-stop" aria-label="Stop" title="Stop this turn (queued messages wait)" onClick={() => stop(chat.id)}><Square size={11} fill="currentColor" /></button>}
+          {(!busy || text.trim() || pending.length > 0) && <button className={"chat-send" + (busy ? " is-queue" : "")} aria-label={busy ? "Queue" : "Send"} title={busy ? "Queue (Enter): sends when this turn finishes" : "Send (Enter)"} disabled={!text.trim() && !pending.length} onClick={submit}><ArrowUp size={15} /></button>}
         </div>
       </div>
-      <p className="chat-composer-hint"><Slash size={10} />commands · Enter to send · Shift+Enter for a new line</p>
+      <p className="chat-composer-hint"><Slash size={10} />commands · Enter to {busy ? "queue" : "send"} · Shift+Enter for a new line</p>
     </div>
+  );
+}
+
+const CHAT_AGENTS: Tool[] = ["claude", "codex"];
+
+/**
+ * Picks the agent for a new chat: a round button that fans the agents out in an arc.
+ * Claude Code and Codex chat here; the others open in a terminal tab beside it.
+ */
+function AgentPicker({ chat }: { chat: Chat }) {
+  const [open, setOpen] = useState(false);
+  const [shown, setShown] = useState(false);
+  const [hover, setHover] = useState<Agent | null>(null);
+  const [at, setAt] = useState({ x: 0, y: 0 });
+  const btn = useRef<HTMLButtonElement>(null);
+  const items = useRef<(HTMLButtonElement | null)[]>([]);
+
+  const close = (focus = true) => {
+    setShown(false);
+    setTimeout(() => setOpen(false), 180);
+    if (focus) btn.current?.focus();
+  };
+  const toggle = () => {
+    if (open) return close();
+    const r = btn.current!.getBoundingClientRect();
+    setAt({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
+    setHover(chat.tool);
+    setOpen(true);
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      setShown(true);
+      items.current[AGENTS.indexOf(chat.tool)]?.focus();
+    }));
+  };
+  const choose = (agent: Agent) => {
+    if ((CHAT_AGENTS as Agent[]).includes(agent)) setTool(chat.id, agent as Tool);
+    else openTerminal(chat.projectId, agent);
+    close();
+  };
+
+  // An arc opening up and to the right of the button, so it never leaves the window.
+  const radius = 118;
+  const from = 180, to = 0, lift = 48;
+  const spot = (i: number) => {
+    const a = ((from + ((to - from) * i) / (AGENTS.length - 1)) * Math.PI) / 180;
+    return { x: Math.cos(a) * radius + radius * 0.82, y: -Math.sin(a) * radius - lift };
+  };
+  const label = hover ? TOOL_LABEL[hover] : "";
+  const terminalOnly = hover && !(CHAT_AGENTS as Agent[]).includes(hover);
+
+  return (
+    <>
+      <button
+        ref={btn}
+        className={"chat-agent" + (open ? " is-open" : "")}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`Agent: ${TOOL_LABEL[chat.tool]}. Choose another`}
+        title={`${TOOL_LABEL[chat.tool]} · choose an agent`}
+        onClick={toggle}
+      >
+        <span className="chat-agent-icon"><ToolLogo tool={chat.tool} size={15} /></span>
+        <span className="chat-agent-plus" aria-hidden="true"><Plus size={10} strokeWidth={3} /></span>
+      </button>
+      <span className="chat-agent-name">{TOOL_LABEL[chat.tool]}</span>
+      {open && createPortal(
+        <div className={"radial" + (shown ? " is-shown" : "")} onMouseDown={(e) => { if (e.target === e.currentTarget) close(false); }} onKeyDown={(e) => {
+          if (e.key === "Escape") { e.preventDefault(); close(); return; }
+          const i = items.current.findIndex((el) => el === document.activeElement);
+          const d = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
+          if (d) { e.preventDefault(); const n = (Math.max(i, 0) + d + AGENTS.length) % AGENTS.length; items.current[n]?.focus(); setHover(AGENTS[n]); }
+        }}>
+          <div className="radial-hub" style={{ left: at.x, top: at.y }} role="menu" aria-label="Choose an agent">
+            <svg className="radial-arc" width={radius * 2 + 80} height={radius + 70} style={{ left: -40 - radius * 0.18, top: -radius - lift - 40 }} aria-hidden="true">
+              <path d={`M ${40 + radius * 0.18 + spot(0).x} ${radius + lift + 40 + spot(0).y} A ${radius} ${radius} 0 0 1 ${40 + radius * 0.18 + spot(AGENTS.length - 1).x} ${radius + lift + 40 + spot(AGENTS.length - 1).y}`} />
+            </svg>
+            {AGENTS.map((agent, i) => {
+              const p = spot(i);
+              const on = agent === chat.tool;
+              return (
+                <button
+                  key={agent}
+                  ref={(el) => { items.current[i] = el; }}
+                  role="menuitemradio"
+                  aria-checked={on}
+                  aria-label={`${TOOL_LABEL[agent]}${(CHAT_AGENTS as Agent[]).includes(agent) ? "" : ", opens in a terminal tab"}`}
+                  className={"radial-item" + (on ? " is-on" : "")}
+                  style={{ "--x": `${p.x}px`, "--y": `${p.y}px`, "--i": i } as React.CSSProperties}
+                  onMouseEnter={() => setHover(agent)}
+                  onFocus={() => setHover(agent)}
+                  onClick={() => choose(agent)}
+                >
+                  <ToolLogo tool={agent} size={20} />
+                  {!(CHAT_AGENTS as Agent[]).includes(agent) && <span className="radial-badge" aria-hidden="true"><SquareTerminal size={9} /></span>}
+                </button>
+              );
+            })}
+            <div className="radial-label" aria-live="polite" style={{ left: radius * 0.82, top: -lift - 34 }}>
+              <strong>{label}</strong>
+              <span>{terminalOnly ? "Opens in a terminal tab" : "Chat here"}</span>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+    </>
   );
 }
 
