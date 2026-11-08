@@ -13,6 +13,7 @@ import { ipc } from "./ipc";
 import { chatView, projectAccount, sessionEnv, uid, useDesk } from "./store";
 import { addWorktreeProject, branchSlug, refreshLimits, rootProject, UNTRUSTED_CLAUDE_ARGS, untrustedPath } from "./actions";
 import { notify } from "./notify";
+import { withTitles } from "./sessionActions";
 import type { AgentSession, Project, Tool } from "./types";
 
 /** A file sent with a message. Images go to the agent as images; other files as their paths. */
@@ -234,7 +235,7 @@ export async function loadSessions(project: Project) {
   const accounts = desk().accounts;
   const dirs = (kind: Tool) => [...new Set(accounts.filter((a) => a.kind === kind).map((a) => a.dir))];
   try {
-    const list = await ipc.sessionsList(project.path, dirs("claude"), dirs("codex"));
+    const list = withTitles(await ipc.sessionsList(project.path, dirs("claude"), dirs("codex")));
     useChats.setState((s) => ({ sessions: { ...s.sessions, [project.path]: list } }));
   } catch {
     /* Keeps what was there. */

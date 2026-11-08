@@ -33,6 +33,8 @@ export const uid = () => crypto.randomUUID();
 
 export interface Preferences {
   theme: ThemeId | "system";
+  /** Names you gave conversations in Desk, by `<tool>:<id>`. The CLIs keep their own. */
+  sessionTitles?: Record<string, string>;
   /** Bumped when the default look changes; drives one-time theme migration. */
   themeVersion: number;
   /** Pixel themes: animate the pixel-wave backdrop (Reduce motion always shows a still frame). */

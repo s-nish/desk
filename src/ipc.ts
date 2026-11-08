@@ -1,5 +1,5 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
-import type { AgentSession, DetectedAccount, DirEntry, GitStatus, SearchResults, Worktree, UsageLimits } from "./types";
+import type { AgentSession, Tool, DetectedAccount, DirEntry, GitStatus, SearchResults, Worktree, UsageLimits } from "./types";
 
 export interface SpawnOpts {
   cwd: string;
@@ -86,6 +86,7 @@ export const ipc = {
   gitTaskWorktree: (root: string, slug: string) => invoke<{ path: string; branch: string; base: string }>("git_task_worktree", { root, slug }),
   gitWorktreeRemove: (root: string, path: string, force: boolean) => invoke<void>("git_worktree_remove", { root, path, force }),
   gitBranchDelete: (root: string, branch: string) => invoke<void>("git_branch_delete", { root, branch }),
+  sessionTrash: (tool: Tool, dir: string | null, cwd: string, id: string) => invoke<number>("session_trash", { tool, dir, cwd, id }),
   sessionsList: (project: string, claude: (string | null)[], codex: (string | null)[]) => invoke<AgentSession[]>("sessions_list", { project, claude, codex }),
   usageLimits: (claude: (string | null)[], codex: (string | null)[]) => invoke<UsageLimits[]>("usage_limits", { claude, codex }),
   usageRefresh: (claude: (string | null)[], codex: (string | null)[]) => invoke<UsageLimits[]>("usage_refresh", { claude, codex }),

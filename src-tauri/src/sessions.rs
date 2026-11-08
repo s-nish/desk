@@ -335,9 +335,90 @@ pub fn claude_state(dir: Option<String>, cwd: &str, id: &str) -> &'static str {
     if typed { "resumable" } else { "empty" }
 }
 
+/// Moves conversation `id`'s transcript to the Trash, so Claude Code or Codex no longer
+/// lists or resumes it (and it can still be put back from the Trash). Claude Code also keeps
+/// a folder named after the conversation beside the transcript; that goes too.
+/// Returns how many items were moved.
+pub fn trash(tool: &str, dir: Option<String>, cwd: &str, id: &str, bin: &Path) -> Result<usize, String> {
+    if id.is_empty() || id.len() > 64 || !id.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+        return Err("Not a conversation id.".into());
+    }
+    let mut targets: Vec<PathBuf> = Vec::new();
+    match tool {
+        "claude" => {
+            let root = dir.map(PathBuf::from).unwrap_or_else(|| home().join(".claude")).join("projects");
+            let file = format!("{id}.jsonl");
+            let direct = root.join(claude_project_key(cwd)).join(&file);
+            let found = if direct.is_file() {
+                Some(direct)
+            } else {
+                fs::read_dir(&root).into_iter().flatten().flatten().map(|e| e.path().join(&file)).find(|p| p.is_file())
+            };
+            if let Some(path) = found {
+                let folder = path.with_extension("");
+                targets.push(path);
+                if folder.is_dir() {
+                    targets.push(folder);
+                }
+            }
+        }
+        "codex" => {
+            let root = dir.map(PathBuf::from).unwrap_or_else(|| home().join(".codex")).join("sessions");
+            let suffix = format!("{id}.jsonl");
+            targets.extend(codex_files(&root).into_iter().filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().ends_with(&suffix))));
+        }
+        _ => return Err("Unknown tool.".into()),
+    }
+    if targets.is_empty() {
+        return Err("Couldn't find this conversation's transcript.".into());
+    }
+    fs::create_dir_all(bin).map_err(|e| e.to_string())?;
+    for path in &targets {
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| id.to_string());
+        let mut dest = bin.join(&name);
+        let mut n = 2;
+        while dest.exists() {
+            dest = bin.join(format!("{name} {n}"));
+            n += 1;
+        }
+        fs::rename(path, &dest).map_err(|e| format!("Couldn't move {name} to the Trash: {e}"))?;
+    }
+    Ok(targets.len())
+}
+
+/// The user's Trash folder.
+pub fn user_trash() -> PathBuf {
+    home().join(".Trash")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trash_moves_only_that_conversation() {
+        let tmp = std::env::temp_dir().join(format!("desk-trash-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        let claude = tmp.join("claude");
+        let key = claude_project_key("/p/app");
+        let id = "0b1c2d3e-0000-4000-8000-000000000001";
+        write(&claude.join("projects").join(&key).join(format!("{id}.jsonl")), &["{}".into()]);
+        fs::create_dir_all(claude.join("projects").join(&key).join(id).join("subagents")).unwrap();
+        write(&claude.join("projects").join(&key).join("keep.jsonl"), &["{}".into()]);
+        let codex = tmp.join("codex");
+        let cid = "019a0000-0000-7000-8000-0000000000aa";
+        write(&codex.join("sessions/2026/10/19").join(format!("rollout-2026-10-19T10-00-00-{cid}.jsonl")), &["{}".into()]);
+        let bin = tmp.join("bin");
+
+        assert_eq!(trash("claude", Some(claude.to_string_lossy().into()), "/p/app", id, &bin), Ok(2));
+        assert!(!claude.join("projects").join(&key).join(format!("{id}.jsonl")).exists());
+        assert!(claude.join("projects").join(&key).join("keep.jsonl").exists());
+        assert!(bin.join(format!("{id}.jsonl")).exists() && bin.join(id).is_dir());
+        assert_eq!(trash("codex", Some(codex.to_string_lossy().into()), "/p/app", cid, &bin), Ok(1));
+        assert!(trash("claude", Some(claude.to_string_lossy().into()), "/p/app", "../../etc", &bin).is_err());
+        assert!(trash("claude", Some(claude.to_string_lossy().into()), "/p/app", id, &bin).is_err());
+        let _ = fs::remove_dir_all(&tmp);
+    }
 
     fn write(path: &Path, lines: &[String]) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();

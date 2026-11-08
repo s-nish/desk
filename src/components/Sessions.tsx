@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowUpRight, Columns2, Copy, Ellipsis, FolderTree, MessagesSquare, Play, RefreshCw, Search } from "lucide-react";
+import { ArrowUpRight, Columns2, Copy, Ellipsis, FolderTree, MessagesSquare, Pencil, Play, RefreshCw, Search, Trash2 } from "lucide-react";
+import { deleteConversation, renameConversation, withTitles } from "../sessionActions";
 import { TOOL_LABEL, useDesk } from "../store";
 import { accountDirs, openInSplit, resumeSession, searchConversations } from "../actions";
 import { ipc } from "../ipc";
@@ -26,12 +27,18 @@ function useSessions(project: Project) {
     }
     setLoading(true);
     const { claude, codex } = accountDirs();
-    void ipc.sessionsList(project.path, claude, codex).then((next) => {
+    void ipc.sessionsList(project.path, claude, codex).then(withTitles).then((next) => {
       cache.set(project.path, { at: Date.now(), list: next });
       if (live) setList(next);
     }).catch(() => { if (live) setList([]); }).finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
   }, [project.path, revision, accounts.length]);
+  // Renaming or deleting a conversation anywhere reloads the list.
+  useEffect(() => {
+    const reload = () => { cache.delete(project.path); setRevision((r) => r + 1); };
+    window.addEventListener("desk-sessions-changed", reload);
+    return () => window.removeEventListener("desk-sessions-changed", reload);
+  }, [project.path]);
   return { list, loading, refresh: () => setRevision((r) => r + 1) };
 }
 
@@ -89,6 +96,9 @@ function sessionMenu(session: AgentSession, project: Project) {
     },
     { separator: true },
     { label: "Copy conversation ID", icon: <Copy size={14} />, onSelect: () => void navigator.clipboard.writeText(session.id) },
+    { separator: true },
+    { label: "Rename…", icon: <Pencil size={14} />, onSelect: () => renameConversation({ tool: session.tool, title: session.title, session }) },
+    { label: "Delete…", icon: <Trash2 size={14} />, danger: true, onSelect: () => deleteConversation({ tool: session.tool, title: session.title, session }) },
   ];
 }
 

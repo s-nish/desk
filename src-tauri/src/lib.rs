@@ -409,6 +409,12 @@ async fn sessions_list(project: String, claude: Vec<Option<String>>, codex: Vec<
         .unwrap_or_default()
 }
 #[tauri::command]
+async fn session_trash(tool: String, dir: Option<String>, cwd: String, id: String) -> Result<usize, String> {
+    tauri::async_runtime::spawn_blocking(move || sessions::trash(&tool, dir, &cwd, &id, &sessions::user_trash()))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
 async fn claude_session_state(dir: Option<String>, cwd: String, id: String) -> &'static str {
     tauri::async_runtime::spawn_blocking(move || sessions::claude_state(dir, &cwd, &id))
         .await
@@ -640,6 +646,7 @@ pub fn run() {
             git_commits_since,
             git_push,
             gh_pr_worktree,
+            session_trash,
             git_worktree_remove,
             git_branch_delete,
             sessions_list,

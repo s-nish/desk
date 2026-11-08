@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { ArrowUp, GitBranch, FileText, Image as ImageIcon, Paperclip, Asterisk, Check, ChevronDown, ChevronRight, Ellipsis, Gauge, Hexagon, LoaderCircle, MessageSquarePlus, Plus, Search, Server, Slash, Square, SquareTerminal, UserRound, X } from "lucide-react";
+import { ArrowUp, GitBranch, Pencil, Trash2, FileText, Image as ImageIcon, Paperclip, Asterisk, Check, ChevronDown, ChevronRight, Ellipsis, Gauge, Hexagon, LoaderCircle, MessageSquarePlus, Plus, Search, Server, Slash, Square, SquareTerminal, UserRound, X } from "lucide-react";
 import { AGENTS, TOOL_LABEL, projectTree, useDesk } from "../store";
 import { addProjectsFromDialog, closeTab, openTerminal } from "../actions";
 import { TerminalPane, cleanTitle } from "./Workspace";
@@ -19,6 +19,7 @@ import {
 } from "../chat";
 import type { Agent, AgentSession, MenuItem, Project, TerminalTab, Tool } from "../types";
 import { ToolLogo } from "./ToolLogo";
+import { deleteConversation, renameConversation } from "../sessionActions";
 
 export function ToolGlyph({ tool, size = 13 }: { tool: Agent; size?: number }) {
   return <span className="tool-glyph" role="img" aria-label={TOOL_LABEL[tool]}><ToolLogo tool={tool} size={size} /></span>;
@@ -139,7 +140,7 @@ function ProjectChats({ project, query }: { project: Project; query: string }) {
               className={"chat-row" + (r.chat && r.chat.id === activeId && !termId ? " is-active" : "")}
               title={`${r.title}${r.session ? `\n${TOOL_LABEL[r.tool]}, ${relativeTime(r.updated)}` : ""}`}
               onClick={() => (r.chat ? (useChats.getState().select(r.chat.id), useDesk.getState().selectProject(project.id)) : r.session && openSession(r.session, project))}
-              onContextMenu={(e) => { if (!r.chat) return; e.preventDefault(); chatMenu(r.chat, { x: e.clientX, y: e.clientY }); }}
+              onContextMenu={(e) => { e.preventDefault(); chatMenu(r.chat, { x: e.clientX, y: e.clientY }, r.session, project); }}
             >
               <ToolGlyph tool={r.tool} />
               <span className="chat-row-title">{r.title}</span>
@@ -211,11 +212,21 @@ export function ChatView() {
   );
 }
 
-/** Right-click menu for a chat, in the sidebar and the tab strip. */
-function chatMenu(chat: Chat, at: { x: number; y: number }) {
+/** Right-click menu for a conversation in the sidebar or tab strip: an open chat, a past session, or both. */
+function chatMenu(chat: Chat | undefined, at: { x: number; y: number } | Element, session?: AgentSession, project?: Project) {
+  const tool = chat?.tool ?? session!.tool;
+  const title = chat && (chat.items.length || chat.saved) ? chat.title : session?.title ?? "New chat";
+  const target = { tool, title, chat, session };
   openMenu(at, [
-    { label: chat.unread ? "Mark as read" : "Mark as unread", onSelect: () => markUnread(chat.id, !chat.unread) },
-    { label: "Close", onSelect: () => closeChat(chat.id) },
+    ...(chat
+      ? [
+          { label: chat.unread ? "Mark as read" : "Mark as unread", onSelect: () => markUnread(chat.id, !chat.unread) },
+          { label: "Close", icon: <X size={14} />, onSelect: () => closeChat(chat.id) },
+        ]
+      : session && project ? [{ label: "Open", onSelect: () => openSession(session, project) }] : []),
+    { separator: true },
+    { label: "Rename…", icon: <Pencil size={14} />, disabled: !chat?.items.length && !session && !chat?.saved, onSelect: () => renameConversation(target) },
+    { label: "Delete…", icon: <Trash2 size={14} />, danger: true, onSelect: () => deleteConversation(target) },
   ]);
 }
 
@@ -302,6 +313,9 @@ function Conversation({ chat, project }: { chat: Chat; project: Project }) {
   const menu = (at: Element) => openMenu(at, [
     { label: "Continue in a terminal tab", icon: <SquareTerminal size={14} />, disabled: !chat.saved || chat.status !== "idle", onSelect: openInTerminal },
     { label: "Copy conversation ID", disabled: !chat.sessionId, onSelect: () => void navigator.clipboard.writeText(chat.sessionId ?? "") },
+    { separator: true },
+    { label: "Rename…", icon: <Pencil size={14} />, disabled: !chat.items.length && !chat.saved, onSelect: () => renameConversation({ tool: chat.tool, title: chat.title, chat }) },
+    { label: "Delete…", icon: <Trash2 size={14} />, danger: true, onSelect: () => deleteConversation({ tool: chat.tool, title: chat.title, chat }) },
     { separator: true },
     { label: "Close chat", icon: <X size={14} />, onSelect: () => closeChat(chat.id) },
   ]);
