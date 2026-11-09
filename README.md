@@ -202,6 +202,6 @@ Set `CHROME_PATH` to use a different Chrome, or `DESK_TEST_URL` for a different 
 
 ## License
 
-[MIT](LICENSE) © 2026 Nishchal Singi
+[MIT](LICENSE)
 
 <sub>Claude, Codex, Gemini, Cursor, Grok, OpenCode and GitHub are trademarks of their owners. Desk is independent and not affiliated with them. Logos from [Lobe Icons](https://lobehub.com/icons) (MIT).</sub>
