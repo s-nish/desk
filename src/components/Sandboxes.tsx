@@ -1,133 +1,256 @@
-// Sandboxes in the interface: where a chat runs (a chip in the composer), the
-// strip on a sandbox chat, a one-line suggestion on long local tasks, the setup
-// sheet for a provider, and Settings ▸ Sandboxes. Nothing here is ever required:
-// "This Mac" is always first and needs no account.
+// Sandboxes in the interface: where an agent runs (a radial picker in the chat
+// composer, the terminal's new-tab menus), the bar on a sandbox chat or tab, a
+// one-line suggestion on long local tasks, and Settings ▸ Sandboxes. Nothing
+// here is ever required: "This Mac" is always first and needs no account.
 
-import { useEffect, useMemo, useState } from "react";
-import { Check, Cloud, Copy, ExternalLink, Laptop, LoaderCircle, SquareTerminal } from "lucide-react";
-import { useDesk } from "../store";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Check, ChevronDown, Copy, Download, ExternalLink, GitBranch, LoaderCircle, MoreHorizontal, Play, Plus, RefreshCw, Settings2, Square, SquareTerminal, Trash2, X } from "lucide-react";
+import { TOOL_LABEL, useDesk, type SandboxStartup } from "../store";
 import { useChats, type Chat } from "../chat";
-import { openTerminal } from "../actions";
+import { openTerminal, rootProject } from "../actions";
 import { ipc } from "../ipc";
 import { openMenu } from "./Menu";
-import { Shell } from "./Modals";
+import { Radial, useRadial, type RadialItem } from "./Radial";
+import { SandboxLogo } from "./SandboxLogo";
+import { ToolLogo } from "./ToolLogo";
 import {
-  PROVIDERS, checkAllProviders, checkProvider, createSandbox, provider, refreshStates, removeSandbox, shellCommand, stopSandbox, tokenKey, useSandboxes,
-  type ProviderId, type Sandbox,
+  PROVIDERS, checkAllProviders, checkProvider, createSandbox, provider, refreshStates, removeSandbox, shellCommand, startProvider, stopSandbox, tokenKey, useSandboxes, wakeSandbox,
+  type ProviderCheck, type ProviderId, type Sandbox,
 } from "../sandbox";
-import { pullChanges } from "../sandbox/chats";
-import type { MenuItem } from "../types";
+import { pullWork } from "../sandbox/chats";
+import { canRunTerminal, openSandboxTerminal } from "../sandbox/terminal";
+import type { Agent, TerminalTab } from "../types";
 
 const HINT_AFTER_MS = 10 * 60_000;
 
 const label = (id: string) => provider(id)?.label ?? id;
 
+/** Settings ▸ Sandboxes, opened at a provider's setup steps. */
 export function openSandboxSetup(id: ProviderId) {
-  useDesk.getState().setModal({ kind: "sandboxSetup", provider: id });
+  useDesk.getState().setModal({ kind: "settings", section: "sandboxes", provider: id });
+}
+
+function toastError(e: unknown) {
+  useDesk.getState().toast(e instanceof Error ? e.message : String(e), "error");
+}
+
+type Dot = "ok" | "bad" | "warn";
+function checkDot(check?: ProviderCheck): Dot { return check?.ready ? "ok" : check?.stopped ? "warn" : "bad"; }
+function stateDot(state?: string): Dot { return state === "running" ? "ok" : state === "missing" ? "bad" : "warn"; }
+/** What a sandbox's status reads as, and its dot: amber while starting or unknown. */
+function shownState(state: string | undefined, waking: string | undefined): { text: string; dot: Dot } {
+  const text = waking ? "starting" : state ?? "checking";
+  return { text, dot: text === "starting" || text === "checking" ? "warn" : stateDot(text) };
+}
+function checkText(p: { label: string }, check?: ProviderCheck) {
+  if (!check) return "Checking…";
+  if (check.ready) return "Ready";
+  if (check.stopped) return `${p.label} isn't running`;
+  return check.installed ? "Not signed in" : "Not installed";
+}
+
+/** Makes a sandbox with a provider: starts Docker first if it's closed, or opens setup if it isn't set up. */
+async function withProvider(id: ProviderId, then: () => Promise<void> | void) {
+  let check = useSandboxes.getState().checks[id] ?? (await checkProvider(id));
+  if (!check.ready && check.stopped) check = await startProvider(id).catch((e) => { toastError(e); return check; });
+  if (!check.ready) return openSandboxSetup(id);
+  await then();
+}
+
+/**
+ * The radial's items: This Mac, this project's sandboxes, a new one with each
+ * provider, and settings. `terminal` leaves out providers with no interactive tab.
+ */
+function whereItems(o: {
+  projectId: string;
+  current: string | null;
+  terminal?: boolean;
+  onMac?: () => void;
+  onSandbox: (x: Sandbox) => void;
+  onNew: (id: ProviderId) => void;
+}): RadialItem[] {
+  const { sandboxes } = useDesk.getState();
+  const { checks, states } = useSandboxes.getState();
+  const items: RadialItem[] = [];
+  if (o.onMac) items.push({ key: "mac", icon: <SandboxLogo provider="mac" size={18} />, label: "This Mac", sub: "Runs here, in your folder", on: !o.current, onSelect: o.onMac });
+  const mine = sandboxes.filter((x) => x.projectId === o.projectId && (!o.terminal || canRunTerminal(x.provider))).sort((a, b) => b.createdAt - a.createdAt).slice(0, 4);
+  for (const x of mine) {
+    const state = states[x.id];
+    items.push({ key: x.id, icon: <SandboxLogo provider={x.provider} size={20} />, label: x.name, sub: `${label(x.provider)} · ${state ?? "checking…"}`, on: o.current === x.id, dot: stateDot(state), onSelect: () => o.onSandbox(x) });
+  }
+  for (const p of PROVIDERS) {
+    if (o.terminal && !p.tty) continue;
+    const check = checks[p.id];
+    const sub = check?.ready ? p.blurb : check?.stopped ? `${p.label} isn't running. Pick to start it` : check ? "Not set up. Pick to set it up" : "Checking…";
+    items.push({ key: `new-${p.id}`, icon: <SandboxLogo provider={p.id} size={20} />, label: `New ${p.label} sandbox`, sub, dot: checkDot(check), badge: <Plus size={9} strokeWidth={3} />, onSelect: () => o.onNew(p.id) });
+  }
+  items.push({ key: "settings", icon: <Settings2 size={17} />, label: "Sandbox settings", sub: "Providers, startup, tokens", onSelect: () => useDesk.getState().setModal({ kind: "settings", section: "sandboxes" }) });
+  return items;
 }
 
 function setWhere(chat: Chat, where: string | null) {
   useChats.getState().patch(chat.id, { where, remote: null, ...(where ? { worktree: false } : {}) });
 }
 
-/** "This Mac" or a sandbox, chosen before the first message. */
+/** "This Mac" or a sandbox, chosen before the first message: a radial of logos with status dots. */
 export function RunInChip({ chat, fresh, repo }: { chat: Chat; fresh: boolean; repo: boolean }) {
   const sandboxes = useDesk((s) => s.sandboxes);
-  const checks = useSandboxes((s) => s.checks);
-  const states = useSandboxes((s) => s.states);
+  useSandboxes((s) => s.checks);
+  useSandboxes((s) => s.states);
   const progress = useSandboxes((s) => s.progress[`new:${chat.projectId}`]);
   const current = sandboxes.find((x) => x.id === chat.where);
   const projectId = useDesk((s) => s.projects.find((p) => p.id === chat.projectId)?.worktreeOf ?? chat.projectId);
-  const mine = sandboxes.filter((x) => x.projectId === projectId);
+  const radial = useRadial();
 
   if (!fresh) {
     if (!current) return null;
-    return <span className="chat-chip is-static" title={`Runs in ${label(current.provider)} (${current.name})`}><Cloud size={12} />{label(current.provider)}</span>;
+    return <span className="chat-chip is-static" title={`Runs in ${label(current.provider)} (${current.name})`}><SandboxLogo provider={current.provider} size={13} /><span className="chip-label">{label(current.provider)}</span></span>;
   }
-  const open = async (at: Element) => {
-    void checkAllProviders();
-    const items: MenuItem[] = [
-      { label: "This Mac", icon: <Laptop size={13} />, checked: !chat.where, onSelect: () => setWhere(chat, null) },
-    ];
-    if (mine.length) {
-      items.push({ separator: true });
-      for (const x of mine) {
-        const state = states[x.id];
-        items.push({ label: `${x.name}`, hint: `${label(x.provider)}${state ? ` · ${state}` : ""}`, icon: <Cloud size={13} />, checked: chat.where === x.id, onSelect: () => setWhere(chat, x.id) });
-      }
-    }
-    items.push({ separator: true });
-    for (const p of PROVIDERS) {
-      const check = checks[p.id];
-      items.push(check?.ready
-        ? { label: `New ${p.label} sandbox`, hint: p.blurb, onSelect: () => void make(p.id) }
-        : { label: p.label, hint: "Set up…", onSelect: () => openSandboxSetup(p.id) });
-    }
-    items.push({ separator: true }, { label: "Sandbox settings…", onSelect: () => useDesk.getState().setModal({ kind: "settings", section: "sandboxes" }) });
-    openMenu(at, items);
-  };
-  const make = async (id: ProviderId) => {
+  if (!repo) return null;
+  const make = (id: ProviderId) => void withProvider(id, async () => {
     try {
       const sandbox = await createSandbox(projectId, id);
       setWhere(chat, sandbox.id);
       useDesk.getState().toast(`${label(id)} sandbox ready. Your first message sends the code there.`);
-    } catch (e) {
-      useDesk.getState().toast(e instanceof Error ? e.message : String(e), "error");
-    }
+    } catch (e) { toastError(e); }
+  });
+  const open = (el: HTMLElement) => {
+    void checkAllProviders();
+    void refreshStates(projectId);
+    radial.open(el);
   };
-  if (!repo) return null;
+  const items = radial.state ? whereItems({ projectId, current: chat.where ?? null, onMac: () => setWhere(chat, null), onSandbox: (x) => setWhere(chat, x.id), onNew: make }) : [];
   return (
-    <button className="chat-chip" title={current ? `Runs in ${label(current.provider)} (${current.name}). Keeps going when you close Desk.` : "Where this chat runs. A sandbox keeps going when you close Desk (or the lid, with a cloud one)."} onClick={(e) => void open(e.currentTarget)}>
-      {progress ? <LoaderCircle size={12} className="is-spinning" /> : current ? <Cloud size={12} /> : <Laptop size={12} />}
-      <span className="chip-label">{progress ? "Making sandbox…" : current ? label(current.provider) : "This Mac"}</span>
-    </button>
+    <>
+      <button className={"chat-chip run-in-chip" + (radial.opened ? " is-open" : "")} aria-haspopup="menu" aria-expanded={radial.opened} title={current ? `Runs in ${label(current.provider)} (${current.name}). Keeps going when you close Desk.` : "Where this chat runs. A sandbox keeps going when you close Desk (or the lid, with a cloud one)."} onClick={(e) => (radial.opened ? radial.close() : open(e.currentTarget))}>
+        {progress ? <LoaderCircle size={12} className="is-spinning" /> : <SandboxLogo provider={current?.provider ?? "mac"} size={13} />}
+        <span className="chip-label">{progress ? "Making sandbox…" : current ? label(current.provider) : "This Mac"}</span>
+        <ChevronDown size={11} />
+      </button>
+      {radial.state && <Radial state={radial.state} items={items} label="Where this chat runs" onClosed={radial.close} />}
+    </>
   );
 }
 
-/** One line on a sandbox chat: where, its state, and what you can do. */
-export function SandboxStrip({ chat }: { chat: Chat }) {
-  const sandbox = useDesk((s) => s.sandboxes.find((x) => x.id === chat.where));
-  const state = useSandboxes((s) => (sandbox ? s.states[sandbox.id] : undefined));
+/** The terminal's "in a sandbox" picker: opens an agent tab in a sandbox. */
+export function useSandboxTerminalPicker() {
+  const radial = useRadial();
+  const [req, setReq] = useState<{ projectId: string; tool: Agent } | null>(null);
+  useSandboxes((s) => s.checks);
+  useSandboxes((s) => s.states);
+  const open = (el: HTMLElement, projectId: string, tool: Agent) => {
+    const project = useDesk.getState().projects.find((p) => p.id === projectId);
+    if (!project) return;
+    void checkAllProviders();
+    void refreshStates(rootProject(project).id);
+    setReq({ projectId, tool });
+    radial.open(el);
+  };
+  const root = req ? rootProject(useDesk.getState().projects.find((p) => p.id === req.projectId)!) : null;
+  const element = radial.state && req && root ? (
+    <Radial
+      state={radial.state}
+      label={`Run ${TOOL_LABEL[req.tool]} in a sandbox`}
+      onClosed={radial.close}
+      items={whereItems({
+        projectId: root.id,
+        current: null,
+        terminal: true,
+        onSandbox: (x) => void openSandboxTerminal(req.projectId, req.tool, { sandboxId: x.id }),
+        onNew: (id) => void withProvider(id, () => openSandboxTerminal(req.projectId, req.tool, { provider: id })),
+      })}
+    />
+  ) : null;
+  return { open, element };
+}
+
+/** Menu items for a new agent tab in a sandbox; `pick` opens the radial at the menu's button. */
+export function sandboxTabItems(at: HTMLElement, projectId: string, picker: ReturnType<typeof useSandboxTerminalPicker>) {
+  return (["claude", "codex"] as Agent[]).map((tool) => ({
+    label: `${TOOL_LABEL[tool]} in a sandbox…`,
+    hint: "Docker or the cloud",
+    icon: <ToolLogo tool={tool} size={14} />,
+    onSelect: () => setTimeout(() => picker.open(at, projectId, tool), 0),
+  }));
+}
+
+/** One slim bar on a sandbox chat or tab: where, its state, the branch, and what you can do. */
+export function SandboxBar({ sandbox, remote, projectId, tool, accountId, idle = true, terminal }: {
+  sandbox: Sandbox;
+  remote: { cwd: string; branch: string; base: string } | null;
+  projectId: string;
+  tool: Agent | "shell";
+  accountId: string | null;
+  idle?: boolean;
+  /** Sits above a terminal tab instead of a message box. */
+  terminal?: boolean;
+}) {
+  const state = useSandboxes((s) => s.states[sandbox.id]);
+  const waking = useSandboxes((s) => s.progress[`wake:${sandbox.id}`]);
   const [pulling, setPulling] = useState(false);
-  useEffect(() => { if (sandbox && !state) void refreshStates(sandbox.projectId); }, [sandbox, state]);
-  if (!sandbox) return null;
+  useEffect(() => { if (!state) void refreshStates(sandbox.projectId); }, [sandbox, state]);
   const p = provider(sandbox.provider);
   const shell = shellCommand(sandbox);
   const toast = useDesk.getState().toast;
   const pull = async () => {
+    if (!remote) return;
     setPulling(true);
     try {
-      const got = await pullChanges(chat.id);
+      const got = await pullWork(sandbox, projectId, remote);
       toast(`Pulled ${got.branch} into ${got.path}${got.changes ? ", with its uncommitted changes" : ""}.`);
-    } catch (e) {
-      toast(e instanceof Error ? e.message : String(e), "error");
-    } finally {
-      setPulling(false);
-    }
+    } catch (e) { toastError(e); } finally { setPulling(false); }
   };
   const signIn = () => {
-    const account = useDesk.getState().accounts.find((a) => a.id === chat.accountId);
+    const account = useDesk.getState().accounts.find((a) => a.id === accountId);
     const folder = account?.dir ? account.dir.split("/").pop()!.replace(/^\.+/, "") : null;
-    const variable = chat.tool === "codex" ? "CODEX_HOME" : "CLAUDE_CONFIG_DIR";
-    const command = folder ? `${variable}=~/.desk/accounts/${folder} ${chat.tool}` : chat.tool;
-    if (shell) openTerminal(chat.projectId, "shell", { command: shell });
-    toast(`In the sandbox, run: ${command}${chat.tool === "claude" ? " then /login" : " login"}. The sign-in stays there; Desk never sees it.`);
+    const variable = tool === "codex" ? "CODEX_HOME" : "CLAUDE_CONFIG_DIR";
+    const command = folder ? `${variable}=~/.desk/accounts/${folder} ${tool}` : tool;
+    if (shell) openTerminal(projectId, "shell", { command: shell });
+    toast(`In the sandbox, run: ${command}${tool === "claude" ? " then /login" : " login"}. The sign-in stays there; Desk never sees it.`);
   };
+  const shown = shownState(state, waking);
   return (
-    <div className="sandbox-strip" role="status">
-      <Cloud size={12} />
-      <span className="sandbox-strip-where">{p?.label} · {sandbox.name}</span>
-      <span className={"sandbox-strip-state is-" + (state ?? "unknown")}>{state ?? "…"}</span>
-      {chat.remote && <span className="sandbox-strip-branch">{chat.remote.branch}</span>}
-      <span className="sandbox-strip-gap" />
-      {chat.remote && <button className="text-button" disabled={pulling} onClick={() => void pull()}>{pulling ? "Pulling…" : "Pull changes"}</button>}
-      {shell && <button className="text-button" title="A terminal tab with a shell in the sandbox" onClick={() => openTerminal(chat.projectId, "shell", { command: shell })}><SquareTerminal size={12} />Terminal</button>}
-      <button className="text-button" onClick={(e) => openMenu(e.currentTarget, [
-        { label: `Sign in to ${chat.tool === "codex" ? "Codex" : "Claude Code"} there…`, disabled: !shell, onSelect: signIn },
-        { label: "Stop the sandbox", hint: "Its disk is kept", disabled: state !== "running" || chat.status !== "idle", onSelect: () => void stopSandbox(sandbox) },
-      ])}>More</button>
+    <div className={"sandbox-bar" + (terminal ? " is-terminal" : "")} role="status">
+      <span className="sandbox-bar-logo"><SandboxLogo provider={sandbox.provider} size={14} /></span>
+      <span className="sandbox-bar-where"><strong>{p?.label}</strong><span>{sandbox.name}</span></span>
+      <span className={"sandbox-bar-state is-" + shown.dot} title={waking || undefined}><i />{shown.text}</span>
+      {remote && <span className="sandbox-bar-branch" title={`From ${remote.base}`}><GitBranch size={11} />{remote.branch}</span>}
+      <span className="sandbox-bar-gap" />
+      {remote && <button className="sandbox-bar-btn" disabled={pulling} title="Bring the branch home as a worktree, with uncommitted changes" onClick={() => void pull()}>{pulling ? <LoaderCircle size={12} className="is-spinning" /> : <Download size={12} />}<span>{pulling ? "Pulling…" : "Pull changes"}</span></button>}
+      {shell && <button className="sandbox-bar-btn" title="A terminal tab with a shell in the sandbox" onClick={() => openTerminal(projectId, "shell", { command: shell })}><SquareTerminal size={12} /><span>Shell</span></button>}
+      <button className="sandbox-bar-btn is-icon" aria-label="More sandbox actions" title="More" onClick={(e) => openMenu(e.currentTarget, [
+        { label: `Sign in to ${tool === "codex" ? "Codex" : "Claude Code"} there…`, disabled: !shell || tool === "shell", onSelect: signIn },
+        { label: "Check again", icon: <RefreshCw size={13} />, onSelect: () => void refreshStates(sandbox.projectId) },
+        state !== "running"
+          ? { label: "Start the sandbox", icon: <Play size={13} />, onSelect: () => void wakeSandbox(sandbox).catch(toastError) }
+          : { label: "Stop the sandbox", hint: "Its disk is kept", icon: <Square size={13} />, disabled: !idle, onSelect: () => void stopSandbox(sandbox) },
+        { separator: true },
+        { label: "Sandbox settings…", onSelect: () => useDesk.getState().setModal({ kind: "settings", section: "sandboxes" }) },
+      ])}><MoreHorizontal size={14} /></button>
     </div>
   );
+}
+
+/** The bar on a sandbox chat. */
+export function SandboxStrip({ chat }: { chat: Chat }) {
+  const sandbox = useDesk((s) => s.sandboxes.find((x) => x.id === chat.where));
+  if (!sandbox) return null;
+  return <SandboxBar sandbox={sandbox} remote={chat.remote ?? null} projectId={chat.projectId} tool={chat.tool} accountId={chat.accountId} idle={chat.status === "idle"} />;
+}
+
+/** The bar above a terminal tab whose agent runs in a sandbox. */
+export function SandboxTabBar({ tab }: { tab: TerminalTab }) {
+  const sandbox = useDesk((s) => s.sandboxes.find((x) => x.id === tab.sandboxId));
+  if (!sandbox) return null;
+  return <SandboxBar terminal sandbox={sandbox} remote={tab.remote ?? null} projectId={tab.projectId} tool={tab.tool as Agent} accountId={tab.accountId} idle={!tab.busy} />;
+}
+
+/** Shown in the terminal view while a sandbox tab is being prepared. */
+export function SandboxTerminalProgress({ projectId }: { projectId: string }) {
+  const root = useDesk((s) => { const p = s.projects.find((x) => x.id === projectId); return p ? (p.worktreeOf ?? p.id) : null; });
+  const text = useSandboxes((s) => (root ? s.progress[`term:${root}`] || s.progress[`new:${root}`] : ""));
+  if (!text) return null;
+  return <div className="sandbox-progress" role="status"><LoaderCircle size={12} className="is-spinning" />{text}</div>;
 }
 
 /** Once per project, on a long local task: a calm suggestion. Never blocks anything. */
@@ -145,13 +268,15 @@ export function SandboxHint({ chat }: { chat: Chat }) {
   const notNow = () => useDesk.getState().setPreferences({ sandboxHintOff: [...(prefs.sandboxHintOff ?? []), projectId] });
   return (
     <div className="sandbox-hint">
-      <Cloud size={12} />
+      <SandboxLogo provider="docker" size={12} />
       <span>Want this to keep going with the lid closed? Run it in a sandbox.</span>
       <button className="text-button" onClick={() => useDesk.getState().setModal({ kind: "settings", section: "sandboxes" })}>Set up</button>
       <button className="text-button" onClick={notNow}>Not now</button>
     </div>
   );
 }
+
+// Settings ▸ Sandboxes
 
 function CopyLine({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -163,20 +288,49 @@ function CopyLine({ text }: { text: string }) {
   );
 }
 
-/** Install, sign in, check. Close it at any point; nothing is lost. */
-export function SandboxSetup({ id }: { id: ProviderId }) {
+function Refresh({ busy, onClick, label: name }: { busy: boolean; onClick: () => void; label: string }) {
+  return <button className="icon-btn sandbox-refresh" aria-label={name} title={name} disabled={busy} onClick={onClick}><RefreshCw size={13} className={busy ? "is-spinning" : ""} /></button>;
+}
+
+/** A provider: its status, a refresh, and its setup steps inline. */
+function ProviderCard({ id, open, onToggle }: { id: ProviderId; open: boolean; onToggle: () => void }) {
   const p = provider(id)!;
   const check = useSandboxes((s) => s.checks[id]);
+  const checking = useSandboxes((s) => !!s.checking[id]);
+  const starting = useSandboxes((s) => s.progress[`start:${id}`]);
   const projectId = useDesk((s) => s.activeProjectId);
-  const [checking, setChecking] = useState(false);
-  const recheck = async () => { setChecking(true); await checkProvider(id, true).finally(() => setChecking(false)); };
-  useEffect(() => { void recheck(); }, [id]);
-  const installed = !!check?.installed;
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (open) ref.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }, [open]);
   const runInTab = (command: string) => projectId && openTerminal(projectId, "shell", { command });
+  const dot = checkDot(check);
+  const installed = !!check?.installed;
   return (
-    <Shell title={`Set up ${p.label}`}>
-      <div className="sandbox-setup">
-        <p className="sandbox-setup-intro">{p.caps.lidClosed ? "Your agent keeps working when you close the lid." : "It runs on this Mac, isolated from your files; it keeps going when you quit Desk, not when the Mac sleeps."} Desk uses your own {p.label} account and never stores its sign-in.</p>
+    <div ref={ref} className={"sandbox-provider" + (open ? " is-open" : "") + (check?.ready ? " is-ready" : "")}>
+      <div className="sandbox-provider-head">
+        <span className="sandbox-provider-logo"><SandboxLogo provider={id} size={22} /></span>
+        <span className="sandbox-provider-name">
+          <strong>{p.label}</strong>
+          <small>{p.blurb}</small>
+        </span>
+        <Refresh busy={checking} label={`Check ${p.label} again`} onClick={() => void checkProvider(id, true)} />
+      </div>
+      <div className="sandbox-provider-status">
+        <span className={"sandbox-dot is-" + dot} />
+        <span className="sandbox-provider-state">{starting || (checking && !check ? "Checking…" : checkText(p, check))}</span>
+        {check && !check.ready && check.installed && !check.stopped && check.detail && !starting && <span className="sandbox-provider-detail" title={check.detail}>{check.detail}</span>}
+        {check?.ready && <span className="sandbox-provider-detail">{check.detail}</span>}
+      </div>
+      <div className="sandbox-provider-caps">
+        <span>{p.caps.lidClosed ? "Keeps going with the lid closed" : "Stops when this Mac sleeps"}</span>
+        <span>{p.caps.maxHours ? `Up to ${p.caps.maxHours} hours each` : "No time limit"}</span>
+        <span>{p.tty ? "Chats and terminal tabs" : "Chats"}</span>
+      </div>
+      <div className="sandbox-provider-actions">
+        {check?.stopped && <button className="btn is-primary" disabled={!!starting} onClick={() => void startProvider(id).catch(toastError)}>{starting ? <LoaderCircle size={13} className="is-spinning" /> : <Play size={13} />}Start {p.label}</button>}
+        {!check?.ready && !check?.stopped && <button className="btn" aria-expanded={open} onClick={onToggle}>{open ? "Hide steps" : "Set up…"}</button>}
+        {check?.ready && <button className="text-button" aria-expanded={open} onClick={onToggle}>{open ? "Hide" : "How it's set up"}</button>}
+      </div>
+      {open && (
         <ol className="sandbox-steps">
           <li className={installed ? "is-done" : ""}>
             <strong>{installed ? <Check size={13} /> : "1"} Install</strong>
@@ -187,28 +341,30 @@ export function SandboxSetup({ id }: { id: ProviderId }) {
             </div>
           </li>
           <li className={check?.ready ? "is-done" : ""}>
-            <strong>{check?.ready ? <Check size={13} /> : "2"} Sign in</strong>
-            {p.login ? <CopyLine text={p.login.join(" ")} /> : <span>Start Docker Desktop (or OrbStack). There's nothing to sign in to.</span>}
+            <strong>{check?.ready ? <Check size={13} /> : "2"} {p.login ? "Sign in" : "Start it"}</strong>
+            {p.login ? <CopyLine text={p.login.join(" ")} /> : <span>Open Docker Desktop (or OrbStack). There's nothing to sign in to; Desk can start it for you.</span>}
             <div className="sandbox-step-actions">
               {p.login && projectId && <button className="text-button" onClick={() => runInTab(p.login!.join(" "))}><SquareTerminal size={12} />Sign in in a terminal tab</button>}
-              <button className="text-button" onClick={() => void ipc.openExternal(p.signup)}><ExternalLink size={12} />Create an account</button>
+              {p.start && <button className="text-button" onClick={() => void startProvider(id).catch(toastError)}><Play size={12} />Start {p.label}</button>}
+              <button className="text-button" onClick={() => void ipc.openExternal(p.signup)}><ExternalLink size={12} />{p.login ? "Create an account" : "Website"}</button>
             </div>
           </li>
           <li className={check?.ready ? "is-done" : ""}>
             <strong>{check?.ready ? <Check size={13} /> : "3"} Check</strong>
             <span className={"sandbox-check" + (check?.ready ? " is-ready" : "")}>{checking ? "Checking…" : check?.detail ?? "Not checked yet."}</span>
-            <div className="sandbox-step-actions"><button className="text-button" disabled={checking} onClick={() => void recheck()}>Check again</button></div>
+            <div className="sandbox-step-actions"><button className="text-button" disabled={checking} onClick={() => void checkProvider(id, true)}><RefreshCw size={12} />Check again</button></div>
           </li>
         </ol>
-        <footer className="modal-foot"><button className="btn is-primary" onClick={() => useDesk.getState().setModal(null)}>{check?.ready ? "Done" : "Not now"}</button></footer>
-      </div>
-    </Shell>
+      )}
+    </div>
   );
 }
 
 function SandboxRow({ sandbox }: { sandbox: Sandbox }) {
   const state = useSandboxes((s) => s.states[sandbox.id]);
-  const project = useDesk((s) => s.projects.find((p) => p.id === sandbox.projectId));
+  const waking = useSandboxes((s) => s.progress[`wake:${sandbox.id}`]);
+  const [busy, setBusy] = useState(false);
+  const shell = shellCommand(sandbox);
   const remove = () => useDesk.getState().setModal({
     kind: "confirm",
     title: `Delete ${sandbox.name}?`,
@@ -217,12 +373,20 @@ function SandboxRow({ sandbox }: { sandbox: Sandbox }) {
     danger: true,
     onConfirm: () => void removeSandbox(sandbox),
   });
+  const recheck = async () => { setBusy(true); await refreshStates(sandbox.projectId).finally(() => setBusy(false)); };
+  const shown = shownState(state, waking);
   return (
-    <div className="setting-row">
-      <span><strong>{sandbox.name}</strong><small>{label(sandbox.provider)} · {project?.name ?? "removed project"} · {state ?? "…"}</small></span>
+    <div className="sandbox-row">
+      <SandboxLogo provider={sandbox.provider} size={16} />
+      <span className="sandbox-row-name"><strong>{sandbox.name}</strong><small>{label(sandbox.provider)} · made {new Date(sandbox.createdAt).toLocaleDateString()}</small></span>
+      <span className={"sandbox-bar-state is-" + shown.dot}><i />{waking || shown.text}</span>
       <span className="sandbox-row-actions">
-        {state === "running" && <button className="text-button" onClick={() => void stopSandbox(sandbox)}>Stop</button>}
-        <button className="text-button is-danger" onClick={remove}>Delete</button>
+        <Refresh busy={busy} label={`Check ${sandbox.name} again`} onClick={() => void recheck()} />
+        {state === "running"
+          ? <button className="text-button" onClick={() => void stopSandbox(sandbox)}><Square size={11} />Stop</button>
+          : <button className="text-button" disabled={!!waking} onClick={() => void wakeSandbox(sandbox).catch(toastError)}><Play size={11} />Start</button>}
+        {shell && <button className="text-button" onClick={() => openTerminal(sandbox.projectId, "shell", { command: shell })}><SquareTerminal size={11} />Shell</button>}
+        <button className="text-button is-danger" onClick={remove}><Trash2 size={11} />Delete</button>
       </span>
     </div>
   );
@@ -241,36 +405,137 @@ function TokenRow({ accountId, name, kind }: { accountId: string; name: string; 
         ? <button className="text-button" onClick={() => void ipc.sandboxSecretDelete(key).then(() => setSaved(false))}>Forget</button>
         : <span className="sandbox-token">
             <input type="password" placeholder="Paste a token" value={value} onChange={(e) => setValue(e.target.value)} aria-label={`Token for ${name}`} />
-            <button className="text-button" disabled={!value.trim()} onClick={() => void ipc.sandboxSecretSet(key, value).then(() => { setValue(""); setSaved(true); }, (e) => useDesk.getState().toast(String(e), "error"))}>Save</button>
+            <button className="text-button" disabled={!value.trim()} onClick={() => void ipc.sandboxSecretSet(key, value).then(() => { setValue(""); setSaved(true); }, toastError)}>Save</button>
           </span>}
     </div>
   );
 }
 
-function Switch({ label, description, checked, onChange }: { label: string; description: string; checked: boolean; onChange: () => void }) {
+function Switch({ label: name, description, checked, onChange }: { label: string; description: string; checked: boolean; onChange: () => void }) {
   return <button className="setting-row" role="switch" aria-checked={checked} onClick={onChange}>
-    <span><strong>{label}</strong><small>{description}</small></span><span className={"toggle-track" + (checked ? " is-on" : "")}><span /></span>
+    <span><strong>{name}</strong><small>{description}</small></span><span className={"toggle-track" + (checked ? " is-on" : "")}><span /></span>
   </button>;
 }
 
-export function SandboxSettings() {
+/** A text area that saves when you leave it. */
+function Script({ value, onSave, placeholder, ariaLabel, rows = 4 }: { value: string; onSave: (v: string) => void; placeholder: string; ariaLabel: string; rows?: number }) {
+  const [text, setText] = useState(value);
+  useEffect(() => setText(value), [value]);
+  return <textarea className="sandbox-script" spellCheck={false} rows={rows} aria-label={ariaLabel} placeholder={placeholder} value={text} onChange={(e) => setText(e.target.value)} onBlur={() => text !== value && onSave(text)} />;
+}
+
+function Startup() {
+  const st = useDesk((s) => s.preferences.sandboxStartup) ?? {};
+  const setPreferences = useDesk((s) => s.setPreferences);
+  const allProjects = useDesk((s) => s.projects);
+  const projects = useMemo(() => allProjects.filter((p) => !p.worktreeOf), [allProjects]);
+  const active = useDesk((s) => s.activeProjectId);
+  const [projectId, setProjectId] = useState(() => { const p = allProjects.find((x) => x.id === active); return p ? (p.worktreeOf ?? p.id) : projects[0]?.id ?? ""; });
+  const save = (patch: Partial<SandboxStartup>) => setPreferences({ sandboxStartup: { ...useDesk.getState().preferences.sandboxStartup, ...patch } });
+  const env = st.env ?? [];
+  const setEnv = (list: { key: string; value: string }[]) => save({ env: list });
+  const badKey = (k: string) => !!k && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(k);
+  return (
+    <>
+      <div className="settings-card sandbox-startup">
+        <div className="sandbox-field">
+          <span><strong>Start script, every project</strong><small>Runs in the sandbox's checkout once the code arrives, before the agent starts. A failure is shown; the agent starts anyway.</small></span>
+          <Script ariaLabel="Start script for every project" value={st.script ?? ""} placeholder={"# e.g.\nnpm ci\ncp .env.example .env"} onSave={(script) => save({ script })} />
+        </div>
+        {projects.length > 0 && <div className="sandbox-field">
+          <span className="sandbox-field-head"><strong>Start script for</strong>
+            <select aria-label="Project for its start script" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+              {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </span>
+          <small>Runs after the shared one, only for this project.</small>
+          {projectId && <Script key={projectId} ariaLabel="Start script for this project" value={st.projectScripts?.[projectId] ?? ""} placeholder={"# e.g.\npnpm install\npnpm db:migrate"} onSave={(v) => save({ projectScripts: { ...st.projectScripts, [projectId]: v } })} />}
+        </div>}
+      </div>
+      <h3 className="settings-label">Environment</h3>
+      <div className="settings-card">
+        <div className="sandbox-env">
+          {env.map((e, i) => (
+            <Fragment key={i}>
+              <input className={badKey(e.key) ? "is-bad" : ""} aria-label="Variable name" placeholder="NAME" value={e.key} onChange={(x) => setEnv(env.map((y, j) => (j === i ? { ...y, key: x.target.value.trim() } : y)))} />
+              <input aria-label="Value" placeholder="value" value={e.value} onChange={(x) => setEnv(env.map((y, j) => (j === i ? { ...y, value: x.target.value } : y)))} />
+              <button className="icon-btn" aria-label={`Remove ${e.key || "variable"}`} onClick={() => setEnv(env.filter((_, j) => j !== i))}><X size={13} /></button>
+            </Fragment>
+          ))}
+        </div>
+        <div className="sandbox-env-foot">
+          <button className="text-button" onClick={() => setEnv([...env, { key: "", value: "" }])}><Plus size={12} />Add variable</button>
+          <small>Every agent, terminal and script in a sandbox gets these. Kept in Desk's settings in plain text, so not for secrets: use Tokens below.</small>
+        </div>
+      </div>
+      <h3 className="settings-label">Machine</h3>
+      <div className="settings-card">
+        <div className="setting-row">
+          <span><strong>CPUs</strong><small>Local Docker: a limit. Docker Cloud: the nearest size (1, 2, 4, 8 or 16).</small></span>
+          <select aria-label="CPUs" value={st.cpus ?? 0} onChange={(e) => save({ cpus: Number(e.target.value) || null })}>
+            <option value={0}>Default</option>
+            {[1, 2, 4, 8, 16].map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </div>
+        <div className="setting-row">
+          <span><strong>Memory</strong><small>Local Docker only.</small></span>
+          <select aria-label="Memory" value={st.memoryGb ?? 0} onChange={(e) => save({ memoryGb: Number(e.target.value) || null })}>
+            <option value={0}>Default</option>
+            {[2, 4, 8, 16, 32].map((n) => <option key={n} value={n}>{n} GB</option>)}
+          </select>
+        </div>
+        <div className="sandbox-field">
+          <span><strong>Extra image lines</strong><small>Dockerfile lines for local Docker sandboxes, run as root on Debian with Node 22. A change builds a new image for the next sandbox you make.</small></span>
+          <Script ariaLabel="Extra Dockerfile lines" rows={3} value={st.imageLines ?? ""} placeholder={"RUN apt-get update && apt-get install -y python3 make\nRUN npm install -g pnpm"} onSave={(imageLines) => save({ imageLines })} />
+        </div>
+      </div>
+    </>
+  );
+}
+
+export function SandboxSettings({ provider: focus }: { provider?: ProviderId }) {
   const prefs = useDesk((s) => s.preferences);
   const setPreferences = useDesk((s) => s.setPreferences);
   const sandboxes = useDesk((s) => s.sandboxes);
+  const projects = useDesk((s) => s.projects);
   const allAccounts = useDesk((s) => s.accounts);
   const accounts = useMemo(() => allAccounts.filter((a) => a.kind === "claude" || a.kind === "codex"), [allAccounts]);
-  const checks = useSandboxes((s) => s.checks);
-  useEffect(() => { void checkAllProviders(); void refreshStates(); }, []);
+  const anyChecking = useSandboxes((s) => Object.values(s.checking).some(Boolean));
+  const [open, setOpen] = useState<ProviderId | null>(focus ?? null);
+  const [refreshing, setRefreshing] = useState(false);
+  useEffect(() => { void checkAllProviders(true); void refreshStates(); }, []);
+  useEffect(() => { if (focus) setOpen(focus); }, [focus]);
+  const groups = useMemo(() => {
+    const by = new Map<string, Sandbox[]>();
+    for (const x of sandboxes) by.set(x.projectId, [...(by.get(x.projectId) ?? []), x]);
+    return [...by.entries()];
+  }, [sandboxes]);
+  const refreshAll = async () => { setRefreshing(true); await refreshStates().finally(() => setRefreshing(false)); };
   return (
     <>
-      <div className="settings-card">
-        {PROVIDERS.map((p) => (
-          <div className="setting-row" key={p.id}>
-            <span><strong>{p.label}</strong><small>{p.blurb}{checks[p.id] ? ` · ${checks[p.id]!.detail}` : ""}</small></span>
-            <button className="text-button sandbox-setup-button" onClick={() => openSandboxSetup(p.id)}>{checks[p.id]?.ready ? "Ready" : "Set up…"}</button>
-          </div>
-        ))}
+      <div className="settings-label sandbox-section-head">
+        <span>Providers</span>
+        <Refresh busy={anyChecking} label="Check every provider again" onClick={() => void checkAllProviders(true)} />
       </div>
+      <div className="sandbox-providers">
+        {PROVIDERS.map((p) => <ProviderCard key={p.id} id={p.id} open={open === p.id} onToggle={() => setOpen(open === p.id ? null : p.id)} />)}
+      </div>
+
+      <div className="settings-label sandbox-section-head">
+        <span>Your sandboxes <span className="section-count">{sandboxes.length}</span></span>
+        {sandboxes.length > 0 && <Refresh busy={refreshing} label="Check every sandbox again" onClick={() => void refreshAll()} />}
+      </div>
+      {groups.length ? groups.map(([projectId, list]) => (
+        <div className="settings-card sandbox-group" key={projectId}>
+          <div className="sandbox-group-head">{projects.find((p) => p.id === projectId)?.name ?? "Removed project"}</div>
+          {list.map((x) => <SandboxRow key={x.id} sandbox={x} />)}
+        </div>
+      )) : <p className="settings-note">None yet. Pick one under "Run in" in a chat's message box, or "in a sandbox" from the terminal's new-tab menu.</p>}
+
+      <h3 className="settings-label">Startup</h3>
+      <Startup />
+
+      <h3 className="settings-label">Defaults</h3>
       <div className="settings-card">
         <div className="setting-row">
           <span><strong>Unattended for up to</strong><small>The provider stops a run left alone this long. That's your cost ceiling.</small></span>
@@ -281,7 +546,8 @@ export function SandboxSettings() {
         <Switch label="Stop idle sandboxes" description="After 10 minutes with no agent running, while Desk is open. The disk is kept." checked={prefs.sandboxAutoStop !== false} onChange={() => setPreferences({ sandboxAutoStop: prefs.sandboxAutoStop === false })} />
         <Switch label="Suggest a sandbox for long tasks" description="One line under the message box after ten minutes, once per project." checked={prefs.sandboxHints !== false} onChange={() => setPreferences({ sandboxHints: prefs.sandboxHints === false, sandboxHintOff: [] })} />
       </div>
-      {sandboxes.length > 0 && <div className="settings-card">{sandboxes.map((x) => <SandboxRow key={x.id} sandbox={x} />)}</div>}
+
+      <h3 className="settings-label">Tokens</h3>
       <div className="settings-card">
         {accounts.map((a) => <TokenRow key={a.id} accountId={a.id} name={`${a.kind === "claude" ? "Claude Code" : "Codex"} · ${a.name}`} kind={a.kind} />)}
       </div>

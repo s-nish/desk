@@ -1,7 +1,8 @@
 // Sandboxes: machines you own elsewhere that Desk runs agents on, so a task
 // keeps going with the lid closed. Desk drives each provider's own CLI.
 
-export type ProviderId = "docker" | "boat" | "render" | "modal";
+export type ProviderId = "docker" | "dockerCloud" | "boat" | "modal";
+export const KNOWN_PROVIDERS: string[] = ["docker", "dockerCloud", "boat", "modal"];
 
 /** One sandbox, as Desk remembers it. A project can have any number. */
 export interface Sandbox {
@@ -27,6 +28,17 @@ export interface ProviderCaps {
 
 export type SandboxState = "running" | "stopped" | "missing";
 
+/** How a sandbox is made: from Settings ▸ Sandboxes ▸ Startup. */
+export interface CreateOpts {
+  hours: number;
+  /** Extra Dockerfile lines (local Docker), added before the agent user is made. */
+  imageLines?: string;
+  cpus?: number | null;
+  memoryGb?: number | null;
+  /** Plain variables for every agent and the start script. Not for secrets. */
+  env?: Record<string, string>;
+}
+
 /** Runs a one-shot command; see sandbox.rs. */
 export type Runner = (args: string[], opts?: { stdin?: string; timeoutSecs?: number }) => Promise<{ code: number | null; stdout: string; stderr: string }>;
 
@@ -43,7 +55,11 @@ export interface SandboxProvider {
   caps: ProviderCaps;
   /** Exits 0 when the CLI is installed and signed in; its output names the account. */
   whoami(): Promise<string[]>;
-  create(run: Runner, name: string, hours: number, progress: (text: string) => void): Promise<string>;
+  /** Starts the provider's app when it's installed but not running (Docker Desktop). */
+  start?(run: Runner, progress: (text: string) => void): Promise<void>;
+  /** Recognizes "installed, but not running" in whoami's error. */
+  notRunning?(text: string): boolean;
+  create(run: Runner, name: string, opts: CreateOpts, progress: (text: string) => void): Promise<string>;
   status(run: Runner, remoteId: string): Promise<SandboxState>;
   /** Starts a stopped one again. Returns false when it can't, and Desk makes a new one. */
   resume(run: Runner, remoteId: string): Promise<boolean>;
@@ -55,6 +71,8 @@ export interface SandboxProvider {
   exec(remoteId: string, script: string): Promise<string[]>;
   /** A command line for a terminal tab with a shell in the sandbox. */
   shell?(remoteId: string): string;
+  /** A command line for a terminal tab running `script` in the sandbox, with a terminal. */
+  tty?(remoteId: string, script: string): string;
 }
 
 /** Quotes one word for sh. */

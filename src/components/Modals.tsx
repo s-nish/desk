@@ -1,5 +1,4 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { SandboxSetup } from "./Sandboxes";
 import { ArrowLeftRight, CircleCheck, Download, Eye, EyeOff, KeyRound, Server, X } from "lucide-react";
 import { ACCOUNT_COLORS, ACCOUNT_KINDS, ENV_VAR, TOOL_LABEL, TOOL_SHORT, isChatTool, uid, useDesk, type Modal } from "../store";
 import { INSTALL, connectionLabel, createAccount, multiAccount, openConnection, parseSsh, refreshIdentities, saveConnection, signInSpec } from "../actions";
@@ -8,7 +7,7 @@ import { errorText, ipc } from "../ipc";
 import { Review } from "./Review";
 import { WorktreeDialog } from "./Worktrees";
 import { CreatePrDialog } from "./GitHub";
-import { Settings } from "./Settings";
+import { SettingsPage } from "./Settings";
 import type { AccountKind } from "../types";
 import { ToolLogo } from "./ToolLogo";
 
@@ -23,7 +22,7 @@ export function ModalLayer() {
     case "createPr":
       return <CreatePrDialog root={modal.root} branch={modal.branch} base={modal.base} />;
     case "settings":
-      return <Shell title="Settings" wide settings><Settings initial={modal.section} /></Shell>;
+      return <SettingsPage section={modal.section} provider={modal.provider} />;
     case "ssh":
       return <SshEditor id={modal.id} from={modal.from} />;
     case "addAccount":
@@ -34,8 +33,6 @@ export function ModalLayer() {
       return <Prompt modal={modal} />;
     case "confirm":
       return <Confirm modal={modal} />;
-    case "sandboxSetup":
-      return <SandboxSetup id={modal.provider} />;
   }
 }
 

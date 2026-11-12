@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Sandbox } from "./sandbox/types";
+import { KNOWN_PROVIDERS, type Sandbox } from "./sandbox/types";
 import { EDITOR_THEMES, type EditorThemeId } from "./editorThemes";
 import { THEMES, type ThemeId } from "./themeCatalog";
 import type { AcpSessionEntry, Account, AccountKind, Agent, DetectedAccount, FileTab, Identity, Layout, Project, SshConnection, Tab, TabTool, TerminalTab, Tool, UsageLimits } from "./types";
@@ -103,22 +103,37 @@ export interface Preferences {
   sandboxHints?: boolean;
   /** Projects where you said "Not now" to that suggestion. */
   sandboxHintOff?: string[];
+  /** How sandboxes are made and prepared (Settings ▸ Sandboxes ▸ Startup). */
+  sandboxStartup?: SandboxStartup;
   /** Phone remote over Tailscale (see remote.rs). Off by default. */
   remote?: boolean;
   /** MCP servers Desk hands every agent at launch (see src/mcp.ts). */
   mcpServers?: McpServer[];
 }
 
+export interface SandboxStartup {
+  /** Runs in the sandbox's checkout after the code first arrives (e.g. npm install). */
+  script?: string;
+  /** Per project (by root project id), run after the shared script. */
+  projectScripts?: Record<string, string>;
+  /** Plain variables for agents and scripts in every sandbox. Not for secrets. */
+  env?: { key: string; value: string }[];
+  /** Extra Dockerfile lines for local Docker sandboxes, run as root. */
+  imageLines?: string;
+  /** Local Docker limits; Docker Cloud picks the nearest size. */
+  cpus?: number | null;
+  memoryGb?: number | null;
+}
+
 export const DEFAULT_PREFERENCES: Preferences = { theme: "electric", themeVersion: 2, animatedBackground: true, usageShow: "used", density: "comfortable", fontSize: 14, showProjectAccounts: false, accent: "neutral", showStatusBar: true, showPaths: false, showAccountEmails: false, accountColors: false, reduceMotion: false, terminalTheme: "desk", editorTheme: "desk", terminalColors: {}, cursorStyle: "bar", cursorBlink: true, smoothScroll: true, agentAlerts: true, usageLimits: true, alertBadge: true, alertBounce: true, systemNotifications: true, uiMode: "terminal", accentColor: "neutral", corners: "soft", chatFontSize: 14, chatWidth: "comfortable", chatToolsOpen: false, chatWorktree: false };
 
 export type Modal =
-  | { kind: "settings"; section?: string }
+  | { kind: "settings"; section?: string; provider?: import("./sandbox/types").ProviderId }
   | { kind: "ssh"; id: string | null; from?: "settings" }
   | { kind: "diff"; root: string; path: string; staged: boolean }
   | { kind: "worktree"; projectId: string }
   | { kind: "createPr"; root: string; projectId: string; branch: string; base: string }
   | { kind: "addAccount"; tool: AccountKind }
-  | { kind: "sandboxSetup"; provider: import("./sandbox/types").ProviderId }
   | { kind: "signin"; accountId: string }
   | {
       kind: "prompt";
@@ -330,7 +345,8 @@ export const useDesk = create<DeskState>((set, get) => ({
       accounts,
       identities,
       connections: saved?.connections ?? [],
-      sandboxes: (saved?.sandboxes ?? []).filter((x) => projects.some((p) => p.id === x.projectId)),
+      // Sandboxes of a provider Desk no longer offers (Render) are dropped.
+      sandboxes: (saved?.sandboxes ?? []).filter((x) => projects.some((p) => p.id === x.projectId) && KNOWN_PROVIDERS.includes(x.provider)),
       projects,
       activeProjectId,
       layout: { ...DEFAULT_LAYOUT, ...saved?.layout },

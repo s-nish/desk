@@ -586,7 +586,7 @@ fn tray_update(app: AppHandle, items: Vec<tray::TrayItem>) -> Result<(), String>
     tray::update(&app, &items).map_err(|e| e.to_string())
 }
 
-/// One provider command (docker, boat, render, the Modal helper), with its output.
+/// One provider command (docker, sbx, boat, the Modal helper), with its output.
 #[tauri::command]
 async fn sandbox_run(opts: sandbox::RunOpts) -> Result<sandbox::RunOutput, String> {
     tauri::async_runtime::spawn_blocking(move || sandbox::run(opts)).await.map_err(|e| e.to_string())?

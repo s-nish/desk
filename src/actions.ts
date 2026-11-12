@@ -80,7 +80,7 @@ export function activeTab() {
 
 // Terminals
 
-export function openTerminal(projectId: string, tool: TabTool, opts: { accountId?: string; cwd?: string; sshId?: string; sessionId?: string; resume?: string; command?: string } = {}) {
+export function openTerminal(projectId: string, tool: TabTool, opts: { accountId?: string; cwd?: string; sshId?: string; sessionId?: string; resume?: string; command?: string; sandboxId?: string; remote?: TerminalTab["remote"] } = {}) {
   const s = desk();
   const project = s.projects.find((p) => p.id === projectId);
   if (!project) return;
@@ -96,6 +96,7 @@ export function openTerminal(projectId: string, tool: TabTool, opts: { accountId
     ...(tool === "claude" ? { sessionId: opts.sessionId ?? uid() } : {}),
     ...(tool !== "claude" && tool !== "shell" && opts.resume ? { resume: opts.resume } : {}),
     ...(tool === "shell" && opts.command ? { command: opts.command } : {}),
+    ...(opts.sandboxId && opts.remote ? { sandboxId: opts.sandboxId, remote: opts.remote } : {}),
     cwd: opts.cwd ?? project.path,
     title: "",
     status: "starting",
@@ -117,6 +118,7 @@ export async function terminalSpec(tabId: string): Promise<SessionSpec> {
   const tab = s.tabs.find((t) => t.id === tabId) as TerminalTab | undefined;
   const project = s.projects.find((p) => p.id === tab?.projectId);
   if (!tab) return { cwd: "/", command: null, env: {}, unset: [] };
+  if (tab.sandboxId) return (await import("./sandbox/terminal")).sandboxTerminalSpec(tab);
   // Resolved fresh at every spawn (a restart picks up a changed project account)
   // and recorded, so the tab keeps showing what this session really runs as.
   const resolve = (kind: Agent) =>
@@ -669,6 +671,7 @@ export function closeTab(tabId: string) {
     });
     return;
   }
+  if (tab.type === "terminal" && tab.sandboxId) void import("./sandbox/terminal").then((m) => m.endSandboxTerminal(tab));
   disposeTab(tabId);
 }
 

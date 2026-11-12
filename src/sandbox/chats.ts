@@ -5,8 +5,8 @@ import { addWorktreeProject, branchSlug, rootProject } from "../actions";
 import { reattachChat, restoreChat, updateItems, useChats, type Chat } from "../chat";
 import { ipc } from "../ipc";
 import { useDesk } from "../store";
-import { TOKEN_VAR, ensureRunning, provider, tokenKey } from "./index";
-import { pullOut, syncIn } from "./sync";
+import { TOKEN_VAR, ensureRunning, provider, runStartScripts, tokenKey } from "./index";
+import { pullOut, syncIn, type RemoteWork } from "./sync";
 import { remoteRuns, sandboxExec, type RemoteTarget } from "./transport";
 import { provider as providerOf } from "./providers";
 import { q } from "./types";
@@ -42,6 +42,8 @@ export async function prepareRemote(chatId: string, text: string) {
     const work = await syncIn(sandbox, rootProject(project).path, `${slug}-${Date.now().toString(36).slice(-4)}`, say);
     useChats.getState().patch(chatId, { remote: work, cwd: work.cwd, worktree: false });
     const label = provider(sandbox.provider)?.label ?? sandbox.provider;
+    const failed = await runStartScripts(sandbox, work.cwd, rootProject(project).id, say);
+    if (failed) updateItems(chatId, (items) => [...items, { kind: "notice", id: `sb-script-${Date.now()}`, text: `Your start script failed; the agent starts anyway.\n${failed}` }]);
     say("");
     updateItems(chatId, (items) => [...items, { kind: "notice", id: `sb-${Date.now()}`, text: `Working in ${label} (${sandbox.name}) on ${work.branch}, from ${work.base}. Pull changes brings it home.` }]);
   } finally {
@@ -66,21 +68,23 @@ export async function remoteTarget(chatId: string): Promise<RemoteTarget | null>
   };
 }
 
-/** Brings the sandbox's branch home as a local worktree, with its uncommitted changes. */
-export async function pullChanges(chatId: string) {
-  const found = sandboxOf(chatId);
-  if (!found?.chat.remote) throw new Error("Nothing to pull yet: send a message first.");
-  const { chat, sandbox } = found;
-  const remote = found.chat.remote!;
-  const desk = useDesk.getState();
-  const project = desk.projects.find((p) => p.id === chat.projectId);
-  if (!project) throw new Error("This chat's project was removed.");
+/** Brings a sandbox branch home as a local worktree, with its uncommitted changes. */
+export async function pullWork(sandbox: import("./types").Sandbox, projectId: string, remote: RemoteWork) {
+  const project = useDesk.getState().projects.find((p) => p.id === projectId);
+  if (!project) throw new Error("This project was removed.");
   const parent = rootProject(project);
   const pulled = await pullOut(sandbox, parent.path, remote, (branch) => ipc.gitWorktreePath(parent.path, branch));
   if (!useDesk.getState().projects.some((p) => p.path === pulled.path)) {
     addWorktreeProject(parent, pulled.path, pulled.branch, remote.base);
   }
   return pulled;
+}
+
+/** Brings a chat's sandbox branch home. */
+export async function pullChanges(chatId: string) {
+  const found = sandboxOf(chatId);
+  if (!found?.chat.remote) throw new Error("Nothing to pull yet: send a message first.");
+  return pullWork(found.sandbox, found.chat.projectId, found.chat.remote);
 }
 
 // Sandbox chats outlive Desk: the agent keeps going there, so Desk remembers the

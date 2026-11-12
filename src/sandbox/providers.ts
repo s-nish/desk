@@ -1,5 +1,5 @@
 import { ipc } from "../ipc";
-import { q, type Runner, type SandboxProvider, type SandboxState } from "./types";
+import { q, type Runner, type SandboxProvider } from "./types";
 
 const IMAGE = "desk-sandbox";
 
@@ -29,6 +29,21 @@ function check(out: { code: number | null; stdout: string; stderr: string }, wha
   return out.stdout;
 }
 
+/** Short stable hash, for image tags. */
+export function hash(text: string) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return (h >>> 0).toString(16).padStart(8, "0");
+}
+
+/** The sandbox Dockerfile with your extra lines in place. */
+export function dockerfile(base: string, extra = "") {
+  const lines = extra.split("\n").map((l) => l.trimEnd()).filter((l) => l.trim()).join("\n");
+  return base.replace("# DESK-EXTRA", lines || "# (none)");
+}
+
+const DOCKER_DOWN = /Cannot connect to the Docker daemon|Is the docker daemon running|docker\.sock|error during connect|daemon is not running/i;
+
 export const docker: SandboxProvider = {
   id: "docker",
   label: "Docker",
@@ -38,21 +53,48 @@ export const docker: SandboxProvider = {
   login: null,
   caps: { lidClosed: false, keepsDisk: true, maxHours: null, terminal: true },
   async whoami() { return ["docker", "info", "--format", "Docker {{.ServerVersion}}"]; },
-  async create(run, name, _hours, progress) {
-    const have = await run(["docker", "image", "inspect", "--format", "{{.Id}}", IMAGE]);
+  notRunning: (text) => DOCKER_DOWN.test(text),
+  async start(run, progress) {
+    if ((await run(["docker", "info", "--format", "{{.ServerVersion}}"], { timeoutSecs: 20 })).code === 0) return;
+    // OrbStack and Docker Desktop both give a `docker`; open whichever this one talks to.
+    const context = (await run(["docker", "context", "show"], { timeoutSecs: 10 })).stdout.trim();
+    const app = /orbstack/i.test(context) ? "OrbStack" : "Docker";
+    progress(`Starting ${app}…`);
+    const opened = await run(["open", "-g", "-a", app], { timeoutSecs: 20 });
+    if (opened.code !== 0) throw new Error(`Couldn't open ${app}: ${(opened.stderr || opened.stdout).trim() || `exit ${opened.code}`}`);
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      if ((await run(["docker", "info", "--format", "{{.ServerVersion}}"], { timeoutSecs: 20 })).code === 0) return;
+      if (i === 10) progress(`Waiting for ${app} to finish starting…`);
+    }
+    throw new Error(`${app} didn't start within two minutes. Open it yourself, then try again.`);
+  },
+  async create(run, name, opts, progress) {
+    await docker.start!(run, progress);
+    const file = dockerfile(await ipc.sandboxResource("Dockerfile"), opts.imageLines);
+    const image = `${IMAGE}:${hash(file)}`;
+    const have = await run(["docker", "image", "inspect", "--format", "{{.Id}}", image]);
     if (have.code !== 0) {
       progress("Building the sandbox image (first time only, a few minutes)…");
-      check(await run(["docker", "build", "-t", IMAGE, "-"], { stdin: await ipc.sandboxResource("Dockerfile"), timeoutSecs: 1800 }), "Building the image");
+      check(await run(["docker", "build", "-t", image, "-"], { stdin: file, timeoutSecs: 1800 }), "Building the image");
     }
     progress("Starting the container…");
-    const out = check(await run(["docker", "run", "-d", "--name", `desk-${name}`, "--label", "dev.desk.sandbox=1", "-v", `desk-${name}-home:/home/desk`, IMAGE]), "Starting the container");
+    const limits = [
+      ...(opts.cpus ? ["--cpus", String(opts.cpus)] : []),
+      ...(opts.memoryGb ? ["--memory", `${opts.memoryGb}g`] : []),
+    ];
+    const out = check(await run(["docker", "run", "-d", "--name", `desk-${name}`, "--label", "dev.desk.sandbox=1", ...limits, "-v", `desk-${name}-home:/home/desk`, image]), "Starting the container");
     return out.trim().slice(0, 12);
   },
   async status(run, id) {
     const out = await run(["docker", "inspect", "--format", "{{.State.Running}}", id]);
+    if (out.code !== 0 && DOCKER_DOWN.test(out.stderr)) return "stopped";
     return out.code !== 0 ? "missing" : out.stdout.trim() === "true" ? "running" : "stopped";
   },
-  async resume(run, id) { return (await run(["docker", "start", id])).code === 0; },
+  async resume(run, id) {
+    await docker.start!(run, () => {});
+    return (await run(["docker", "start", id])).code === 0;
+  },
   async stop(run, id) { await run(["docker", "stop", id], { timeoutSecs: 60 }); },
   async remove(run, id) {
     const name = (await run(["docker", "inspect", "--format", "{{.Name}}", id])).stdout.trim().replace(/^\//, "");
@@ -61,6 +103,51 @@ export const docker: SandboxProvider = {
   },
   async exec(id, script) { return ["docker", "exec", "-i", id, "sh", "-lc", script]; },
   shell: (id) => `docker exec -it ${q(id)} bash -l`,
+  tty: (id, script) => `docker exec -it ${q(id)} sh -lc ${q(script)}`,
+};
+
+/** Docker's own cloud sandboxes, through its `sbx` CLI. Every call is non-interactive. */
+const SBX = ["sbx", "--cloud", "--no-input"];
+/** Cloud sandboxes only reach hosts the policy allows; these are what the agents need. */
+const CLOUD_HOSTS = ["api.anthropic.com:443", "statsig.anthropic.com:443", "api.openai.com:443", "chatgpt.com:443", "auth.openai.com:443", "registry.npmjs.org:443"];
+/** Cloud sizes are fixed shapes: CPUs pick one (the CLI matches the memory). */
+const CLOUD_CPUS = [1, 2, 4, 8, 16];
+
+export const dockerCloud: SandboxProvider = {
+  id: "dockerCloud",
+  label: "Docker Cloud",
+  blurb: "Docker's cloud, up to 24 hours each",
+  install: { command: null, url: "https://docs.docker.com/ai/sandboxes/install/" },
+  signup: "https://docs.docker.com/agentic-platform/signup/",
+  login: ["sbx", "login"],
+  caps: { lidClosed: true, keepsDisk: true, maxHours: 24, terminal: true },
+  async whoami() { return [...SBX, "ls"]; },
+  async create(run, name, opts, progress) {
+    progress("Creating a Docker Cloud sandbox…");
+    const cpus = opts.cpus ? CLOUD_CPUS.find((c) => c >= opts.cpus!) ?? 16 : null;
+    const id = `desk-${name}`.replace(/[^A-Za-z0-9-]/g, "-").slice(0, 63).replace(/-+$/, "");
+    check(await run([
+      ...SBX, "create", "--name", id, "--no-progress",
+      "--ttl", `${Math.max(1, Math.min(24, Math.round(opts.hours)))}h`, "--on-timeout", "stop",
+      ...(cpus ? ["--cpus", String(cpus)] : []),
+      ...CLOUD_HOSTS.flatMap((h) => ["--allow-network", h]),
+      "claude",
+    ], { timeoutSecs: 600 }), "sbx create");
+    return id;
+  },
+  async status(run, id) {
+    const out = await run([...SBX, "inspect", id, "--format", "json"], { timeoutSecs: 60 });
+    if (out.code !== 0) return /not found|no such|does not exist/i.test(out.stderr + out.stdout) || out.code === 125 ? "missing" : "stopped";
+    return /"(state|status)"\s*:\s*"(running|started|ready)"/i.test(out.stdout) ? "running" : "stopped";
+  },
+  async resume(run, id) { return (await run([...SBX, "run", "--detach", "claude", "--name", id], { timeoutSecs: 300 })).code === 0; },
+  async stop(run, id) { await run([...SBX, "stop", id], { timeoutSecs: 120 }); },
+  async remove(run, id) { await run([...SBX, "rm", "--force", id], { timeoutSecs: 120 }); },
+  // Extensions stop at 24 hours from creation; past that the call fails, harmlessly.
+  async keepAlive(run, id, hours) { await run([...SBX, "ttl", `+${Math.max(1, Math.round(hours))}h`, id]); },
+  async exec(id, script) { return [...SBX, "exec", "-i", id, "sh", "-lc", script]; },
+  shell: (id) => `sbx --cloud exec -it ${q(id)} bash -l`,
+  tty: (id, script) => `sbx --cloud exec -it ${q(id)} sh -lc ${q(script)}`,
 };
 
 export const boat: SandboxProvider = {
@@ -72,12 +159,12 @@ export const boat: SandboxProvider = {
   login: ["boat", "login"],
   caps: { lidClosed: true, keepsDisk: true, maxHours: 24 * 30, terminal: true },
   async whoami() { return ["boat", "list", "--json"]; },
-  async create(run, _name, hours, progress) {
+  async create(run, _name, opts, progress) {
     progress("Creating a Boat…");
     const out = check(await run(["boat", "new", "--type", "default", "--json"], { timeoutSecs: 600 }), "boat new");
     const id = findId(out);
     if (!id) throw new Error(`Couldn't read the new Boat's id from: ${out.slice(0, 200)}`);
-    await boat.keepAlive!(run, id, hours);
+    await boat.keepAlive!(run, id, opts.hours);
     return id;
   },
   async status(run, id) {
@@ -103,68 +190,59 @@ export const boat: SandboxProvider = {
   shell: (id) => `boat ssh ${q(id)}`,
 };
 
-export const render: SandboxProvider = {
-  id: "render",
-  label: "Render",
-  blurb: "Cloud sandbox (public beta)",
-  install: { command: "brew install render", url: "https://render.com/docs/cli" },
-  signup: "https://dashboard.render.com/register",
-  login: ["render", "login"],
-  caps: { lidClosed: true, keepsDisk: false, maxHours: null, terminal: false },
-  async whoami() { return ["render", "whoami"]; },
-  async create(run, _name, hours, progress) {
-    progress("Creating a Render sandbox…");
-    const out = check(await run(["render", "sandboxes", "create", `--timeout=${Math.round(hours * 3600)}`, "--wait", "--output", "json"], { timeoutSecs: 600 }), "render sandboxes create");
-    const id = findId(out, /\b(sbx[-_][A-Za-z0-9-]+)/);
-    if (!id) throw new Error(`Couldn't read the new sandbox's id from: ${out.slice(0, 200)}`);
-    return id;
-  },
-  async status(run, id): Promise<SandboxState> {
-    const out = await run(["render", "sandboxes", "exec", id, "--", "true"], { timeoutSecs: 60 });
-    return out.code === 0 ? "running" : "missing";
-  },
-  // Stopping a Render sandbox deletes it; Desk makes a new one.
-  async resume() { return false; },
-  async stop(run, id) { await run(["render", "sandboxes", "stop", id, "--confirm"], { timeoutSecs: 120 }); },
-  async remove(run, id) { await run(["render", "sandboxes", "stop", id, "--confirm"], { timeoutSecs: 120 }); },
-  async exec(id, script) { return ["render", "sandboxes", "exec", id, "--", "sh", "-lc", script]; },
-};
-
 let modalHelper: string | null = null;
 async function helper() {
   modalHelper ??= await ipc.sandboxHelper("desk_modal.py");
   return modalHelper;
 }
 
+/**
+ * Finds the Python that has the `modal` package: the one the `modal` command runs
+ * with (pipx, uv and pip installs each have their own), else python3.
+ */
+export const MODAL_PYTHON = [
+  'm=$(command -v modal) || { echo "Modal isn\'t installed." >&2; exit 127; }',
+  'l=$(head -n 1 "$m" 2>/dev/null | sed -n "s/^#![[:space:]]*//p")',
+  'case "$l" in *"/env "*) py=${l##* } ;; "") py=python3 ;; *) py=${l%% *} ;; esac',
+  '"$py" -c "import modal" 2>/dev/null || py=python3',
+].join("\n");
+
+async function py(args: string[]) {
+  return ["sh", "-c", `${MODAL_PYTHON}\nexec "$py" "$@"`, "desk", await helper(), ...args];
+}
+
 export const modal: SandboxProvider = {
   id: "modal",
   label: "Modal",
   blurb: "Cloud sandbox, up to 24 hours each",
-  install: { command: "pip install modal && modal setup", url: "https://modal.com/docs/guide" },
+  install: { command: "pipx install modal && modal setup", url: "https://modal.com/docs/guide" },
   signup: "https://modal.com/signup",
   login: ["modal", "setup"],
   caps: { lidClosed: true, keepsDisk: true, maxHours: 24, terminal: false },
-  async whoami() { return ["modal", "profile", "current"]; },
-  async create(run, name, hours, progress) {
+  // Ready only when the Python Desk will use can load the SDK, and you're signed in.
+  async whoami() {
+    return ["sh", "-c", `${MODAL_PYTHON}\n"$py" -c "import modal" 2>/dev/null || { echo "The modal package isn't in $py. Install it with pipx install modal." >&2; exit 3; }\nexec modal profile current`];
+  },
+  async create(run, name, opts, progress) {
     progress("Creating a Modal sandbox (the first image build takes a few minutes)…");
-    const out = check(await run(["python3", await helper(), "create", name, String(Math.round(Math.min(hours, 24) * 3600))], { timeoutSecs: 1800 }), "Creating the Modal sandbox");
+    const out = check(await run(await py(["create", name, String(Math.round(Math.min(opts.hours, 24) * 3600))]), { timeoutSecs: 1800 }), "Creating the Modal sandbox");
     const id = findId(out, /\b(sb-[A-Za-z0-9]+)/);
     if (!id) throw new Error(`Couldn't read the new sandbox's id from: ${out.slice(0, 200)}`);
     return id;
   },
   async status(run, id) {
-    const out = await run(["python3", await helper(), "status", id], { timeoutSecs: 60 });
+    const out = await run(await py(["status", id]), { timeoutSecs: 60 });
     const s = out.stdout.trim();
     return s === "running" ? "running" : s === "stopped" ? "stopped" : "missing";
   },
   // A Modal sandbox can't be restarted; its home folder is on a Volume, so a new one picks up.
   async resume() { return false; },
-  async stop(run, id) { await run(["python3", await helper(), "stop", id], { timeoutSecs: 120 }); },
-  async remove(run, id) { await run(["python3", await helper(), "stop", id], { timeoutSecs: 120 }); },
-  async exec(id, script) { return ["python3", await helper(), "exec", id, script]; },
+  async stop(run, id) { await run(await py(["stop", id]), { timeoutSecs: 120 }); },
+  async remove(run, id) { await run(await py(["stop", id]), { timeoutSecs: 120 }); },
+  async exec(id, script) { return py(["exec", id, script]); },
 };
 
-export const PROVIDERS: SandboxProvider[] = [docker, boat, render, modal];
+export const PROVIDERS: SandboxProvider[] = [docker, dockerCloud, boat, modal];
 export const provider = (id: string) => PROVIDERS.find((p) => p.id === id) ?? null;
 
 export type { Runner };

@@ -41,7 +41,16 @@ export function mockDesktop() {
         setTimeout(() => lines.forEach((l, index) => channel?.({ index, message: JSON.stringify(l) })), 300);
         return id;
       }
-      if (cmd === 'sandbox_run') return { code: 127, stdout: '', stderr: 'command not found' };
+      if (cmd === 'sandbox_run') {
+        // localStorage test-sandbox: "docker" has Docker installed but closed until `open -a Docker`.
+        const a = args.opts.args;
+        if (localStorage.getItem('test-sandbox') === 'docker' && a[0] === 'docker') {
+          if (a[1] === 'info') return window.dockerUp ? { code: 0, stdout: 'Docker 29.8.2\n', stderr: '' } : { code: 1, stdout: '', stderr: 'failed to connect to the docker API at unix:///demo/.docker/run/docker.sock; check if the path is correct and if the daemon is running: dial unix /demo/.docker/run/docker.sock: connect: no such file or directory' };
+          if (a[1] === 'context') return { code: 0, stdout: 'desktop-linux\n', stderr: '' };
+        }
+        if (localStorage.getItem('test-sandbox') === 'docker' && a[0] === 'open') { setTimeout(() => { window.dockerUp = true; }, 300); return { code: 0, stdout: '', stderr: '' }; }
+        return { code: 127, stdout: '', stderr: 'zsh:1: command not found: ' + a[0] };
+      }
       if (cmd === 'sandbox_secret_has') return false;
       if (cmd === 'pty_spawn') return window.testCalls.filter((c) => c.cmd === 'pty_spawn').length;
       if (cmd === 'fs_read') { if (!(args.path in files)) throw 'File not found'; return { content: files[args.path], mtime: 1 }; }

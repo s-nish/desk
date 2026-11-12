@@ -1,5 +1,4 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { ArrowUp, GitBranch, Pencil, Trash2, FileText, Image as ImageIcon, Paperclip, Check, ChevronDown, ChevronRight, Ellipsis, Gauge, LoaderCircle, Plus, Server, Slash, Square, SquareTerminal, UserRound, X } from "lucide-react";
 import { AGENTS, TOOL_LABEL, TOOL_SHORT, useDesk } from "../store";
@@ -17,6 +16,7 @@ import {
 import type { Agent, AgentSession, MenuItem, Project, TerminalTab } from "../types";
 import { isAcpAgent } from "../acp";
 import { ToolLogo } from "./ToolLogo";
+import { Radial, useRadial, type RadialItem } from "./Radial";
 import { deleteConversation, renameConversation } from "../sessionActions";
 import { RunInChip, SandboxHint, SandboxStrip } from "./Sandboxes";
 
@@ -589,102 +589,27 @@ function Composer({ chat }: { chat: Chat }) {
  * Every agent chats here.
  */
 function AgentPicker({ chat }: { chat: Chat }) {
-  const [open, setOpen] = useState(false);
-  const [shown, setShown] = useState(false);
-  const [hover, setHover] = useState<Agent | null>(null);
-  const [at, setAt] = useState({ x: 0, y: 0 });
-  const [lift, setLift] = useState(48);
-  const btn = useRef<HTMLButtonElement>(null);
-  const items = useRef<(HTMLButtonElement | null)[]>([]);
-
-  const close = (focus = true) => {
-    setShown(false);
-    setTimeout(() => setOpen(false), 180);
-    if (focus) btn.current?.focus();
-  };
-  const toggle = () => {
-    if (open) return close();
-    const r = btn.current!.getBoundingClientRect();
-    setAt({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
-    // The fan opens above the message box, so it never covers what you're typing.
-    const box = btn.current!.closest(".chat-composer")?.getBoundingClientRect();
-    setLift(box ? Math.max(48, r.top + r.height / 2 - box.top + 34) : 48);
-    setHover(chat.tool);
-    setOpen(true);
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      setShown(true);
-      items.current[AGENTS.indexOf(chat.tool)]?.focus();
-    }));
-  };
-  const choose = (agent: Agent) => {
-    setTool(chat.id, agent);
-    close();
-  };
-
-  // An arc opening up and to the right of the button, so it never leaves the window.
-  const radius = 118;
-  const from = 180, to = 0;
-  const spot = (i: number) => {
-    const a = ((from + ((to - from) * i) / (AGENTS.length - 1)) * Math.PI) / 180;
-    return { x: Math.cos(a) * radius + radius * 0.82, y: -Math.sin(a) * radius - lift };
-  };
-  const label = hover ? TOOL_LABEL[hover] : "";
-  const installed = useDesk((s) => (hover ? hover === "claude" || hover === "codex" || s.accounts.some((a) => a.kind === hover) : true));
-
+  const radial = useRadial();
+  const accounts = useDesk((s) => s.accounts);
+  const items: RadialItem[] = AGENTS.map((agent) => {
+    const set = agent === "claude" || agent === "codex" || accounts.some((a) => a.kind === agent);
+    return { key: agent, icon: <ToolLogo tool={agent} size={20} />, label: TOOL_LABEL[agent], sub: set ? "Chat here" : "Not set up yet", on: agent === chat.tool, onSelect: () => setTool(chat.id, agent) };
+  });
   return (
     <>
       <button
-        ref={btn}
-        className={"chat-agent" + (open ? " is-open" : "")}
+        className={"chat-agent" + (radial.opened ? " is-open" : "")}
         aria-haspopup="menu"
-        aria-expanded={open}
+        aria-expanded={radial.opened}
         aria-label={`Agent: ${TOOL_LABEL[chat.tool]}. Choose another`}
         title={`${TOOL_LABEL[chat.tool]} · choose an agent`}
-        onClick={toggle}
+        onClick={(e) => (radial.opened ? radial.close() : radial.open(e.currentTarget))}
       >
         <span className="chat-agent-icon"><ToolLogo tool={chat.tool} size={15} /></span>
         <span className="chat-agent-plus" aria-hidden="true"><Plus size={10} strokeWidth={3} /></span>
       </button>
       <span className="chat-agent-name">{TOOL_LABEL[chat.tool]}</span>
-      {open && createPortal(
-        <div className={"radial" + (shown ? " is-shown" : "")} onMouseDown={(e) => { if (e.target === e.currentTarget) close(false); }} onKeyDown={(e) => {
-          if (e.key === "Escape") { e.preventDefault(); close(); return; }
-          const i = items.current.findIndex((el) => el === document.activeElement);
-          const d = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
-          if (d) { e.preventDefault(); const n = (Math.max(i, 0) + d + AGENTS.length) % AGENTS.length; items.current[n]?.focus(); setHover(AGENTS[n]); }
-        }}>
-          <div className="radial-hub" style={{ left: at.x, top: at.y }} role="menu" aria-label="Choose an agent">
-            <svg className="radial-arc" width={radius * 2 + 80} height={radius + 70} style={{ left: -40 - radius * 0.18, top: -radius - lift - 40 }} aria-hidden="true">
-              <path d={`M ${40 + radius * 0.18 + spot(0).x} ${radius + lift + 40 + spot(0).y} A ${radius} ${radius} 0 0 1 ${40 + radius * 0.18 + spot(AGENTS.length - 1).x} ${radius + lift + 40 + spot(AGENTS.length - 1).y}`} />
-            </svg>
-            {AGENTS.map((agent, i) => {
-              const p = spot(i);
-              const on = agent === chat.tool;
-              return (
-                <button
-                  key={agent}
-                  ref={(el) => { items.current[i] = el; }}
-                  role="menuitemradio"
-                  aria-checked={on}
-                  aria-label={TOOL_LABEL[agent]}
-                  className={"radial-item" + (on ? " is-on" : "")}
-                  style={{ "--x": `${p.x}px`, "--y": `${p.y}px`, "--i": i } as React.CSSProperties}
-                  onMouseEnter={() => setHover(agent)}
-                  onFocus={() => setHover(agent)}
-                  onClick={() => choose(agent)}
-                >
-                  <ToolLogo tool={agent} size={20} />
-                </button>
-              );
-            })}
-            <div className="radial-label" aria-live="polite" style={{ left: radius * 0.82, top: -lift - 34 }}>
-              <strong>{label}</strong>
-              <span>{installed ? "Chat here" : "Not set up yet"}</span>
-            </div>
-          </div>
-        </div>,
-        document.body,
-      )}
+      {radial.state && <Radial state={radial.state} items={items} label="Choose an agent" onClosed={radial.close} />}
     </>
   );
 }

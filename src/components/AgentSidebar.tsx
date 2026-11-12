@@ -14,6 +14,8 @@ import { ProjectRow, WorktreeRow, Connections, Accounts } from "./Sidebar";
 import { SidebarFooter } from "./SidebarFooter";
 import { openMenu } from "./Menu";
 import { ToolLogo } from "./ToolLogo";
+import { SandboxLogo } from "./SandboxLogo";
+import { sandboxTabItems, useSandboxTerminalPicker } from "./Sandboxes";
 import type { Agent, AgentSession, Project, TerminalTab } from "../types";
 
 const SHOWN = 6;
@@ -71,6 +73,8 @@ function openRow(r: Row, project: Project) {
 function AgentRow({ row, project, active }: { row: Row; project: Project; active: boolean }) {
   const state = rowState(row);
   const where = row.kind === "past" ? null : row.kind === "chat" ? "Chat" : "Terminal";
+  const sandboxId = row.kind === "chat" ? row.chat.where : row.kind === "term" ? row.tab.sandboxId : null;
+  const sandbox = useDesk((s) => (sandboxId ? s.sandboxes.find((x) => x.id === sandboxId) : undefined));
   return (
     <button
       className={"chat-row agent-row" + (active ? " is-active" : "") + (row.kind === "past" ? " is-past" : "")}
@@ -79,6 +83,7 @@ function AgentRow({ row, project, active }: { row: Row; project: Project; active
     >
       <ToolGlyph tool={row.tool} />
       <span className="chat-row-title">{row.title}</span>
+      {sandbox && <span className="agent-row-where" aria-label={`In ${sandbox.name}`} title={`Runs in ${sandbox.name}`}><SandboxLogo provider={sandbox.provider} size={11} /></span>}
       {where && <span className="agent-row-where" aria-label={where}>{row.kind === "chat" ? <MessagesSquare size={11} /> : <SquareTerminal size={11} />}</span>}
       {state ? <span className={"chat-dot is-" + state} aria-label={state === "waiting" ? "Waiting for you" : state === "running" ? "Working" : "New"} /> : row.kind === "past" ? <span className="chat-row-time">{shortTime(row.updated)}</span> : null}
     </button>
@@ -131,6 +136,7 @@ export function AgentSidebar() {
   const chatMode = useDesk((s) => s.preferences.uiMode === "chat");
   const [query, setQuery] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
+  const picker = useSandboxTerminalPicker();
   const q = query.trim().toLowerCase();
 
   useEffect(() => {
@@ -157,7 +163,9 @@ export function AgentSidebar() {
     const id = activeProjectId ?? tree[0]?.root.id;
     if (!id) return void addProjectsFromDialog();
     if (!at) return startAgent(id);
-    openMenu(at, agentChoices().map((tool) => ({ label: TOOL_LABEL[tool], hint: chatMode ? "Chat" : "Terminal tab", icon: <ToolLogo tool={tool} size={14} />, onSelect: () => startAgent(id, tool) })));
+    const items = agentChoices().map((tool) => ({ label: TOOL_LABEL[tool], hint: chatMode ? "Chat" : "Terminal tab", icon: <ToolLogo tool={tool} size={14} />, onSelect: () => startAgent(id, tool) }));
+    // A chat picks its sandbox in the message box; a terminal tab picks it here.
+    openMenu(at, chatMode ? items : [...items, { separator: true }, ...sandboxTabItems(at as HTMLElement, id, picker)]);
   };
 
   return (
@@ -195,6 +203,7 @@ export function AgentSidebar() {
       <Connections />
       <Accounts />
       <SidebarFooter />
+      {picker.element}
     </aside>
   );
 }

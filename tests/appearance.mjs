@@ -98,7 +98,7 @@ try {
   await page.getByRole('button', { name: 'Open settings' }).click();
   await page.getByRole('button', { name: 'Terminal', exact: true }).click();
   await page.getByRole('switch', { name: /Blinking cursor/ }).scrollIntoViewIfNeeded();
-  const bounds = await page.locator('.modal').boundingBox();
+  const bounds = await page.locator('.settings-page').boundingBox();
   assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= 960 && bounds.y + bounds.height <= 600);
   await screenshot('minimum-size');
   assert.deepEqual(errors, []);

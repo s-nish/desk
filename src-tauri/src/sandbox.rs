@@ -1,5 +1,5 @@
 //! Sandboxes: Desk runs agents on a machine you own elsewhere (a Docker container,
-//! a Boat VM, a Render or Modal sandbox) through that provider's own CLI.
+//! a Docker Cloud sandbox, a Boat VM, a Modal sandbox) through that provider's own CLI.
 //!
 //! Desk has no server. Every provider command is an argv for a CLI you installed,
 //! run through your login shell like the agents are. Long-lived streams (following

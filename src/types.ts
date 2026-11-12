@@ -86,6 +86,9 @@ export interface TerminalTab {
   resume?: string;
   /** Command a shell tab runs once when it first starts (e.g. a merge). */
   command?: string;
+  /** The agent runs in this sandbox (see src/sandbox/terminal.ts), in this checkout there. */
+  sandboxId?: string;
+  remote?: { cwd: string; branch: string; base: string };
 }
 
 export interface FileTab {
