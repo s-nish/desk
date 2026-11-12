@@ -92,6 +92,17 @@ try {
   await page.getByRole('button', { name: 'Review a.ts', exact: true }).click();
   await page.getByRole('dialog', { name: 'Review changes' }).getByText('new', { exact: true }).waitFor();
   if (process.env.DESK_SCREENSHOT) await page.screenshot({ path: process.env.DESK_SCREENSHOT.replace('.png', '-diff.png') });
+  // Another agent reviews the changes; its finding lands on the line and can be left out.
+  const review = page.getByRole('dialog', { name: 'Review changes' });
+  await review.getByRole('button', { name: /Review with/ }).click();
+  await page.getByRole('menuitem', { name: /Codex/ }).click();
+  await review.getByText('Renamed without callers').waitFor();
+  await review.getByText('1 of 1 comment').waitFor();
+  await review.getByLabel("Send Codex's comment").uncheck();
+  await review.getByText('0 of 1 comment').waitFor();
+  assert.ok(await review.getByRole('button', { name: 'Send to agent' }).isDisabled());
+  if (process.env.DESK_SCREENSHOT) await page.screenshot({ path: process.env.DESK_SCREENSHOT.replace('.png', '-crossreview.png') });
+  await review.getByRole('button', { name: 'Delete comment' }).click();
   await page.getByRole('button', { name: 'Close', exact: true }).click();
   await page.getByRole('button', { name: 'Stage a.ts', exact: true }).click();
   await page.getByRole('button', { name: 'Unstage a.ts', exact: true }).click();
@@ -126,7 +137,7 @@ try {
   const calls = await page.evaluate(() => window.testCalls.map((c) => c.cmd));
   assert.ok(calls.lastIndexOf('state_save') < calls.lastIndexOf('workspace_exit'));
   assert.deepEqual(errors, []);
-  console.log('PASS: palette, split panes, resize, draft/session restoration, external-edit conflicts, search/replace dirty-file protection, Git diff/stage/unstage/commit, minimum window size; no browser errors.');
+  console.log('PASS: palette, split panes, resize, draft/session restoration, external-edit conflicts, search/replace dirty-file protection, Git diff/stage/unstage/commit, cross-agent review, minimum window size; no browser errors.');
 } catch (e) {
   if (page) { await page.screenshot({ path: '/private/tmp/desk-ui-failure.png' }); console.error(await page.locator('body').innerText()); }
   throw e;

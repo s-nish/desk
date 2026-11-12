@@ -32,6 +32,15 @@ export function mockDesktop() {
       if (cmd === 'fs_list_files') return ['a.ts', 'b.ts'];
       if (cmd === 'plugin:path|resolve_directory') return '/demo';
       if (cmd === 'git_branch') return 'main';
+      if (cmd === 'chat_spawn') {
+        // A reviewer: answers once with a finding on a.ts line 1.
+        const id = 900 + window.testCalls.filter((c) => c.cmd === 'chat_spawn').length;
+        const channel = window.testCallbacks.get(args.onLine.id);
+        const finding = JSON.stringify([{ file: 'a.ts', line: 1, severity: 'high', title: 'Renamed without callers', body: 'Update the two imports too.' }]);
+        const lines = [{ type: 'item.completed', item: { type: 'agent_message', text: '```json\n' + finding + '\n```' } }, { type: 'desk_exit', code: 0, stderr: '' }];
+        setTimeout(() => lines.forEach((l, index) => channel?.({ index, message: JSON.stringify(l) })), 300);
+        return id;
+      }
       if (cmd === 'sandbox_run') return { code: 127, stdout: '', stderr: 'command not found' };
       if (cmd === 'sandbox_secret_has') return false;
       if (cmd === 'pty_spawn') return window.testCalls.filter((c) => c.cmd === 'pty_spawn').length;

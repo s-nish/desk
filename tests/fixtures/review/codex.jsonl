@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"t1"}
+{"type":"item.completed","item":{"id":"i0","type":"reasoning","text":"Looking at the diff"}}
+{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"Two problems.\n\n```json\n[{\"file\":\"src/auth.ts\",\"line\":3,\"severity\":\"high\",\"title\":\"Token compared with ==\",\"body\":\"Use a constant-time compare.\"},{\"file\":\"./src/auth.ts\",\"line\":90,\"severity\":\"low\",\"title\":\"Outside the hunk\",\"body\":\"Goes on the file.\"},{\"file\":\"README.md\",\"line\":1,\"severity\":\"low\",\"title\":\"Not changed\",\"body\":\"Dropped.\"}]\n```"}}
+{"type":"turn.completed","usage":{}}
+{"type":"desk_exit","code":0,"stderr":""}

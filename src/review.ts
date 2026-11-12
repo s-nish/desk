@@ -1,10 +1,11 @@
 // Review comments: notes left on diff lines, sent to an agent as one message.
 import { create } from "zustand";
-import { uid, useDesk } from "./store";
+import { TOOL_LABEL, uid, useDesk } from "./store";
 import { pasteIntoTerminal } from "./terminals";
 import { newChat, showChat, useChats, type Chat } from "./chat";
 import { projectForPath } from "./actions";
-import type { TerminalTab } from "./types";
+import type { Agent, TerminalTab } from "./types";
+import type { Severity } from "./crossReviewCore";
 
 export interface ReviewComment {
   id: string;
@@ -14,6 +15,11 @@ export interface ReviewComment {
   side: "old" | "new";
   code: string;
   text: string;
+  /** Who wrote it: you, or the agent that reviewed the changes. */
+  author?: Agent;
+  severity?: Severity;
+  /** Left out when sending (unticked). */
+  skip?: boolean;
 }
 
 interface ReviewState {
@@ -31,13 +37,28 @@ export function removeComment(root: string, id: string) {
   useReview.setState((s) => ({ comments: { ...s.comments, [root]: (s.comments[root] ?? []).filter((c) => c.id !== id) } }));
 }
 
+export function toggleComment(root: string, id: string) {
+  useReview.setState((s) => ({ comments: { ...s.comments, [root]: (s.comments[root] ?? []).map((c) => (c.id === id ? { ...c, skip: !c.skip } : c)) } }));
+}
+
+/** Replaces what one reviewer said earlier with its new findings. */
+export function setAgentComments(root: string, author: Agent, comments: Omit<ReviewComment, "id" | "author">[]) {
+  useReview.setState((s) => ({
+    comments: { ...s.comments, [root]: [...(s.comments[root] ?? []).filter((c) => c.author !== author), ...comments.map((c) => ({ ...c, author, id: uid() }))] },
+  }));
+}
+
 export function clearComments(root: string) {
   useReview.setState((s) => ({ comments: { ...s.comments, [root]: [] } }));
 }
 
 /** The comments as one message an agent can act on. */
 export function reviewMessage(comments: ReviewComment[]) {
-  const parts = comments.map((c) => `${c.path}:${c.line}${c.side === "old" ? " (removed line)" : ""}\n    ${c.code.trim()}\n${c.text.trim().split("\n").map((l) => `  > ${l}`).join("\n")}`);
+  const parts = comments.filter((c) => !c.skip).map((c) => {
+    const where = c.line ? `${c.path}:${c.line}${c.side === "old" ? " (removed line)" : ""}\n    ${c.code.trim()}` : `${c.path} (the file as a whole)`;
+    const who = c.author ? `  (from ${TOOL_LABEL[c.author]}'s review${c.severity ? `, ${c.severity}` : ""})\n` : "";
+    return `${where}\n${who}${c.text.trim().split("\n").map((l) => `  > ${l}`).join("\n")}`;
+  });
   return `Please address my review comments on your changes:\n\n${parts.join("\n\n")}\n`;
 }
 
@@ -80,7 +101,7 @@ export function handToAgent(root: string, text: string, options: { worktree?: bo
 
 export function sendReview(root: string, target: { chat: Chat } | { tab: TerminalTab }) {
   const comments = useReview.getState().comments[root] ?? [];
-  if (!comments.length) return;
+  if (!comments.some((c) => !c.skip)) return;
   handTo(target, reviewMessage(comments));
   clearComments(root);
 }
