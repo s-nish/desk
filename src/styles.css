@@ -2937,6 +2937,8 @@ body.is-resizing-rows, body.is-resizing-rows * { cursor: row-resize !important; 
 
 /* Settings ▸ Phone */
 .phone-pair { align-items: flex-start; }
+.phone-serve { align-items: flex-start; }
+.phone-serve-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex: none; }
 .phone-qr { width: 180px; height: 180px; flex: none; padding: 8px; border-radius: 12px; background: #fff; animation: desk-pop .2s var(--ease-out); }
 .phone-log { padding: 12px 16px; }
 .phone-log summary { font-size: 12px; cursor: pointer; color: var(--text); }

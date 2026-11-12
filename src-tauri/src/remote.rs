@@ -387,10 +387,29 @@ pub fn tailscale_info() -> TailscaleInfo {
 }
 
 /// Publishes (or stops publishing) Desk's port to the tailnet.
+///
+/// When Serve (or HTTPS) isn't turned on for the tailnet yet, `tailscale serve`
+/// prints a link to turn it on and waits; Desk stops waiting and returns
+/// `ENABLE <link>` so the page can offer that link.
 pub fn tailscale_serve(on: bool) -> Result<(), String> {
     let target = format!("http://127.0.0.1:{PORT}");
-    let out = if on { ts(&["serve", "--bg", "--https=443", &target])? } else { ts(&["serve", "--https=443", "off"])? };
-    if out.code == Some(0) { Ok(()) } else { Err(format!("{}{}", out.stderr.trim(), out.stdout.trim()).lines().last().unwrap_or("tailscale serve failed").to_string()) }
+    let args: Vec<&str> = if on { vec!["serve", "--bg", "--https=443", &target] } else { vec!["serve", "--https=443", "off"] };
+    let mut argv = vec![tailscale_bin()];
+    argv.extend(args.iter().map(|s| s.to_string()));
+    let out = crate::sandbox::run(crate::sandbox::RunOpts { args: argv, stdin: None, stdin_base64: None, secrets: vec![], timeout_secs: Some(10) })?;
+    if out.code == Some(0) {
+        return Ok(());
+    }
+    let all = format!("{}\n{}", out.stdout, out.stderr);
+    if let Some(link) = enable_link(&all) {
+        return Err(format!("ENABLE {link}"));
+    }
+    Err(all.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with("Desk stopped waiting")).last().unwrap_or("tailscale serve failed").to_string())
+}
+
+/// The "turn this on for your tailnet" link Tailscale prints, if any.
+fn enable_link(text: &str) -> Option<String> {
+    text.split_whitespace().find(|w| w.starts_with("https://login.tailscale.com/")).map(|w| w.trim_end_matches(['.', ',']).to_string())
 }
 
 pub fn qr_svg(text: &str) -> Result<String, String> {
@@ -418,6 +437,8 @@ mod tests {
         assert_eq!(authorize(Some("secret"), Some("me@example.com"), &list), Some(0));
         assert_eq!(authorize(Some("secret"), Some("someone@else.com"), &list), None, "another tailnet login");
         assert_eq!(authorize(Some("secret"), None, &list), None, "not through tailscale serve");
+        assert_eq!(enable_link("Serve is not enabled on your tailnet.\nTo enable, visit:\n\n         https://login.tailscale.com/f/serve?node=abc\n").as_deref(), Some("https://login.tailscale.com/f/serve?node=abc"));
+        assert_eq!(enable_link("some other failure"), None);
         assert_eq!(authorize(Some("secret"), Some(""), &list), None);
         assert_eq!(authorize(Some("guess"), Some("me@example.com"), &list), None, "unpaired cookie");
         assert_eq!(authorize(None, Some("me@example.com"), &list), None);

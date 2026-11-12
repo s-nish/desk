@@ -26,6 +26,14 @@ export function mockDesktop() {
           { tool: 'codex', dir: null, session: { used: 91, resetsAt: soon, minutes: 300 }, weekly: { used: 23, resetsAt: week, minutes: 10080 }, plan: 'plus', updated: Date.now() - 600000 },
         ];
       }
+      // Phone remote: Tailscale up; Serve not allowed on the tailnet until the second try.
+      if (cmd === 'remote_status') return { port: 47821, page: true, devices: [] };
+      if (cmd === 'remote_log') return [];
+      if (cmd === 'remote_tailscale') return { installed: true, running: true, url: 'https://mac.tail0.ts.net', detail: 'Connected to your tailnet.' };
+      if (cmd === 'remote_enable') return;
+      if (cmd === 'remote_serve') { if (args.on && !window.serveTries) { window.serveTries = 1; throw 'ENABLE https://login.tailscale.com/f/serve?node=x'; } return; }
+      if (cmd === 'remote_pair') return 'code123';
+      if (cmd === 'remote_qr') return '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>';
       if (cmd === 'claude_limits_hook') return { settings: '/demo/Library/Application Support/Desk/limits/claude.settings.json', env: { DESK_LIMITS_FILE: '/demo/limits.json' } };
       if (cmd === 'pty_set_background') return;
       if (cmd === 'fs_list_dir') return [{ name: 'a.ts', path: '/demo/studio/a.ts', isDir: false, ignored: false }, { name: 'b.ts', path: '/demo/studio/b.ts', isDir: false, ignored: false }];
