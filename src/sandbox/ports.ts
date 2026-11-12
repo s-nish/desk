@@ -12,7 +12,7 @@ import { useDesk } from "../store";
 import { useChats } from "../chat";
 import { provider, run, useSandboxes } from "./index";
 import type { Sandbox } from "./types";
-import { PORTS_SCRIPT, autoForwardable, parseListening, relayScript } from "./portsCore";
+import { PORTS_SCRIPT, autoForwardable, localCandidates, parseListening, relayScript } from "./portsCore";
 
 const EVERY_MS = 10_000;
 
@@ -44,13 +44,14 @@ export const forwardsOf = (sandboxId: string) =>
 
 export const localUrl = (f: Forward) => `http://localhost:${f.local}`;
 
-export async function forward(sandbox: Sandbox, remote: number): Promise<Forward> {
+/** `auto`: Desk started it, not you, so it only takes a dev-server port here (or one the system picks). */
+export async function forward(sandbox: Sandbox, remote: number, auto = false): Promise<Forward> {
   const p = provider(sandbox.provider);
   if (!p) throw new Error("That sandbox's provider isn't available.");
   const script = relayScript(remote);
   const args = await (p.pipe ?? p.exec).call(p, sandbox.remoteId, script);
   const key = keyOf(sandbox.id, remote);
-  const local = await invoke<number>("port_forward_start", { key, args, port: remote });
+  const local = await invoke<number>("port_forward_start", { key, args, ports: localCandidates(remote, auto) });
   const f: Forward = { sandboxId: sandbox.id, remote, local };
   dismissed.delete(key);
   usePorts.setState((s) => ({ forwards: { ...s.forwards, [key]: f } }));
@@ -106,7 +107,7 @@ export async function scan(sandbox: Sandbox, auto = useDesk.getState().preferenc
       const key = keyOf(sandbox.id, port);
       if (usePorts.getState().forwards[key] || dismissed.has(key) || !autoForwardable(port)) continue;
       try {
-        const f = await forward(sandbox, port);
+        const f = await forward(sandbox, port, true);
         if (!quiet) announce(f);
       } catch (e) {
         useDesk.getState().toast(`Couldn't forward port ${port}: ${e instanceof Error ? e.message : String(e)}`, "error");

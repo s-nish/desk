@@ -8,14 +8,23 @@ export const PORTS_SCRIPT = "cat /proc/net/tcp /proc/net/tcp6 2>/dev/null";
 const IGNORED = new Set([22]);
 
 /**
- * Never forwarded by themselves (you can still forward them from the Ports menu):
- * below 1024, and ports Mac services use, so code in a sandbox can't take one
- * before the real service starts here and catch what's sent to it.
+ * Ports dev servers use (Vite, Next, Rails, Django, Flask, Phoenix, Angular,
+ * Storybook, Jupyter, Streamlit, Gradio, Wrangler…). Only these are forwarded by
+ * themselves, and only to one of these here, so code in a sandbox can't take a
+ * port a Mac service (a database, a debugger, a proxy) would use and catch what's
+ * sent to it. Others can be forwarded from the Ports menu.
  */
+const DEV_RANGES: [number, number][] = [[3000, 3010], [4000, 4010], [4200, 4210], [5000, 5010], [5173, 5183], [5500, 5510], [6006, 6010], [7860, 7870], [8000, 8010], [8080, 8090], [8501, 8510], [8787, 8790], [8888, 8890]];
+
 export function autoForwardable(port: number) {
-  return port >= 1024 && !SENSITIVE.has(port);
+  return DEV_RANGES.some(([a, b]) => port >= a && port <= b);
 }
-const SENSITIVE = new Set([1433, 1521, 2375, 2376, 2379, 3306, 3389, 5432, 5672, 5900, 6379, 6443, 9042, 9200, 9300, 11211, 15672, 27017, 50000]);
+
+/** The local ports a forward may take, in order: the same port first, then the next few. */
+export function localCandidates(remote: number, auto: boolean) {
+  const all = Array.from({ length: 10 }, (_, i) => remote + i).filter((p) => p >= 1024 && p <= 65535);
+  return auto ? all.filter(autoForwardable) : all;
+}
 
 /** Whether a /proc/net/tcp local address (hex) is one "localhost" in the sandbox reaches. */
 function reachable(hex: string) {

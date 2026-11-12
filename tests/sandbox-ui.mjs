@@ -157,7 +157,7 @@ await page.evaluate(async () => { const m = await import('/src/sandbox/ports.ts'
 assert.equal(await page.locator('.sandbox-bar').getByRole('button', { name: 'Ports · 1' }).count(), 1, 'a stopped port is not forwarded again by itself');
 assert.ok(await page.evaluate(() => window.testCalls.some((c) => c.cmd === 'port_forward_stop' && c.args.key === 'sb1:3000')));
 // Its relay runs the provider's exec with the relay script.
-const started = await page.evaluate(() => window.testCalls.find((c) => c.cmd === 'port_forward_start' && c.args.port === 5173).args);
+const started = await page.evaluate(() => window.testCalls.find((c) => c.cmd === 'port_forward_start' && c.args.ports[0] === 5173).args);
 assert.deepEqual(started.args.slice(0, 6), ['docker', 'exec', '-i', 'c0ffee', 'sh', '-lc']);
 assert.match(started.args[6], /connect\(5173,/);
 // Closed there: the forward goes.

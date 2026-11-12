@@ -28,7 +28,11 @@ const tcp = `  sl  local_address rem_address   st tx_queue rx_queue tr tm->when 
 assert.deepEqual(core.parseListening(tcp), [3000, 5001, 5173, 8000, 9000]);
 assert.deepEqual(core.parseListening(""), []);
 assert.ok(core.autoForwardable(5173) && core.autoForwardable(3000) && core.autoForwardable(8080));
-assert.ok(!core.autoForwardable(80) && !core.autoForwardable(5432) && !core.autoForwardable(6379) && !core.autoForwardable(2375), "never by itself: privileged, databases, Docker's API");
+assert.ok([80, 5432, 6379, 2375, 9229, 9222, 11434, 1080].every((p) => !core.autoForwardable(p)), "never by itself: privileged, databases, Docker's API, debuggers, model runtimes, proxies");
+// Automatic forwards only land on dev-server ports here too, never the next port over into a service's.
+assert.deepEqual(core.localCandidates(5180, true), [5180, 5181, 5182, 5183]);
+assert.deepEqual(core.localCandidates(5425, true), []);
+assert.equal(core.localCandidates(5425, false).length, 10);
 
 const upper = (d) => Buffer.from(d.map((b) => (b >= 0x61 && b <= 0x7a ? b - 32 : b)));
 const server = createServer((c) => c.on("data", (d) => c.write(upper(d))).on("end", () => c.end()));

@@ -11,12 +11,10 @@ use std::collections::HashMap;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-/// How far past the port it asked for Desk looks for a free one.
-const TRIES: u16 = 20;
 /// Connections open at once per forward; each runs a provider command.
 const MAX_RELAYS: usize = 32;
 
@@ -62,13 +60,12 @@ fn bind(port: u16) -> Option<Vec<TcpListener>> {
     Some(all)
 }
 
-/// The port it asked for, or the next free one, or any free one.
-pub fn pick(want: u16) -> Result<(u16, Vec<TcpListener>), String> {
-    if want >= 1024 {
-        for port in want..want.saturating_add(TRIES) {
-            if let Some(all) = bind(port) {
-                return Ok((port, all));
-            }
+/// The first free port of `candidates` (Desk decides which local ports a forward
+/// may take), else one the system picks, from its high range no service uses.
+pub fn pick(candidates: &[u16]) -> Result<(u16, Vec<TcpListener>), String> {
+    for &port in candidates.iter().filter(|p| **p >= 1024) {
+        if let Some(all) = bind(port) {
+            return Ok((port, all));
         }
     }
     for _ in 0..5 {
@@ -98,8 +95,15 @@ fn relay(mut client: TcpStream, args: &[String], path: &str, relays: &Mutex<Vec<
     let Ok(mut child) = cmd.spawn() else { return };
     let pid = child.id();
     relays.lock().unwrap().push(pid);
-    let (Some(mut stdin), Some(mut stdout)) = (child.stdin.take(), child.stdout.take()) else { return };
-    let Ok(mut upstream) = client.try_clone() else { return };
+    let end = |child: &mut std::process::Child| {
+        unsafe { libc::kill(-(pid as i32), libc::SIGTERM) };
+        let _ = child.wait();
+        relays.lock().unwrap().retain(|p| *p != pid);
+    };
+    let (Some(mut stdin), Some(mut stdout), Ok(mut upstream)) = (child.stdin.take(), child.stdout.take(), client.try_clone()) else {
+        end(&mut child);
+        return;
+    };
     let up = std::thread::spawn(move || {
         let mut buf = [0u8; 32 * 1024];
         loop {
@@ -126,16 +130,22 @@ fn relay(mut client: TcpStream, args: &[String], path: &str, relays: &Mutex<Vec<
         }
     }
     let _ = client.shutdown(Shutdown::Both);
-    unsafe { libc::kill(-(pid as i32), libc::SIGTERM) };
-    let _ = child.wait();
+    end(&mut child);
     let _ = up.join();
-    relays.lock().unwrap().retain(|p| *p != pid);
 }
 
-/// Forwards localhost:<port near `want`> to the sandbox through `args` (an exec
+/// A connection's place under MAX_RELAYS, given back however the relay ends.
+struct Slot(Arc<AtomicUsize>);
+impl Drop for Slot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Forwards localhost:<the first free of `candidates`> to the sandbox through `args` (an exec
 /// argv whose stdin and stdout are a connection to the server there). Returns the
 /// local port. Starting the same key again with the same command keeps the forward.
-pub fn start(state: &PortState, key: &str, args: Vec<String>, want: u16) -> Result<u16, String> {
+pub fn start(state: &PortState, key: &str, args: Vec<String>, candidates: &[u16]) -> Result<u16, String> {
     if args.is_empty() {
         return Err("nothing to run".into());
     }
@@ -150,24 +160,31 @@ pub fn start(state: &PortState, key: &str, args: Vec<String>, want: u16) -> Resu
             end(old);
         }
     }
-    let (port, listeners) = pick(want)?;
+    let (port, listeners) = pick(candidates)?;
     let stop = Arc::new(AtomicBool::new(false));
     let relays = Arc::new(Mutex::new(Vec::new()));
+    let active = Arc::new(AtomicUsize::new(0));
     let path = Arc::new(login_path());
     let shared = Arc::new(args.clone());
     for listener in listeners {
         listener.set_nonblocking(true).map_err(|e| e.to_string())?;
-        let (stop, relays, path, args) = (stop.clone(), relays.clone(), path.clone(), shared.clone());
+        let (stop, relays, path, args, active) = (stop.clone(), relays.clone(), path.clone(), shared.clone(), active.clone());
         std::thread::spawn(move || {
             while !stop.load(Ordering::SeqCst) {
                 match listener.accept() {
                     Ok((client, _)) => {
-                        if relays.lock().unwrap().len() >= MAX_RELAYS {
+                        // Taken before the relay starts, so a burst can't get past the limit.
+                        if active.fetch_add(1, Ordering::SeqCst) >= MAX_RELAYS {
+                            active.fetch_sub(1, Ordering::SeqCst);
                             drop(client);
                             continue;
                         }
+                        let slot = Slot(active.clone());
                         let (relays, path, args) = (relays.clone(), path.clone(), args.clone());
-                        std::thread::spawn(move || relay(client, &args, &path, &relays));
+                        std::thread::spawn(move || {
+                            let _slot = slot;
+                            relay(client, &args, &path, &relays);
+                        });
                     }
                     Err(e) if e.kind() == ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(40)),
                     Err(_) => std::thread::sleep(Duration::from_millis(200)),
@@ -229,8 +246,8 @@ mod tests {
         );
         let state = PortState::default();
         let args = vec!["python3".to_string(), "-c".to_string(), script];
-        let port = start(&state, "t", args.clone(), 0).unwrap();
-        assert_eq!(start(&state, "t", args, 0).unwrap(), port, "same key and command keep the forward");
+        let port = start(&state, "t", args.clone(), &[]).unwrap();
+        assert_eq!(start(&state, "t", args, &[]).unwrap(), port, "same key and command keep the forward");
         for word in ["hello", "binary\u{0}\u{ff}"] {
             let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
             c.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
@@ -255,7 +272,7 @@ mod tests {
         let args: Vec<String> = serde_json::from_str(&std::env::var("DESK_TEST_RELAY_ARGS").unwrap()).unwrap();
         let expect = std::env::var("DESK_TEST_RELAY_EXPECT").unwrap();
         let state = PortState::default();
-        let port = start(&state, "real", args, 5173).unwrap();
+        let port = start(&state, "real", args, &[5173, 5174, 5175]).unwrap();
         for _ in 0..3 {
             let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
             c.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
@@ -271,9 +288,11 @@ mod tests {
 
     #[test]
     fn picks_the_next_free_port() {
-        let (port, held) = pick(0).unwrap();
-        let (next, _held2) = pick(port).unwrap();
-        assert_ne!(next, port);
+        let (port, held) = pick(&[]).unwrap();
+        let (next, _held2) = pick(&[port, port + 1]).unwrap();
+        assert_ne!(next, port, "a taken one is skipped");
+        let (low, _held3) = pick(&[80, 443]).unwrap();
+        assert!(low >= 1024, "never below 1024");
         drop(held);
     }
 }

@@ -62,7 +62,7 @@ export function mockDesktop() {
         return { code: 127, stdout: '', stderr: 'zsh:1: command not found: ' + a[0] };
       }
       if (cmd === 'sandbox_secret_has') return false;
-      if (cmd === 'port_forward_start') return args.port === 5173 ? 5174 : args.port;
+      if (cmd === 'port_forward_start') return args.ports[0] === 5173 ? 5174 : args.ports[0];
       if (cmd === 'port_forward_stop') return;
       if (cmd === 'pty_spawn') return window.testCalls.filter((c) => c.cmd === 'pty_spawn').length;
       if (cmd === 'fs_read') { if (!(args.path in files)) throw 'File not found'; return { content: files[args.path], mtime: 1 }; }

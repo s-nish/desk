@@ -606,8 +606,8 @@ fn sandbox_helper(name: String) -> Result<String, String> {
 
 /// Forwards localhost to a server in a sandbox; returns the local port. See ports.rs.
 #[tauri::command]
-async fn port_forward_start(app: AppHandle, key: String, args: Vec<String>, port: u16) -> Result<u16, String> {
-    tauri::async_runtime::spawn_blocking(move || ports::start(&app.state::<ports::PortState>(), &key, args, port))
+async fn port_forward_start(app: AppHandle, key: String, args: Vec<String>, ports: Vec<u16>) -> Result<u16, String> {
+    tauri::async_runtime::spawn_blocking(move || ports::start(&app.state::<ports::PortState>(), &key, args, &ports))
         .await
         .map_err(|e| e.to_string())?
 }
