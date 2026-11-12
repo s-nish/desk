@@ -16,6 +16,8 @@ export const run: Runner = (args, opts = {}) => ipc.sandboxRun(args, opts);
 export interface ProviderCheck {
   /** Installed and signed in. */
   ready: boolean;
+  /** Its CLI is there, signed in or not. */
+  installed: boolean;
   /** The account or version it reported, or why it isn't ready. */
   detail: string;
   checked: number;
@@ -54,11 +56,12 @@ export async function checkProvider(id: ProviderId, force = false): Promise<Prov
     const missing = out.code === 127 || /command not found|No such file/.test(out.stderr);
     check = {
       ready: out.code === 0,
+      installed: !missing,
       detail: out.code === 0 ? summarize(id, out.stdout) : missing ? `${p.label} isn't installed.` : text || "Not signed in.",
       checked: Date.now(),
     };
   } catch (e) {
-    check = { ready: false, detail: String(e), checked: Date.now() };
+    check = { ready: false, installed: false, detail: `Couldn't check: ${e instanceof Error ? e.message : String(e)}`, checked: Date.now() };
   }
   sb().set({ checks: { [id]: check } });
   return check;

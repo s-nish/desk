@@ -18,7 +18,8 @@
     "test:notch": "node tests/notch.mjs",
     "test:runner": "node tests/runner.mjs",
     "test:transport": "node tests/transport.mjs",
-    "test:sync": "node tests/sync.mjs"
+    "test:sync": "node tests/sync.mjs",
+    "test:sandbox-ui": "node tests/sandbox-ui.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",

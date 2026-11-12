@@ -55,6 +55,8 @@ export interface FeedInput {
   label: (tool: Agent) => string;
   /** A terminal tab's title, cleaned of the agent's spinner glyphs. */
   tabTitle: (tab: TerminalTab) => string;
+  /** Where a chat runs: "local", or the sandbox provider's name. */
+  whereOf?: (chat: Chat) => string;
 }
 
 /** "waiting" when a permission question is open, "running" while a turn runs, else null. */
@@ -108,7 +110,7 @@ export function buildFeedFrom(input: FeedInput): FeedItem[] {
       project: projectName(chat.projectId),
       account: chat.accountId || null,
       accountColor: color(chat.accountId),
-      where: "local",
+      where: input.whereOf?.(chat) ?? "local",
       state,
       since: busy ? chat.startedAt : null,
       activity: chatActivity(chat),

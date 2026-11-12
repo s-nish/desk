@@ -32,6 +32,8 @@ export function mockDesktop() {
       if (cmd === 'fs_list_files') return ['a.ts', 'b.ts'];
       if (cmd === 'plugin:path|resolve_directory') return '/demo';
       if (cmd === 'git_branch') return 'main';
+      if (cmd === 'sandbox_run') return { code: 127, stdout: '', stderr: 'command not found' };
+      if (cmd === 'sandbox_secret_has') return false;
       if (cmd === 'pty_spawn') return window.testCalls.filter((c) => c.cmd === 'pty_spawn').length;
       if (cmd === 'fs_read') { if (!(args.path in files)) throw 'File not found'; return { content: files[args.path], mtime: 1 }; }
       if (cmd === 'fs_write') { files[args.path] = args.content; localStorage.setItem('test-files', JSON.stringify(files)); return 1; }

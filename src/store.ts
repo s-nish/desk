@@ -112,6 +112,7 @@ export type Modal =
   | { kind: "worktree"; projectId: string }
   | { kind: "createPr"; root: string; projectId: string; branch: string; base: string }
   | { kind: "addAccount"; tool: AccountKind }
+  | { kind: "sandboxSetup"; provider: import("./sandbox/types").ProviderId }
   | { kind: "signin"; accountId: string }
   | {
       kind: "prompt";

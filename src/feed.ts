@@ -4,6 +4,7 @@
 import { TOOL_LABEL, chatView, useDesk } from "./store";
 import { answer, canAllowOnce, enqueue, markUnread, send, showChat, showStripTab, stop, useChats } from "./chat";
 import { cleanTitle } from "./components/Workspace";
+import { provider } from "./sandbox/providers";
 import { buildFeedFrom, type FeedAction, type FeedItem } from "./feedCore";
 
 export type { FeedAction, FeedItem, FeedState, FeedApproval } from "./feedCore";
@@ -17,6 +18,10 @@ export function buildFeed(): FeedItem[] {
     accounts: desk.accounts,
     label: (tool) => TOOL_LABEL[tool],
     tabTitle: (tab) => cleanTitle(tab.title),
+    whereOf: (chat) => {
+      const sandbox = chat.where ? desk.sandboxes.find((x) => x.id === chat.where) : null;
+      return sandbox ? provider(sandbox.provider)?.label ?? sandbox.provider : "local";
+    },
   });
   for (const item of items) if (item.approval) item.approval.allowOnce = canAllowOnce(item.approval.requestId);
   return items;

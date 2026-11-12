@@ -21,6 +21,7 @@ import type { Agent, AgentSession, MenuItem, Project, TerminalTab } from "../typ
 import { isAcpAgent } from "../acp";
 import { ToolLogo } from "./ToolLogo";
 import { deleteConversation, renameConversation } from "../sessionActions";
+import { RunInChip, SandboxHint, SandboxStrip } from "./Sandboxes";
 
 export function ToolGlyph({ tool, size = 13 }: { tool: Agent; size?: number }) {
   return <span className="tool-glyph" role="img" aria-label={TOOL_LABEL[tool]}><ToolLogo tool={tool} size={size} /></span>;
@@ -602,6 +603,8 @@ function Composer({ chat }: { chat: Chat }) {
 
   return (
     <div className="chat-composer-wrap">
+      {chat.where && <SandboxStrip chat={chat} />}
+      <SandboxHint chat={chat} />
       <div
         className="chat-composer"
         onDragOver={(e) => { if (e.dataTransfer.types.includes("desk/path")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; } }}
@@ -689,7 +692,8 @@ function Composer({ chat }: { chat: Chat }) {
           {showModes && <button className="chat-chip" title={mode.hint} disabled={acp && !modes.length} onClick={(e) => pick(e.currentTarget, modes.map((m) => ({ label: m.label, hint: m.hint, checked: acp ? m.id === (chat.mode || acpMode?.current) : m.id === chat.mode, onSelect: () => setMode(chat.id, m.id) })))}>
             {mode.label}<ChevronDown size={11} />
           </button>}
-          {fresh && repo && !project?.worktreeOf
+          <RunInChip chat={chat} fresh={fresh} repo={repo} />
+          {fresh && repo && !project?.worktreeOf && !chat.where
             ? <button className="chat-chip" role="switch" aria-checked={!!chat.worktree} title={chat.worktree ? "Your first message creates a branch and worktree for this task, from the latest main. Click to work in the project folder instead." : "Click to give this task its own branch and worktree, so it doesn't touch your project folder."} onClick={() => setWorktree(chat.id, !chat.worktree)}>
                 <GitBranch size={12} />{chat.worktree ? "New worktree" : "Project folder"}
               </button>

@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { SandboxSetup } from "./Sandboxes";
 import { ArrowLeftRight, CircleCheck, Download, Eye, EyeOff, KeyRound, Server, X } from "lucide-react";
 import { ACCOUNT_COLORS, ACCOUNT_KINDS, ENV_VAR, TOOL_LABEL, TOOL_SHORT, isChatTool, uid, useDesk, type Modal } from "../store";
 import { INSTALL, connectionLabel, createAccount, multiAccount, openConnection, parseSsh, refreshIdentities, saveConnection, signInSpec } from "../actions";
@@ -33,6 +34,8 @@ export function ModalLayer() {
       return <Prompt modal={modal} />;
     case "confirm":
       return <Confirm modal={modal} />;
+    case "sandboxSetup":
+      return <SandboxSetup id={modal.provider} />;
   }
 }
 
