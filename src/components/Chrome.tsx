@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Bell, Command, GitBranch, Globe, MessagesSquare, Settings2, SquareTerminal } from "lucide-react";
+import { Bell, Command, GitBranch, Globe, MessageCircle, Settings2, Terminal } from "lucide-react";
 import { homeDir } from "@tauri-apps/api/path";
 import { useShallow } from "zustand/react/shallow";
 import { TOOL_LABEL, isChatTool, projectAccount, shortPath, tabAccount, useDesk, focusedTabId, waitingTabs } from "../store";
@@ -84,9 +84,10 @@ function ViewSwitch() {
   const mode = useDesk((s) => s.preferences.uiMode);
   const set = (uiMode: "terminal" | "chat") => useDesk.getState().setPreferences({ uiMode });
   return (
-    <div className="view-switch" role="radiogroup" aria-label="Agent view">
-      <button role="radio" aria-checked={mode === "terminal"} className={mode === "terminal" ? "is-on" : ""} title="Terminal view" onClick={() => set("terminal")}><SquareTerminal size={13} /></button>
-      <button role="radio" aria-checked={mode === "chat"} className={mode === "chat" ? "is-on" : ""} title="Chat view" onClick={() => set("chat")}><MessagesSquare size={13} /></button>
+    <div className={"view-switch is-" + mode} role="radiogroup" aria-label="Agent view">
+      <span className="view-switch-pill" aria-hidden="true" />
+      <button role="radio" aria-checked={mode === "terminal"} aria-label="Terminal view" className={mode === "terminal" ? "is-on" : ""} title="Terminal view" onClick={() => set("terminal")}><Terminal size={15} strokeWidth={2} /></button>
+      <button role="radio" aria-checked={mode === "chat"} aria-label="Chat view" className={mode === "chat" ? "is-on" : ""} title="Chat view" onClick={() => set("chat")}><MessageCircle size={14} strokeWidth={2} /></button>
     </div>
   );
 }

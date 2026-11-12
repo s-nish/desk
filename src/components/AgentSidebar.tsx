@@ -4,9 +4,10 @@
 // conversation opens in the view you're in.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, MessageSquarePlus, MessagesSquare, Plus, Search, SquareTerminal, X } from "lucide-react";
+import { ChevronDown, Ellipsis, ExternalLink, MessageSquarePlus, MessagesSquare, Pencil, Plus, Search, SquareTerminal, Trash2, X } from "lucide-react";
 import { TOOL_LABEL, projectTree, useDesk } from "../store";
-import { addProjectsFromDialog, openTerminal, resumeSession } from "../actions";
+import { addProjectsFromDialog, closeTab, openTerminal, resumeSession } from "../actions";
+import { deleteConversation, renameConversation, type Target } from "../sessionActions";
 import { loadAllSessions, loadSessions, newChat, openSession, useChats, type Chat } from "../chat";
 import { chatBusy } from "../feedCore";
 import { ToolGlyph, shortTime, useExpanded } from "./Chat";
@@ -22,7 +23,7 @@ const SHOWN = 6;
 
 type Row =
   | { key: string; kind: "chat"; title: string; tool: Agent; updated: number; chat: Chat; session?: AgentSession }
-  | { key: string; kind: "term"; title: string; tool: Agent; updated: number; tab: TerminalTab }
+  | { key: string; kind: "term"; title: string; tool: Agent; updated: number; tab: TerminalTab; session?: AgentSession }
   | { key: string; kind: "past"; title: string; tool: Agent; updated: number; session: AgentSession };
 
 function rowState(r: Row): "waiting" | "running" | "unread" | null {
@@ -43,7 +44,7 @@ function useRows(project: Project, query: string): Row[] {
       const id = t.sessionId ?? t.resume;
       const past = id ? sessions?.find((s) => s.id === id) : undefined;
       if (id) taken.add(id);
-      out.push({ key: `t:${t.id}`, kind: "term", title: past?.title || t.title || TOOL_LABEL[t.tool], tool: t.tool as Agent, updated: past?.updated ?? Date.now(), tab: t });
+      out.push({ key: `t:${t.id}`, kind: "term", title: past?.title || t.title || TOOL_LABEL[t.tool], tool: t.tool as Agent, updated: past?.updated ?? Date.now(), tab: t, session: past });
     }
     for (const c of Object.values(chats)) {
       if (c.projectId !== project.id || !c.items.length) continue;
@@ -70,23 +71,57 @@ function openRow(r: Row, project: Project) {
   else resumeSession(r.session, project.id);
 }
 
+/** Open, Rename and Delete for a row: a chat, an agent tab or a past conversation. */
+function rowMenu(r: Row, project: Project) {
+  const target: Target = r.kind === "chat" ? { tool: r.tool, title: r.title, chat: r.chat, session: r.session } : { tool: r.tool, title: r.title, session: r.session };
+  // A terminal tab whose conversation isn't saved yet: the name and the close are the tab's own.
+  const bareTab = r.kind === "term" && !r.session ? r.tab : null;
+  const desk = useDesk.getState();
+  return [
+    { label: "Open", icon: <ExternalLink size={14} />, onSelect: () => openRow(r, project) },
+    { separator: true as const },
+    {
+      label: "Rename…",
+      icon: <Pencil size={14} />,
+      onSelect: () => bareTab
+        ? desk.setModal({ kind: "prompt", title: "Rename tab", label: "Name", initial: r.title, confirm: "Rename", select: [0, r.title.length], onSubmit: (v) => { const t = v.trim(); if (!t) return "Enter a name."; useDesk.getState().patchTab(bareTab.id, { title: t }); } })
+        : renameConversation(target),
+    },
+    {
+      label: "Delete…",
+      icon: <Trash2 size={14} />,
+      danger: true,
+      onSelect: () => bareTab
+        ? desk.setModal({ kind: "confirm", title: `Close “${r.title}”?`, body: `${TOOL_LABEL[r.tool]} in this tab stops. Its conversation wasn't saved yet, so there's nothing else to delete.`, confirm: "Close tab", danger: true, onConfirm: () => closeTab(bareTab.id) })
+        : deleteConversation(target),
+    },
+  ];
+}
+
 function AgentRow({ row, project, active }: { row: Row; project: Project; active: boolean }) {
   const state = rowState(row);
   const where = row.kind === "past" ? null : row.kind === "chat" ? "Chat" : "Terminal";
   const sandboxId = row.kind === "chat" ? row.chat.where : row.kind === "term" ? row.tab.sandboxId ?? row.tab.codeSandbox : null;
   const sandbox = useDesk((s) => (sandboxId ? s.sandboxes.find((x) => x.id === sandboxId) : undefined));
   return (
-    <button
+    <div
       className={"chat-row agent-row" + (active ? " is-active" : "") + (row.kind === "past" ? " is-past" : "")}
-      title={`${row.title}\n${TOOL_LABEL[row.tool]}${where ? ` · ${where.toLowerCase()}, open` : `, ${shortTime(row.updated)} ago. Click to continue`}`}
+      role="button"
+      tabIndex={0}
+      title={`${row.title}\n${TOOL_LABEL[row.tool]}${where ? ` · ${where.toLowerCase()}, open` : `, ${shortTime(row.updated)} ago. Click to continue`}\nRight-click for more`}
       onClick={() => openRow(row, project)}
+      onKeyDown={(e) => { if (e.key === "Enter" && e.target === e.currentTarget) openRow(row, project); }}
+      onContextMenu={(e) => { e.preventDefault(); openMenu({ x: e.clientX, y: e.clientY }, rowMenu(row, project)); }}
     >
       <ToolGlyph tool={row.tool} />
       <span className="chat-row-title">{row.title}</span>
       {sandbox && <span className="agent-row-where" aria-label={`In ${sandbox.name}`} title={`Runs in ${sandbox.name}`}><SandboxLogo provider={sandbox.provider} size={11} /></span>}
       {where && <span className="agent-row-where" aria-label={where}>{row.kind === "chat" ? <MessagesSquare size={11} /> : <SquareTerminal size={11} />}</span>}
       {state ? <span className={"chat-dot is-" + state} aria-label={state === "waiting" ? "Waiting for you" : state === "running" ? "Working" : "New"} /> : row.kind === "past" ? <span className="chat-row-time">{shortTime(row.updated)}</span> : null}
-    </button>
+      <button className="icon-btn row-more" aria-label={`Actions for ${row.title}`} title="Open, rename, delete" onClick={(e) => { e.stopPropagation(); openMenu(e.currentTarget, rowMenu(row, project)); }}>
+        <Ellipsis size={14} />
+      </button>
+    </div>
   );
 }
 

@@ -564,7 +564,7 @@ function Startup() {
     <>
       <div className="settings-card sandbox-startup">
         <div className="sandbox-field">
-          <span><strong>Start script, every project</strong><small>Runs in the sandbox's checkout once the code arrives, before the agent starts. A failure is shown; the agent starts anyway.</small></span>
+          <span><strong>Start script for every project</strong><small>For example installing dependencies. Runs once per sandbox. If it fails you'll see why, and the agent starts anyway.</small></span>
           <Script ariaLabel="Start script for every project" value={st.script ?? ""} placeholder={"# e.g.\nnpm ci\ncp .env.example .env"} onSave={(script) => save({ script })} />
         </div>
         {projects.length > 0 && <div className="sandbox-field">
@@ -577,7 +577,7 @@ function Startup() {
           {projectId && <Script key={projectId} ariaLabel="Start script for this project" value={st.projectScripts?.[projectId] ?? ""} placeholder={"# e.g.\npnpm install\npnpm db:migrate"} onSave={(v) => save({ projectScripts: { ...st.projectScripts, [projectId]: v } })} />}
         </div>}
       </div>
-      <h3 className="settings-label">Environment</h3>
+      <SectionHead title="Environment variables" lead="Every agent, terminal and script in a sandbox gets these. They're saved in plain text in Desk's settings, so no secrets here (tokens go under Sign-in tokens)." />
       <div className="settings-card">
         <div className="sandbox-env">
           {env.map((e, i) => (
@@ -590,10 +590,10 @@ function Startup() {
         </div>
         <div className="sandbox-env-foot">
           <button className="text-button" onClick={() => setEnv([...env, { key: "", value: "" }])}><Plus size={12} />Add variable</button>
-          <small>Every agent, terminal and script in a sandbox gets these. Kept in Desk's settings in plain text, so not for secrets: use Tokens below.</small>
+          {!env.length && <small>None yet.</small>}
         </div>
       </div>
-      <h3 className="settings-label">Machine</h3>
+      <SectionHead title="Machine size" lead="For new sandboxes. Default is the provider's own size." />
       <div className="settings-card">
         <div className="setting-row">
           <span><strong>CPUs</strong><small>Local Docker: a limit. Docker Cloud: the nearest size (1, 2, 4, 8 or 16).</small></span>
@@ -616,6 +616,10 @@ function Startup() {
       </div>
     </>
   );
+}
+
+function SectionHead({ title, lead }: { title: string; lead?: string }) {
+  return <div className="sandbox-head"><h3 className="settings-label">{title}</h3>{lead && <p className="section-lead">{lead}</p>}</div>;
 }
 
 export function SandboxSettings({ provider: focus }: { provider?: ProviderId }) {
@@ -642,7 +646,7 @@ export function SandboxSettings({ provider: focus }: { provider?: ProviderId }) 
   const mode = prefs.sandboxMode ?? "code";
   return (
     <>
-      <h3 className="settings-label">How sandboxes work</h3>
+      <SectionHead title="How sandboxes work" />
       <div className="settings-card sandbox-modes" role="radiogroup" aria-label="How sandboxes work">
         {(["code", "agent"] as SandboxMode[]).map((m) => (
           <button key={m} className={"sandbox-mode" + (mode === m ? " is-on" : "")} role="radio" aria-checked={mode === m} onClick={() => setPreferences({ sandboxMode: m })}>
@@ -654,10 +658,10 @@ export function SandboxSettings({ provider: focus }: { provider?: ProviderId }) 
           </button>
         ))}
       </div>
-      <p className="settings-note">Applies to chats you put in a sandbox from now on. A chat keeps the way it started; Move switches it.</p>
+      <p className="settings-note sandbox-after">Applies to chats and tabs you put in a sandbox from now on. A chat keeps the way it started; Move in its sandbox bar switches it.</p>
 
       <div className="settings-label sandbox-section-head">
-        <span>Providers</span>
+        <span>Providers <span className="section-lead">Where sandboxes run. Set up the ones you want; each chat or tab picks one.</span></span>
         <Refresh busy={anyChecking} label="Check every provider again" onClick={() => void checkAllProviders(true)} />
       </div>
       <div className="sandbox-providers">
@@ -682,10 +686,10 @@ export function SandboxSettings({ provider: focus }: { provider?: ProviderId }) 
         </div>
       )) : <p className="settings-note">None yet. Pick one under "Run in" in a chat's message box, or "in a sandbox" from the terminal's new-tab menu.</p>}
 
-      <h3 className="settings-label">Startup</h3>
+      <SectionHead title="When the code arrives" lead="Runs in every sandbox, in the project's folder there, before the agent's first command." />
       <Startup />
 
-      <h3 className="settings-label">Defaults</h3>
+      <SectionHead title="Time and cost" lead="Limits that keep a forgotten sandbox from running up your bill." />
       <div className="settings-card">
         <div className="setting-row">
           <span><strong>Unattended for up to</strong><small>The provider stops a run left alone this long. That's your cost ceiling.</small></span>
@@ -697,11 +701,13 @@ export function SandboxSettings({ provider: focus }: { provider?: ProviderId }) 
         <Switch label="Suggest a sandbox for long tasks" description="One line under the message box after ten minutes, once per project." checked={prefs.sandboxHints !== false} onChange={() => setPreferences({ sandboxHints: prefs.sandboxHints === false, sandboxHintOff: [] })} />
       </div>
 
-      <h3 className="settings-label">Tokens</h3>
-      <div className="settings-card">
+      <SectionHead title="Sign-in tokens" lead={mode === "code"
+        ? `Not needed now: with the agent on this Mac, no token or sign-in goes anywhere. Only for "${MODE_TEXT.agent.title}".`
+        : "Optional. An agent in a sandbox can sign in there itself, so Desk never sees a token. If you paste one, it stays in an owner-only file on this Mac and goes to the sandbox on stdin, never in a command line or a log."} />
+      <div className={"settings-card" + (mode === "code" ? " is-quiet" : "")}>
         {accounts.map((a) => <TokenRow key={a.id} accountId={a.id} name={`${a.kind === "claude" ? "Claude Code" : "Codex"} · ${a.name}`} kind={a.kind} />)}
       </div>
-      <p className="settings-note">Only for "{MODE_TEXT.agent.title}": with the agent on this Mac, no token or sign-in goes anywhere. Agents in a sandbox sign in there, with their own login, so Desk never sees the token. Pasting one is optional: it's kept in an owner-only file on this Mac and sent to the sandbox on stdin, never in a command line or a log. Code goes in and comes back with git; Desk commits and pushes nothing.</p>
+      <p className="settings-note">Code goes to a sandbox and comes back with git (or as files, with the agent on this Mac). Desk commits and pushes nothing.</p>
     </>
   );
 }

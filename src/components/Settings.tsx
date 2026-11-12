@@ -45,7 +45,7 @@ const INTRO: Record<string, string> = {
   usage: "How much of each plan's limits you've used, or have left, and when they reset.",
   phone: "Your agents on your phone, over your own tailnet.",
   agents: "Write the rules and add MCP servers once; every agent gets them.",
-  sandboxes: "Run a chat on a machine you own elsewhere, so it keeps going when you close Desk or the lid. Your accounts, your bill; Desk has no server.",
+  sandboxes: "Run your code, or the agent too, somewhere other than this Mac: Docker here, or a cloud sandbox you sign in to. Your accounts, your bill; Desk has no server.",
   ssh: "Saved commands that open in their own tab, with the password filled in.",
   shortcuts: "Stay in the flow, with your hands on the keyboard.",
 };
@@ -99,7 +99,7 @@ export function SettingsPage({ section, provider }: { section?: string; provider
   return (
     <div className="settings-page" ref={ref} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Settings">
       <Settings key={`${section ?? ""}:${provider ?? ""}`} initial={section} provider={provider} />
-      <button className="icon-btn settings-page-close" aria-label="Close" title="Close settings (Esc)" onClick={() => useDesk.getState().setModal(null)}><X size={16} /></button>
+      <button className="settings-page-close" aria-label="Close" title="Close settings (Esc)" onClick={() => useDesk.getState().setModal(null)}><X size={15} strokeWidth={2.2} /><span>Close</span><kbd>Esc</kbd></button>
     </div>
   );
 }
