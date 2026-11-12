@@ -84,6 +84,14 @@ export interface Preferences {
   /** Accounts you removed. Desk finds them on disk again at every launch, so it
    *  remembers not to add them back. Adding the account again clears it. */
   removedAccounts?: string[];
+  /** The notch: agents beside the camera, with Allow, Deny and reply. */
+  notch?: boolean;
+  /** When a notch card opens by itself. */
+  notchPeek?: "waiting" | "all" | "never";
+  /** 5-hour usage rings at the bottom of the open notch. */
+  notchRings?: boolean;
+  /** A pill under the menu bar on screens without a notch. */
+  notchOnOtherScreens?: boolean;
 }
 
 export const DEFAULT_PREFERENCES: Preferences = { theme: "electric", themeVersion: 2, animatedBackground: true, usageShow: "used", density: "comfortable", fontSize: 14, showProjectAccounts: false, accent: "neutral", showStatusBar: true, showPaths: false, showAccountEmails: false, accountColors: false, reduceMotion: false, terminalTheme: "desk", editorTheme: "desk", terminalColors: {}, cursorStyle: "bar", cursorBlink: true, smoothScroll: true, agentAlerts: true, usageLimits: true, alertBadge: true, alertBounce: true, systemNotifications: true, uiMode: "terminal", accentColor: "neutral", corners: "soft", chatFontSize: 14, chatWidth: "comfortable", chatToolsOpen: false, chatWorktree: false };

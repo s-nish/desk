@@ -22,6 +22,8 @@ export interface FeedItem {
   tool: Agent;
   title: string;
   project: string;
+  /** Desk account id it runs under, for the usage rings. */
+  account: string | null;
   accountColor: string | null;
   /** "local" for now; sandbox providers join later. */
   where: string;
@@ -102,6 +104,7 @@ export function buildFeedFrom(input: FeedInput): FeedItem[] {
       tool: chat.tool,
       title: chat.title || "New chat",
       project: projectName(chat.projectId),
+      account: chat.accountId || null,
       accountColor: color(chat.accountId),
       where: "local",
       state,
@@ -116,13 +119,15 @@ export function buildFeedFrom(input: FeedInput): FeedItem[] {
     const waiting = !!tab.attention;
     if (!waiting && !(tab.busy && tab.status === "running")) continue;
     const tool = tab.tool as Agent;
+    const account = tab.runAs?.[tool] ?? tab.accountId;
     items.push({
       id: `t:${tab.id}`,
       kind: "terminal",
       tool,
       title: input.tabTitle(tab) || input.label(tool),
       project: projectName(tab.projectId),
-      accountColor: color(tab.runAs?.[tool] ?? tab.accountId),
+      account: account ?? null,
+      accountColor: color(account),
       where: "local",
       state: waiting ? "waiting" : "working",
       since: null,
