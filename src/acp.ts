@@ -192,8 +192,22 @@ export interface AcpRequest { id: number | string; method: string; params: Json 
  * One agent process. Requests resolve with the agent's answer; requests from the
  * agent (`session/request_permission`) go to `onRequest`, which must answer them.
  */
+/** How an agent process is reached: here through chat.rs, or in a sandbox (see sandbox/transport.ts). */
+export interface AgentIO {
+  spawn(opts: { cwd: string; args: string[]; env: Record<string, string>; unset: string[]; stdin: boolean }, onLine: (line: string) => void): Promise<number>;
+  write(proc: number, line: string): Promise<void>;
+  kill(proc: number): Promise<void>;
+}
+
+const localIO: AgentIO = {
+  spawn: (opts, onLine) => ipc.chatSpawn(opts, onLine),
+  write: (proc, line) => ipc.chatWrite(proc, line),
+  kill: (proc) => ipc.chatKill(proc),
+};
+
 export class AcpConnection {
   proc = -1;
+  private io: AgentIO = localIO;
   private next = 1;
   private pending = new Map<number, { resolve: (v: Json) => void; reject: (e: Error) => void; timer?: ReturnType<typeof setTimeout> }>();
   private closed = false;
@@ -207,9 +221,11 @@ export class AcpConnection {
   static async start(
     opts: { cwd: string; args: string[]; env: Record<string, string>; unset: string[] },
     handlers: { onNotify: (method: string, params: Json) => void; onRequest: (req: AcpRequest) => void; onExit: (code: number | null, stderr: string) => void },
+    io: AgentIO = localIO,
   ) {
     const c = new AcpConnection(handlers.onNotify, handlers.onRequest, handlers.onExit);
-    c.proc = await ipc.chatSpawn({ ...opts, stdin: true }, (line) => c.handle(line));
+    c.io = io;
+    c.proc = await io.spawn({ ...opts, stdin: true }, (line) => c.handle(line));
     return c;
   }
 
@@ -239,7 +255,7 @@ export class AcpConnection {
 
   private write(message: Json) {
     if (this.closed) return Promise.reject(new Error("The agent isn't running."));
-    return ipc.chatWrite(this.proc, JSON.stringify({ jsonrpc: "2.0", ...message }));
+    return this.io.write(this.proc, JSON.stringify({ jsonrpc: "2.0", ...message }));
   }
 
   /** Sends a request; `timeout` (ms) only for start-up steps, never for a prompt. */
@@ -271,7 +287,7 @@ export class AcpConnection {
     this.closed = true;
     for (const [, p] of this.pending) { if (p.timer) clearTimeout(p.timer); p.reject(new Error("Stopped.")); }
     this.pending.clear();
-    void ipc.chatKill(this.proc);
+    void this.io.kill(this.proc);
   }
 }
 

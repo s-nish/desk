@@ -16,7 +16,9 @@
     "dev:app": "DESK_VARIANT=dev tauri dev --config src-tauri/tauri.dev-app.conf.json",
     "build:dev-app": "DESK_VARIANT=dev tauri build --config src-tauri/tauri.dev-app.conf.json",
     "test:notch": "node tests/notch.mjs",
-    "test:runner": "node tests/runner.mjs"
+    "test:runner": "node tests/runner.mjs",
+    "test:transport": "node tests/transport.mjs",
+    "test:sync": "node tests/sync.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",

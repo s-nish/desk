@@ -12,6 +12,8 @@
 
 import { create } from "zustand";
 import { ipc } from "./ipc";
+import { agentKill, agentSpawn, agentWrite } from "./sandbox/transport";
+import { prepareRemote, remoteTarget } from "./sandbox/chats";
 import { TOOL_LABEL, chatView, projectAccount, sessionEnv, uid, useDesk } from "./store";
 import { addWorktreeProject, branchSlug, refreshLimits, rootProject, UNTRUSTED_CLAUDE_ARGS, untrustedPath } from "./actions";
 import { notify } from "./notify";
@@ -107,6 +109,12 @@ export interface Chat {
   options?: AcpOption[];
   /** ACP agents: its slash commands. */
   acpCommands?: SlashCommand[];
+  /** The sandbox it runs in (its id in Desk), or nothing for this Mac. Chosen before the first message. */
+  where?: string | null;
+  /** In a sandbox: the worktree there, its branch and what it started from. */
+  remote?: { cwd: string; branch: string; base: string } | null;
+  /** In a sandbox: the runner's id for the agent, while one runs. */
+  runId?: string | null;
 }
 
 export interface QueuedMessage { id: string; text: string; attachments: Attachment[] }
@@ -227,7 +235,7 @@ export function showStripTab(key: string) {
 const chats = () => useChats.getState();
 const desk = () => useDesk.getState();
 
-function updateItems(chatId: string, fn: (items: ChatItem[]) => ChatItem[]) {
+export function updateItems(chatId: string, fn: (items: ChatItem[]) => ChatItem[]) {
   chats().patch(chatId, (c) => ({ items: fn(c.items) }));
 }
 
@@ -318,7 +326,7 @@ export function distrustChats(path: string) {
   for (const chat of Object.values(chats().chats)) {
     if (!inside(chat.cwd)) continue;
     if (isAcpAgent(chat.tool)) dropAcp(chat.id);
-    else if (chat.proc != null) void ipc.chatKill(chat.proc);
+    else if (chat.proc != null) void agentKill(chat.proc);
     chats().patch(chat.id, { proc: null, status: "idle", mode: chat.tool === "claude" ? "plan" : chat.tool === "codex" ? "read-only" : chat.mode });
   }
 }
@@ -369,7 +377,7 @@ export function closeChat(id: string) {
   const chat = chats().chats[id];
   if (!chat) return;
   if (isAcpAgent(chat.tool)) dropAcp(id);
-  else if (chat.proc != null) void ipc.chatKill(chat.proc);
+  else if (chat.proc != null) void agentKill(chat.proc);
   closeStripTab(`c:${id}`);
   useChats.setState((s) => {
     const rest = { ...s.chats };
@@ -403,7 +411,14 @@ export async function send(chatId: string, text: string, attachments: Attachment
     status: c.proc != null ? "running" : "starting",
     startedAt: Date.now(),
   }));
-  if (first && chat.worktree) {
+  if (chat.where) {
+    try {
+      await prepareRemote(chatId, text || attachments.map((a) => a.name).join(" "));
+    } catch (e) {
+      fail(chatId, `Couldn't start the sandbox: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
+  } else if (first && chat.worktree) {
     try {
       await moveToWorktree(chatId, text || attachments.map((a) => a.name).join(" "));
     } catch (e) {
@@ -438,9 +453,9 @@ export function stop(chatId: string) {
   if (isAcpAgent(chat.tool)) {
     stopAcp(chatId);
   } else if (chat.tool === "claude") {
-    void ipc.chatWrite(chat.proc, JSON.stringify({ type: "control_request", request_id: `stop-${uid()}`, request: { subtype: "interrupt" } })).catch(() => void ipc.chatKill(chat.proc!));
+    void agentWrite(chat.proc, JSON.stringify({ type: "control_request", request_id: `stop-${uid()}`, request: { subtype: "interrupt" } })).catch(() => void agentKill(chat.proc!));
   } else {
-    void ipc.chatKill(chat.proc);
+    void agentKill(chat.proc);
   }
 }
 
@@ -562,7 +577,7 @@ async function sendClaude(chatId: string, text: string, attachments: Attachment[
   }));
   const body = withFiles(text, attachments, false);
   const content = [...images, ...(body ? [{ type: "text", text: body }] : [])];
-  await ipc.chatWrite(chat.proc, JSON.stringify({ type: "user", message: { role: "user", content }, parent_tool_use_id: null }));
+  await agentWrite(chat.proc, JSON.stringify({ type: "user", message: { role: "user", content }, parent_tool_use_id: null }));
 }
 
 async function startClaude(chatId: string) {
@@ -570,7 +585,9 @@ async function startClaude(chatId: string) {
   const { account, env, unset } = accountFor(chat);
   const id = chat.sessionId ?? uid();
   // A chat whose session Claude Code has saved is resumed; a new one is started under its id.
-  const state = await ipc.claudeSessionState(account.dir, chat.cwd, id).catch(() => "missing" as const);
+  const target = await remoteTarget(chatId);
+  // In a sandbox the transcript lives there; a chat that has run before resumes.
+  const state = target ? (chat.saved ? "resumable" as const : "missing" as const) : await ipc.claudeSessionState(account.dir, chat.cwd, id).catch(() => "missing" as const);
   const sessionId = state === "empty" ? uid() : id;
   const args = [
     "claude", "-p",
@@ -589,9 +606,9 @@ async function startClaude(chatId: string) {
     ...(state === "resumable" ? ["--resume", sessionId] : ["--session-id", sessionId]),
   ];
   const parser = claudeParser(chatId);
-  const proc = await ipc.chatSpawn({ cwd: chat.cwd, args, env, unset, stdin: true }, (line) => parser(line, proc));
+  const proc = await agentSpawn({ cwd: chat.cwd, args, env, unset, stdin: true }, (line) => parser(line, proc), target);
   chats().patch(chatId, { proc, sessionId, accountId: account.id, saved: state === "resumable" || chat.saved });
-  await ipc.chatWrite(proc, JSON.stringify({ type: "control_request", request_id: `init-${uid()}`, request: { subtype: "initialize" } })).catch(() => {});
+  await agentWrite(proc, JSON.stringify({ type: "control_request", request_id: `init-${uid()}`, request: { subtype: "initialize" } })).catch(() => {});
 }
 
 /** Whether a question can be allowed just this once. Some ACP agents only offer
@@ -610,7 +627,7 @@ export function answer(chatId: string, requestId: string, allow: boolean, onceOn
   const response = allow
     ? { behavior: "allow", updatedInput: item.input ?? {} }
     : { behavior: "deny", message: item.tool === "ExitPlanMode" ? "The user wants to keep planning. Ask what to change." : "The user declined this action.", interrupt: false };
-  void ipc.chatWrite(chat.proc, JSON.stringify({ type: "control_response", response: { subtype: "success", request_id: requestId, response } }));
+  void agentWrite(chat.proc, JSON.stringify({ type: "control_response", response: { subtype: "success", request_id: requestId, response } }));
   updateItems(chatId, (items) => upsert(items, { ...item, state: allow ? "allowed" : "denied" }));
 }
 
@@ -623,7 +640,7 @@ export function setMode(chatId: string, mode: string) {
   else if (chat.tool === "claude" && chat.proc != null) {
     // Full access needs a flag at start-up, so that one restarts the process.
     if (mode === "bypassPermissions" || chat.mode === "bypassPermissions") restart(chatId);
-    else void ipc.chatWrite(chat.proc, JSON.stringify({ type: "control_request", request_id: `mode-${uid()}`, request: { subtype: "set_permission_mode", mode } })).catch(() => {});
+    else void agentWrite(chat.proc, JSON.stringify({ type: "control_request", request_id: `mode-${uid()}`, request: { subtype: "set_permission_mode", mode } })).catch(() => {});
   }
 }
 
@@ -684,10 +701,10 @@ export async function loadClaudeCommands(chat: Chat) {
   probing.add(key);
   const { env, unset } = accountFor(chat);
   let proc: number | null = null;
-  const done = () => { if (proc != null) void ipc.chatKill(proc); probing.delete(key); };
+  const done = () => { if (proc != null) void agentKill(proc); probing.delete(key); };
   const timer = setTimeout(done, 20_000);
   try {
-    proc = await ipc.chatSpawn(
+    proc = await agentSpawn(
       { cwd: chat.cwd, args: ["claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--no-session-persistence", ...(untrusted(chat) ? UNTRUSTED_CLAUDE_ARGS : [])], env, unset, stdin: true },
       (line) => {
         let record: Json;
@@ -696,7 +713,7 @@ export async function loadClaudeCommands(chat: Chat) {
         if (record.type === "desk_exit") { clearTimeout(timer); probing.delete(key); }
       },
     );
-    await ipc.chatWrite(proc, JSON.stringify({ type: "control_request", request_id: `init-${uid()}`, request: { subtype: "initialize" } }));
+    await agentWrite(proc, JSON.stringify({ type: "control_request", request_id: `init-${uid()}`, request: { subtype: "initialize" } }));
   } catch {
     clearTimeout(timer);
     done();
@@ -719,7 +736,7 @@ function restart(chatId: string) {
   if (!chat || chat.proc == null || chat.status !== "idle") return;
   const proc = chat.proc;
   chats().patch(chatId, { proc: null });
-  void ipc.chatKill(proc);
+  void agentKill(proc);
 }
 
 export function setAccount(chatId: string, accountId: string) {
@@ -901,7 +918,7 @@ async function runCodex(chatId: string, text: string, attachments: Attachment[] 
     ? ["codex", "exec", "resume", ...common, "--", chat.sessionId, text]
     : ["codex", "exec", ...common, "--", text];
   const parser = codexParser(chatId);
-  const proc = await ipc.chatSpawn({ cwd: chat.cwd, args, env, unset, stdin: false }, (line) => parser(line, proc));
+  const proc = await agentSpawn({ cwd: chat.cwd, args, env, unset, stdin: false }, (line) => parser(line, proc), await remoteTarget(chatId));
   chats().patch(chatId, { proc, accountId: account.id, status: "running" });
 }
 
@@ -1084,11 +1101,12 @@ async function startAcp(chatId: string): Promise<AcpConnection> {
   const { account, env, unset } = accountFor(chat);
   dropAcp(chatId);
   const holder: { conn?: AcpConnection } = {};
+  const target = await remoteTarget(chatId);
   const conn = await AcpConnection.start({ cwd: chat.cwd, args: ACP_COMMAND[tool], env, unset }, {
     onNotify: (method, params) => holder.conn && acpNotify(chatId, holder.conn, method, params),
     onRequest: (req) => holder.conn && acpRequest(chatId, holder.conn, req),
     onExit: (code, stderr) => holder.conn && acpExit(chatId, holder.conn, code, stderr),
-  }).catch((e) => { throw new Error(`${label} couldn't start: ${String(e)}`); });
+  }, { spawn: (opts, onLine) => agentSpawn(opts, onLine, target), write: agentWrite, kill: agentKill }).catch((e) => { throw new Error(`${label} couldn't start: ${String(e)}`); });
   holder.conn = conn;
   conns.set(chatId, conn);
   chats().patch(chatId, { proc: conn.proc, accountId: account.id });

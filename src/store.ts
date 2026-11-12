@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { Sandbox } from "./sandbox/types";
 import { EDITOR_THEMES, type EditorThemeId } from "./editorThemes";
 import { THEMES, type ThemeId } from "./themeCatalog";
 import type { AcpSessionEntry, Account, AccountKind, Agent, DetectedAccount, FileTab, Identity, Layout, Project, SshConnection, Tab, TabTool, TerminalTab, Tool, UsageLimits } from "./types";
@@ -92,6 +93,14 @@ export interface Preferences {
   notchRings?: boolean;
   /** A pill under the menu bar on screens without a notch. */
   notchOnOtherScreens?: boolean;
+  /** How long a sandbox run may go on without you, in hours; the provider stops it then. */
+  sandboxHours?: number;
+  /** Stop a sandbox that has had no running agent for 10 minutes (its disk is kept). */
+  sandboxAutoStop?: boolean;
+  /** The one-line "run it in a sandbox" suggestion on long local tasks. */
+  sandboxHints?: boolean;
+  /** Projects where you said "Not now" to that suggestion. */
+  sandboxHintOff?: string[];
 }
 
 export const DEFAULT_PREFERENCES: Preferences = { theme: "electric", themeVersion: 2, animatedBackground: true, usageShow: "used", density: "comfortable", fontSize: 14, showProjectAccounts: false, accent: "neutral", showStatusBar: true, showPaths: false, showAccountEmails: false, accountColors: false, reduceMotion: false, terminalTheme: "desk", editorTheme: "desk", terminalColors: {}, cursorStyle: "bar", cursorBlink: true, smoothScroll: true, agentAlerts: true, usageLimits: true, alertBadge: true, alertBounce: true, systemNotifications: true, uiMode: "terminal", accentColor: "neutral", corners: "soft", chatFontSize: 14, chatWidth: "comfortable", chatToolsOpen: false, chatWorktree: false };
@@ -136,6 +145,8 @@ export type DropZone = "left" | "right" | "top" | "bottom" | "center";
 
 interface Persisted {
   accounts: Account[];
+  /** Sandboxes you made, any number per project. */
+  sandboxes: Sandbox[];
   connections: SshConnection[];
   projects: Project[];
   activeProjectId: string | null;
@@ -176,6 +187,8 @@ interface DeskState extends Persisted {
   updateAccount(id: string, patch: Partial<Account>): void;
   removeAccount(id: string): void;
   saveConnection(connection: SshConnection): void;
+  saveSandbox(sandbox: Sandbox): void;
+  removeSandbox(id: string): void;
   removeConnection(id: string): void;
   setIdentity(id: string, identity: Identity): void;
   addTab(tab: Tab): void;
@@ -270,6 +283,7 @@ function showTabs(tab: Tab | undefined) {
 export const useDesk = create<DeskState>((set, get) => ({
   loaded: false,
   accounts: [],
+  sandboxes: [],
   connections: [],
   projects: [],
   activeProjectId: null,
@@ -309,6 +323,7 @@ export const useDesk = create<DeskState>((set, get) => ({
       accounts,
       identities,
       connections: saved?.connections ?? [],
+      sandboxes: (saved?.sandboxes ?? []).filter((x) => projects.some((p) => p.id === x.projectId)),
       projects,
       activeProjectId,
       layout: { ...DEFAULT_LAYOUT, ...saved?.layout },
@@ -405,6 +420,14 @@ export const useDesk = create<DeskState>((set, get) => ({
         codexAccountId: p.codexAccountId === id ? null : p.codexAccountId,
       })),
     }));
+  },
+
+  saveSandbox(sandbox) {
+    set((s) => ({ sandboxes: s.sandboxes.some((x) => x.id === sandbox.id) ? s.sandboxes.map((x) => (x.id === sandbox.id ? sandbox : x)) : [...s.sandboxes, sandbox] }));
+  },
+
+  removeSandbox(id) {
+    set((s) => ({ sandboxes: s.sandboxes.filter((x) => x.id !== id) }));
   },
 
   saveConnection(connection) {
@@ -588,7 +611,7 @@ export function sessionEnv(accounts: Account[], project: Project | undefined, ov
 }
 
 export function persistedSlice(s: DeskState): Persisted & { version: number } {
-  return { version: 4, tabs: s.tabs, activeTabId: s.activeTabId, secondaryTabId: s.secondaryTabId, focusedPane: s.focusedPane, accounts: s.accounts, connections: s.connections, projects: s.projects, activeProjectId: s.activeProjectId, layout: s.layout, preferences: s.preferences };
+  return { version: 4, tabs: s.tabs, activeTabId: s.activeTabId, secondaryTabId: s.secondaryTabId, focusedPane: s.focusedPane, accounts: s.accounts, sandboxes: s.sandboxes, connections: s.connections, projects: s.projects, activeProjectId: s.activeProjectId, layout: s.layout, preferences: s.preferences };
 }
 
 export function shortPath(path: string, home: string | null) {

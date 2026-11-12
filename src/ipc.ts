@@ -30,6 +30,13 @@ export const ipc = {
   },
   chatWrite: (id: number, line: string) => invoke<void>("chat_write", { id, line }),
   chatKill: (id: number) => invoke<void>("chat_kill", { id }),
+  sandboxRun: (args: string[], opts: { stdin?: string; stdinBase64?: string; secrets?: { name: string; key: string }[]; timeoutSecs?: number } = {}) =>
+    invoke<{ code: number | null; stdout: string; stderr: string }>("sandbox_run", { opts: { args, ...opts } }),
+  sandboxResource: (name: string) => invoke<string>("sandbox_resource", { name }),
+  sandboxHelper: (name: string) => invoke<string>("sandbox_helper", { name }),
+  sandboxSecretSet: (key: string, value: string) => invoke<void>("sandbox_secret_set", { key, value }),
+  sandboxSecretHas: (key: string) => invoke<boolean>("sandbox_secret_has", { key }),
+  sandboxSecretDelete: (key: string) => invoke<void>("sandbox_secret_delete", { key }),
   notchUpdate: (payload: unknown) => invoke<void>("notch_update", { payload }),
   trayUpdate: (items: { id: string; label: string; detail: string; waiting: boolean }[]) => invoke<void>("tray_update", { items }),
   attachmentSave: (name: string, data: string) => invoke<string>("attachment_save", { name, data }),
