@@ -79,7 +79,7 @@ export function RunInChip({ chat, fresh, repo }: { chat: Chat; fresh: boolean; r
   return (
     <button className="chat-chip" title={current ? `Runs in ${label(current.provider)} (${current.name}). Keeps going when you close Desk.` : "Where this chat runs. A sandbox keeps going when you close Desk (or the lid, with a cloud one)."} onClick={(e) => void open(e.currentTarget)}>
       {progress ? <LoaderCircle size={12} className="is-spinning" /> : current ? <Cloud size={12} /> : <Laptop size={12} />}
-      {progress ? "Making sandbox…" : current ? label(current.provider) : "This Mac"}
+      <span className="chip-label">{progress ? "Making sandbox…" : current ? label(current.provider) : "This Mac"}</span>
     </button>
   );
 }

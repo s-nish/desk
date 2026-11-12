@@ -687,7 +687,7 @@ function Composer({ chat }: { chat: Chat }) {
             ? <AgentPicker chat={chat} />
             : <span className="chat-chip is-static chat-agent-static" title={TOOL_LABEL[chat.tool]}><ToolGlyph tool={chat.tool} size={14} /><span className="chat-agent-name">{TOOL_SHORT[chat.tool]}</span></span>}
           <button className="chat-chip" disabled={!fresh} title={fresh ? "Account" : `Account: ${account?.name}. A conversation stays with the account it started on.`} onClick={(e) => pick(e.currentTarget, accounts.filter((a) => a.kind === chat.tool).map((a) => ({ label: a.name, checked: a.id === chat.accountId, onSelect: () => setAccount(chat.id, a.id) })))}>
-            <UserRound size={12} />{account?.name ?? "Default"}{fresh && <ChevronDown size={11} />}
+            <UserRound size={12} /><span className="chip-label">{account?.name ?? "Default"}</span>{fresh && <ChevronDown size={11} />}
           </button>
           {showModes && <button className="chat-chip" title={mode.hint} disabled={acp && !modes.length} onClick={(e) => pick(e.currentTarget, modes.map((m) => ({ label: m.label, hint: m.hint, checked: acp ? m.id === (chat.mode || acpMode?.current) : m.id === chat.mode, onSelect: () => setMode(chat.id, m.id) })))}>
             {mode.label}<ChevronDown size={11} />
@@ -695,16 +695,16 @@ function Composer({ chat }: { chat: Chat }) {
           <RunInChip chat={chat} fresh={fresh} repo={repo} />
           {fresh && repo && !project?.worktreeOf && !chat.where
             ? <button className="chat-chip" role="switch" aria-checked={!!chat.worktree} title={chat.worktree ? "Your first message creates a branch and worktree for this task, from the latest main. Click to work in the project folder instead." : "Click to give this task its own branch and worktree, so it doesn't touch your project folder."} onClick={() => setWorktree(chat.id, !chat.worktree)}>
-                <GitBranch size={12} />{chat.worktree ? "New worktree" : "Project folder"}
+                <GitBranch size={12} /><span className="chip-label">{chat.worktree ? "New worktree" : "Project folder"}</span>
               </button>
-            : project?.worktreeOf && <span className="chat-chip is-static" title={`Worktree: ${project.path}`}><GitBranch size={12} />{project.branch ?? project.name}</span>}
+            : project?.worktreeOf && <span className="chat-chip is-static" title={`Worktree: ${project.path}`}><GitBranch size={12} /><span className="chip-label">{project.branch ?? project.name}</span></span>}
           <button className="chat-chip is-icon" aria-label="Attach files" title="Attach files or images (or paste, or drop them here)" onClick={() => void browse()}><Paperclip size={13} /></button>
           <span className="chat-composer-gap" />
           <button className="chat-chip" disabled={busy} title="Model" onClick={(e) => pick(e.currentTarget, models.map((m) => ({ label: m.label, hint: m.description, checked: m.id === chat.model, onSelect: () => setModel(chat.id, m.id) })))}>
             {model?.label ?? chat.model}<ChevronDown size={11} />
           </button>
           {showEffort && <button className="chat-chip" disabled={busy} title="Effort: how hard the model thinks" onClick={(e) => pick(e.currentTarget, [{ label: "Default effort", checked: !chat.effort, onSelect: () => setEffort(chat.id, "") }, ...efforts.map((x) => ({ label: effortName(x), checked: x === chat.effort, onSelect: () => setEffort(chat.id, x) }))])}>
-            <Gauge size={12} />{chat.effort ? effortName(chat.effort) : "Effort"}<ChevronDown size={11} />
+            <Gauge size={12} /><span className="chip-label">{chat.effort ? effortName(chat.effort) : "Effort"}</span><ChevronDown size={11} />
           </button>}
           {busy && <button className="chat-send is-stop" aria-label="Stop" title="Stop this turn (queued messages wait)" onClick={() => stop(chat.id)}><Square size={11} fill="currentColor" /></button>}
           {(!busy || text.trim() || pending.length > 0) && <button className={"chat-send" + (busy ? " is-queue" : "")} aria-label={busy ? "Queue" : "Send"} title={busy ? "Queue (Enter): sends when this turn finishes" : "Send (Enter)"} disabled={!text.trim() && !pending.length} onClick={submit}><ArrowUp size={15} /></button>}
@@ -724,6 +724,7 @@ function AgentPicker({ chat }: { chat: Chat }) {
   const [shown, setShown] = useState(false);
   const [hover, setHover] = useState<Agent | null>(null);
   const [at, setAt] = useState({ x: 0, y: 0 });
+  const [lift, setLift] = useState(48);
   const btn = useRef<HTMLButtonElement>(null);
   const items = useRef<(HTMLButtonElement | null)[]>([]);
 
@@ -736,6 +737,9 @@ function AgentPicker({ chat }: { chat: Chat }) {
     if (open) return close();
     const r = btn.current!.getBoundingClientRect();
     setAt({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
+    // The fan opens above the message box, so it never covers what you're typing.
+    const box = btn.current!.closest(".chat-composer")?.getBoundingClientRect();
+    setLift(box ? Math.max(48, r.top + r.height / 2 - box.top + 34) : 48);
     setHover(chat.tool);
     setOpen(true);
     requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -750,7 +754,7 @@ function AgentPicker({ chat }: { chat: Chat }) {
 
   // An arc opening up and to the right of the button, so it never leaves the window.
   const radius = 118;
-  const from = 180, to = 0, lift = 48;
+  const from = 180, to = 0;
   const spot = (i: number) => {
     const a = ((from + ((to - from) * i) / (AGENTS.length - 1)) * Math.PI) / 180;
     return { x: Math.cos(a) * radius + radius * 0.82, y: -Math.sin(a) * radius - lift };
