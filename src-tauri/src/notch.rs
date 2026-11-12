@@ -30,6 +30,8 @@ pub struct NotchState {
     /// Whether the window is on screen (the hover watcher only runs then).
     shown: AtomicBool,
     hover: AtomicBool,
+    /** A mouse button was down at the last look. */
+    pressed: AtomicBool,
     geometry: Mutex<Option<Geometry>>,
     /// The size the page last asked for, to re-place it when the screen changes.
     size: Mutex<(f64, f64)>,
@@ -224,9 +226,17 @@ fn watch_hover<R: Runtime>(app: AppHandle<R>) {
                 let Some(window) = handle.get_webview_window(LABEL) else { return };
                 #[cfg(target_os = "macos")]
                 let inside = window.ns_window().ok().map(|ptr| unsafe { mac::pointer_inside(ptr) }).unwrap_or(false);
+                #[cfg(target_os = "macos")]
+                let pressed = mac::mouse_down();
                 #[cfg(not(target_os = "macos"))]
-                let inside = { let _ = window; false };
+                let (inside, pressed) = { let _ = window; (false, false) };
                 let state = handle.state::<NotchState>();
+                // A click anywhere else closes it, like a menu.
+                if pressed && !state.pressed.swap(true, Ordering::SeqCst) && !inside {
+                    let _ = handle.emit_to(LABEL, "notch-outside", ());
+                } else if !pressed {
+                    state.pressed.store(false, Ordering::SeqCst);
+                }
                 if state.hover.swap(inside, Ordering::SeqCst) != inside {
                     let _ = handle.emit_to(LABEL, "notch-hover", inside);
                 }
@@ -355,6 +365,10 @@ mod mac {
             window.orderOut(None);
             window.orderFrontRegardless();
         }
+    }
+
+    pub fn mouse_down() -> bool {
+        NSEvent::pressedMouseButtons() != 0
     }
 
     pub unsafe fn pointer_inside(ptr: *mut c_void) -> bool {

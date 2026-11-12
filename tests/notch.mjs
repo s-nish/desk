@@ -94,6 +94,15 @@ try {
   assert.deepEqual((await calls(page, 'notch_action')).at(-1), { action: { type: 'stop', id: 'c:2' } });
   await page.click('.notch-open');
   assert.deepEqual((await calls(page, 'notch_action')).at(-1), { action: { type: 'open', id: '' } });
+  // A click elsewhere on the screen closes it.
+  await emit(page, 'notch-hover', false);
+  await page.waitForTimeout(50);
+  await emit(page, 'notch-hover', true);
+  await page.waitForSelector('.notch.is-expanded');
+  await page.click('.feed-reply input');
+  await emit(page, 'notch-outside', null);
+  await page.waitForSelector('.notch.is-collapsed');
+
   // An agent that only offers "always allow" is answered in Desk, never from here.
   await emit(page, 'notch-feed', feed([{ ...asking, approval: { ...asking.approval, requestId: 'r3', allowOnce: false } }]));
   await emit(page, 'notch-hover', false);

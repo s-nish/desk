@@ -84,6 +84,7 @@ export function Notch() {
       listen<NotchPayload>("notch-feed", ({ payload }) => setPayload(payload)),
       listen<NotchGeometry | null>("notch-geometry", ({ payload }) => setGeo(payload)),
       listen<boolean>("notch-hover", ({ payload }) => setHover(payload)),
+      listen("notch-outside", () => window.dispatchEvent(new Event("notch-outside"))),
     ];
     return () => offs.forEach((off) => void off.then((f) => f()).catch(() => {}));
   }, []);
@@ -132,6 +133,13 @@ export function Notch() {
       setKeyed(false);
     }
   }, [keyed]);
+
+  // A click anywhere else, or switching away, closes it.
+  useEffect(() => {
+    const onOutside = () => { if (open || peekId) close(); };
+    window.addEventListener("notch-outside", onOutside);
+    return () => window.removeEventListener("notch-outside", onOutside);
+  }, [open, peekId, close]);
 
   // Give the keyboard back as soon as it closes.
   useEffect(() => {
