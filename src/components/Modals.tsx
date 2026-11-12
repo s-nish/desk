@@ -288,7 +288,7 @@ function Confirm({ modal }: { modal: Extract<Modal, { kind: "confirm" }> }) {
   return (
     <Shell title={modal.title}>
       <div className="modal-body">
-        <p className="modal-text">{modal.body}</p>
+        <p className="modal-text" style={{ whiteSpace: "pre-line" }}>{modal.body}</p>
         <footer className="modal-foot">
           {modal.alt && (
             <button className="btn is-left" onClick={() => run(modal.onAlt)}>

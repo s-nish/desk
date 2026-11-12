@@ -12,6 +12,7 @@ import { openSession } from "./chat";
 import type { Account, AccountKind, Agent, AgentSession, FileTab, Project, SshConnection, TabTool, TerminalTab, Tool, Worktree } from "./types";
 import type { DropZone } from "./store";
 import type { SessionSpec } from "./terminals";
+import { claudeMcpArgs, codexMcpArgs, secretEnv, serversFor } from "./mcp";
 
 /** Runs `script` in the user's shell; `env VAR=… cmd` only takes a single program. */
 const inShell = (script: string) => `"$SHELL" -c ${shellWord(script)}`;
@@ -129,10 +130,14 @@ export async function terminalSpec(tabId: string): Promise<SessionSpec> {
   if (untrusted && tab.tool !== "claude" && tab.tool !== "codex" && tab.tool !== "shell") {
     return { cwd: tab.cwd, command: `printf '%s\\n' ${shellWord(`${TOOL_LABEL[tab.tool]} doesn't open in untrusted checkouts. Use Claude Code or Codex here; they start without this folder's own settings.`)}; exit 1`, keepShell: false, ...env };
   }
+  // Desk's MCP servers, passed on the command line; their keys go in the environment.
+  const mcp = !tab.sshId && (tab.tool === "claude" || tab.tool === "codex") ? serversFor(s.preferences.mcpServers, project?.worktreeOf ?? project?.id ?? null, tab.tool, untrusted) : [];
+  Object.assign(env.env, secretEnv(mcp));
+  const mcpWords = (args: string[]) => (args.length ? ` ${args.map(shellWord).join(" ")}` : "");
   const claude = tab.tool === "claude" && !tab.sshId
-    ? `${await claudeCommand(overrides.claude.dir, tab.cwd, env.env)}${untrusted ? ` ${UNTRUSTED_CLAUDE_ARGS.join(" ")} --permission-mode plan` : ""}`
+    ? `${await claudeCommand(overrides.claude.dir, tab.cwd, env.env)}${untrusted ? ` ${UNTRUSTED_CLAUDE_ARGS.join(" ")} --permission-mode plan` : ""}${mcpWords(claudeMcpArgs(mcp))}`
     : "claude";
-  const codex = untrusted ? `codex ${UNTRUSTED_CODEX_ARGS.map(shellWord).join(" ")}` : "codex";
+  const codex = `${untrusted ? `codex ${UNTRUSTED_CODEX_ARGS.map(shellWord).join(" ")}` : "codex"}${tab.tool === "codex" ? mcpWords(codexMcpArgs(mcp)) : ""}`;
   if (tab.sshId) {
     const connection = s.connections.find((c) => c.id === tab.sshId);
     // The session ends with the command, so Enter reconnects (and fills the password again).

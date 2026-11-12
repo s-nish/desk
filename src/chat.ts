@@ -13,6 +13,7 @@
 import { create } from "zustand";
 import { ipc } from "./ipc";
 import { agentKill, agentSpawn, agentWrite } from "./sandbox/transport";
+import { acpMcpServers, claudeMcpArgs, codexMcpArgs, secretEnv, serversFor } from "./mcp";
 import { prepareRemote, remoteTarget } from "./sandbox/chats";
 import { TOOL_LABEL, chatView, projectAccount, sessionEnv, uid, useDesk } from "./store";
 import { addWorktreeProject, branchSlug, refreshLimits, rootProject, UNTRUSTED_CLAUDE_ARGS, untrustedPath } from "./actions";
@@ -419,6 +420,13 @@ function accountFor(chat: Chat) {
   return { account, env, unset };
 }
 
+/** Desk's MCP servers for this chat: none in untrusted folders, only URL ones in a sandbox. */
+function mcpFor(chat: Chat) {
+  const project = desk().projects.find((p) => p.id === chat.projectId);
+  const servers = serversFor(desk().preferences.mcpServers, project?.worktreeOf ?? chat.projectId, chat.tool, untrusted(chat));
+  return chat.where ? servers.filter((s) => s.kind === "http") : servers;
+}
+
 export async function send(chatId: string, text: string, attachments: Attachment[] = []) {
   const chat = chats().chats[chatId];
   if (!chat || (!text.trim() && !attachments.length)) return;
@@ -606,6 +614,8 @@ async function sendClaude(chatId: string, text: string, attachments: Attachment[
 async function startClaude(chatId: string) {
   const chat = chats().chats[chatId];
   const { account, env, unset } = accountFor(chat);
+  const mcp = mcpFor(chat);
+  Object.assign(env, secretEnv(mcp));
   const id = chat.sessionId ?? uid();
   // A chat whose session Claude Code has saved is resumed; a new one is started under its id.
   const target = await remoteTarget(chatId);
@@ -626,6 +636,7 @@ async function startClaude(chatId: string) {
     ...(chat.effort ? ["--effort", chat.effort] : []),
     // Questions come as plain text instead; the chat has no card for answering them.
     "--disallowedTools", "AskUserQuestion",
+    ...claudeMcpArgs(mcp),
     ...(state === "resumable" ? ["--resume", sessionId] : ["--session-id", sessionId]),
   ];
   const parser = claudeParser(chatId);
@@ -933,9 +944,11 @@ function describeInput(input: unknown) {
 async function runCodex(chatId: string, text: string, attachments: Attachment[] = []) {
   const chat = chats().chats[chatId];
   const { account, env, unset } = accountFor(chat);
+  const mcp = mcpFor(chat);
+  Object.assign(env, secretEnv(mcp));
   const access = chat.mode === "danger-full-access" ? ["--dangerously-bypass-approvals-and-sandbox"] : ["-c", `sandbox_mode="${chat.mode === "read-only" ? "read-only" : "workspace-write"}"`];
   const images = attachments.filter((a) => a.image).map((a) => `--image=${a.path}`);
-  const common = ["--json", "--skip-git-repo-check", ...access, ...(chat.model ? ["-m", chat.model] : []), ...(chat.effort ? ["-c", `model_reasoning_effort="${chat.effort}"`] : []), ...images];
+  const common = ["--json", "--skip-git-repo-check", ...access, ...(chat.model ? ["-m", chat.model] : []), ...(chat.effort ? ["-c", `model_reasoning_effort="${chat.effort}"`] : []), ...codexMcpArgs(mcp), ...images];
   text = withFiles(text, attachments, false) || "See the attached image.";
   const args = chat.sessionId
     ? ["codex", "exec", "resume", ...common, "--", chat.sessionId, text]
@@ -1122,6 +1135,8 @@ async function startAcp(chatId: string): Promise<AcpConnection> {
   const tool = chat.tool as AcpAgent;
   const label = TOOL_LABEL[tool];
   const { account, env, unset } = accountFor(chat);
+  const mcpServers = acpMcpServers(mcpFor(chat));
+  Object.assign(env, secretEnv(mcpFor(chat)));
   dropAcp(chatId);
   const holder: { conn?: AcpConnection } = {};
   const target = await remoteTarget(chatId);
@@ -1145,11 +1160,11 @@ async function startAcp(chatId: string): Promise<AcpConnection> {
       const fold = newFold("h", true);
       if (current.items.length) fold.n = -1;
       folds.set(chatId, fold);
-      result = await conn.request("session/load", { sessionId: current.sessionId, cwd: current.cwd, mcpServers: [] }, 120_000);
+      result = await conn.request("session/load", { sessionId: current.sessionId, cwd: current.cwd, mcpServers }, 120_000);
       chats().patch(chatId, (c) => ({ loading: false, items: c.items.map((i) => (i.kind === "assistant" && i.streaming ? { ...i, streaming: false } : i)) }));
     } else {
       if (current.saved && current.sessionId) updateItems(chatId, (items) => [...items, { kind: "notice", id: uid(), text: `${label} can't reopen this conversation, so this continues in a new one.` }]);
-      result = await conn.request("session/new", { cwd: current.cwd, mcpServers: [] }, 120_000);
+      result = await conn.request("session/new", { cwd: current.cwd, mcpServers }, 120_000);
       if (typeof result.sessionId !== "string") throw new Error("it didn't start a conversation.");
       chats().patch(chatId, { sessionId: result.sessionId, saved: false, loading: false });
     }

@@ -20,7 +20,9 @@
     "test:transport": "node tests/transport.mjs",
     "test:sync": "node tests/sync.mjs",
     "test:sandbox-ui": "node tests/sandbox-ui.mjs",
-    "test:crossreview": "node tests/crossreview.mjs"
+    "test:crossreview": "node tests/crossreview.mjs",
+    "test:config": "node tests/config.mjs",
+    "test:agent-setup": "node tests/agent-setup.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",

@@ -27,6 +27,8 @@ export const ACCOUNT_KINDS: AccountKind[] = [...AGENTS, "github"];
 /** The variable that points each CLI at an account's folder. Cursor Agent and Grok
  *  have no documented one, so Desk gives them a single (default) account. */
 export const ENV_VAR: Record<AccountKind, string | null> = { github: "GH_CONFIG_DIR", claude: "CLAUDE_CONFIG_DIR", codex: "CODEX_HOME", gemini: "GEMINI_CLI_HOME", cursor: null, grok: null, opencode: null };
+import type { McpServer } from "./mcp";
+
 export const isChatTool = (kind: AccountKind | TabTool): kind is Tool => kind === "claude" || kind === "codex";
 
 export const accountId = (kind: AccountKind, dir: string | null) => `${kind}:${dir ?? "default"}`;
@@ -101,6 +103,8 @@ export interface Preferences {
   sandboxHints?: boolean;
   /** Projects where you said "Not now" to that suggestion. */
   sandboxHintOff?: string[];
+  /** MCP servers Desk hands every agent at launch (see src/mcp.ts). */
+  mcpServers?: McpServer[];
 }
 
 export const DEFAULT_PREFERENCES: Preferences = { theme: "electric", themeVersion: 2, animatedBackground: true, usageShow: "used", density: "comfortable", fontSize: 14, showProjectAccounts: false, accent: "neutral", showStatusBar: true, showPaths: false, showAccountEmails: false, accountColors: false, reduceMotion: false, terminalTheme: "desk", editorTheme: "desk", terminalColors: {}, cursorStyle: "bar", cursorBlink: true, smoothScroll: true, agentAlerts: true, usageLimits: true, alertBadge: true, alertBounce: true, systemNotifications: true, uiMode: "terminal", accentColor: "neutral", corners: "soft", chatFontSize: 14, chatWidth: "comfortable", chatToolsOpen: false, chatWorktree: false };

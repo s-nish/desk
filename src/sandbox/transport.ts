@@ -41,6 +41,8 @@ const runnerReady = new Map<string, Promise<void>>();
 const homes = new Map<string, Promise<string>>();
 
 const RUNNER = '"$HOME/.desk/bin/desk-run"';
+/** An env value naming a saved token; the backend fills it in (see sandbox.rs). */
+const SECRET = "desk-secret:";
 
 /** The runner's line count for each live sandbox run, for reattaching later. */
 export function remoteRuns(): { proc: number; runId: string; sandboxId: string; line: number }[] {
@@ -94,7 +96,7 @@ export function forgetSandbox(id: string) {
 export function remoteEnv(env: Record<string, string>, unset: string[], localHome: string, home: string) {
   const lines: string[] = [];
   for (const [key, value] of Object.entries(env)) {
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || /[\n\r]/.test(value)) continue;
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || /[\n\r]/.test(value) || value.startsWith(SECRET)) continue;
     const mapped = localHome && value.startsWith(localHome + "/") ? `${home}/.desk/accounts/${value.slice(localHome.length + 1).replace(/^\.+/, "").replace(/\//g, "-")}` : value;
     lines.push(`${key}=${mapped}`);
   }
@@ -131,7 +133,9 @@ export async function agentSpawn(opts: SpawnOpts, onLine: (line: string) => void
     const env = remoteEnv(opts.env, opts.unset, await localHome(), await remoteHome(sandbox));
     const cwd = target.cwd.startsWith("~/") ? `"$HOME"/${q(target.cwd.slice(2))}` : q(target.cwd);
     const script = `${RUNNER} start ${runId} ${cwd} ${opts.stdin ? "" : "--no-stdin "}-- ${opts.args.map(q).join(" ")}`;
-    const out = await run(sandbox, script, { stdin: env, secrets: target.secrets, timeoutSecs: 120 });
+    // Saved tokens (an MCP server's key) travel like pasted agent tokens: filled in by the backend.
+    const saved = Object.entries(opts.env).filter(([k, v]) => v.startsWith(SECRET) && /^[A-Za-z_][A-Za-z0-9_]*$/.test(k)).map(([name, v]) => ({ name, key: v.slice(SECRET.length) }));
+    const out = await run(sandbox, script, { stdin: env, secrets: [...(target.secrets ?? []), ...saved], timeoutSecs: 120 });
     if (out.code !== 0) throw new Error((out.stderr || out.stdout).trim().split("\n").slice(-6).join("\n") || "Couldn't start the agent in the sandbox.");
   }
   const proc = nextRemote--;
