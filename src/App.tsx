@@ -37,6 +37,7 @@ import { clearTerminal, pasteIntoTerminal, updateTerminalAppearance } from "./te
 import { ChatView } from "./components/Chat";
 import { takeNotified } from "./notify";
 import { watchTray } from "./tray";
+import { watchPhone } from "./phoneBridge";
 import { watchNotch } from "./notchBridge";
 import { watchSandboxes } from "./sandbox";
 import { AgentSidebar } from "./components/AgentSidebar";
@@ -251,6 +252,7 @@ export function App() {
     const unwatch = watchAttention();
     const untray = watchTray();
     const unnotch = watchNotch();
+    const unphone = watchPhone();
     const unsandboxes = watchSandboxes();
     const unsandboxChats = watchSandboxChats();
     const unremote = watchRemote();
@@ -289,6 +291,7 @@ export function App() {
       unwatch();
       untray();
       unnotch();
+      unphone();
       unsandboxes(); unsandboxChats(); unremote();
       clearInterval(limits);
       clearInterval(live);

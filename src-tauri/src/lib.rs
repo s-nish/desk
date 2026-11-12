@@ -626,8 +626,13 @@ fn sandbox_secret_delete(key: String) -> Result<(), String> {
 /// The feed for the notch, from the main window.
 #[tauri::command]
 fn notch_update(app: AppHandle, payload: Value) {
-    remote::publish(&app, &payload);
     notch::update(&app, payload);
+}
+
+/// What the phone page shows (phoneBridge.ts): sessions, usage, open conversations.
+#[tauri::command]
+fn remote_update(app: AppHandle, payload: Value) {
+    remote::publish(&app, &payload);
 }
 
 // Phone remote (see remote.rs). Only the main window may call these.
@@ -793,6 +798,7 @@ pub fn run() {
             notch_update,
             remote_status,
             remote_enable,
+            remote_update,
             remote_pair,
             remote_revoke,
             remote_log,

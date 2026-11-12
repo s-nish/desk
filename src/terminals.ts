@@ -321,6 +321,33 @@ export function pasteIntoTerminal(key: string, text: string) {
   entry.term.focus();
 }
 
+/** The last lines on a terminal's screen, as plain text (for the phone). */
+export function terminalScreen(key: string, lines = 80): string | null {
+  const entry = entries.get(key);
+  if (!entry) return null;
+  const buffer = entry.term.buffer.active;
+  const end = buffer.baseY + entry.term.rows;
+  const out: string[] = [];
+  for (let y = Math.max(0, end - lines); y < end; y++) out.push(buffer.getLine(y)?.translateToString(true) ?? "");
+  while (out.length && !out[out.length - 1].trim()) out.pop();
+  return out.join("\n");
+}
+
+/** Types a line into a terminal's program and presses Return (the phone's reply). */
+export function typeIntoTerminal(key: string, text: string) {
+  const entry = entries.get(key);
+  if (!entry || entry.ptyId === null) return;
+  entry.term.paste(text);
+  const pty = entry.ptyId;
+  setTimeout(() => void ipc.ptyWrite(pty, "\r"), 60);
+}
+
+/** Esc: what Claude Code and Codex take as "stop" in their terminal screens. */
+export function interruptTerminal(key: string) {
+  const entry = entries.get(key);
+  if (entry?.ptyId != null) void ipc.ptyWrite(entry.ptyId, "\x1b");
+}
+
 export function isTerminalRunning(key: string) {
   return entries.get(key)?.ptyId != null;
 }

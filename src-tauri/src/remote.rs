@@ -119,8 +119,11 @@ pub fn pair_start<R: Runtime>(app: &AppHandle<R>) -> Result<String, String> {
 /// The feed changed (from the main window, alongside the notch).
 pub fn publish<R: Runtime>(app: &AppHandle<R>, payload: &Value) {
     let Some(state) = app.try_state::<RemoteState>() else { return };
-    // The phone gets the rows and usage, not the notch's own display settings.
-    let feed = json!({ "items": payload.get("items").cloned().unwrap_or(json!([])), "usage": payload.get("usage").cloned().unwrap_or(json!([])) });
+    let feed = json!({
+        "sessions": payload.get("sessions").cloned().unwrap_or(json!([])),
+        "usage": payload.get("usage").cloned().unwrap_or(json!([])),
+        "threads": payload.get("threads").cloned().unwrap_or(json!({})),
+    });
     *state.feed.lock().unwrap() = feed.clone();
     if !state.running.load(Ordering::SeqCst) {
         return;
@@ -209,6 +212,8 @@ pub fn allowed_action(v: &Value) -> Option<Value> {
         }
         "stop" => Some(json!({ "type": "stop", "id": id })),
         "seen" => Some(json!({ "type": "seen", "id": id })),
+        // Only says the phone has a conversation open, so Desk sends its messages for a while.
+        "watch" => Some(json!({ "type": "watch", "id": id })),
         _ => None,
     }
 }
@@ -296,7 +301,9 @@ fn handle<R: Runtime>(app: &AppHandle<R>, mut request: tiny_http::Request) {
                 "reply" => format!("{} chars", action["text"].as_str().map(str::len).unwrap_or(0)),
                 _ => String::new(),
             };
-            log(&format!("{kind}\t{}\t{device}\t{}\t{detail}", action["id"].as_str().unwrap_or(""), login.as_deref().unwrap_or("")));
+            if kind != "watch" {
+                log(&format!("{kind}\t{}\t{device}\t{}\t{detail}", action["id"].as_str().unwrap_or(""), login.as_deref().unwrap_or("")));
+            }
             let _ = app.emit_to("main", "remote-action", action);
             let _ = request.respond(text(204, ""));
         }
@@ -462,6 +469,8 @@ mod tests {
         assert!(allowed_action(&json!({"type": "reply", "id": "c:1", "text": "  "})).is_none());
         assert!(allowed_action(&json!({"type": "answer", "id": "c:1", "requestId": "r"})).is_none(), "allow is required");
         assert_eq!(allowed_action(&json!({"type": "stop", "id": "t:2"})), Some(json!({"type": "stop", "id": "t:2"})));
+        assert_eq!(allowed_action(&json!({"type": "watch", "id": "c:1", "text": "x"})), Some(json!({"type": "watch", "id": "c:1"})), "watch carries only the id");
+        assert!(allowed_action(&json!({"type": "watch", "id": ""})).is_none());
     }
 
     #[test]

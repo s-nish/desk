@@ -39,6 +39,7 @@ export const ipc = {
   sandboxSecretHas: (key: string) => invoke<boolean>("sandbox_secret_has", { key }),
   sandboxSecretDelete: (key: string) => invoke<void>("sandbox_secret_delete", { key }),
   notchUpdate: (payload: unknown) => invoke<void>("notch_update", { payload }),
+  remoteUpdate: (payload: unknown) => invoke<void>("remote_update", { payload }),
   trayUpdate: (items: { id: string; label: string; detail: string; waiting: boolean }[]) => invoke<void>("tray_update", { items }),
   attachmentSave: (name: string, data: string) => invoke<string>("attachment_save", { name, data }),
   attachmentImage: (path: string) => invoke<{ mediaType: string; data: string }>("attachment_image", { path }),
