@@ -7,6 +7,16 @@ export const PORTS_SCRIPT = "cat /proc/net/tcp /proc/net/tcp6 2>/dev/null";
 /** Never forwarded: ssh. */
 const IGNORED = new Set([22]);
 
+/**
+ * Never forwarded by themselves (you can still forward them from the Ports menu):
+ * below 1024, and ports Mac services use, so code in a sandbox can't take one
+ * before the real service starts here and catch what's sent to it.
+ */
+export function autoForwardable(port: number) {
+  return port >= 1024 && !SENSITIVE.has(port);
+}
+const SENSITIVE = new Set([1433, 1521, 2375, 2376, 2379, 3306, 3389, 5432, 5672, 5900, 6379, 6443, 9042, 9200, 9300, 11211, 15672, 27017, 50000]);
+
 /** Whether a /proc/net/tcp local address (hex) is one "localhost" in the sandbox reaches. */
 function reachable(hex: string) {
   if (hex.length === 8) return hex === "00000000" || hex.endsWith("7F"); // 0.0.0.0, 127.x (little-endian)

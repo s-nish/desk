@@ -27,6 +27,8 @@ const tcp = `  sl  local_address rem_address   st tx_queue rx_queue tr tm->when 
 // 8080 on one interface only, 22, a connection (not listening), 6666 on one IPv6 address.
 assert.deepEqual(core.parseListening(tcp), [3000, 5001, 5173, 8000, 9000]);
 assert.deepEqual(core.parseListening(""), []);
+assert.ok(core.autoForwardable(5173) && core.autoForwardable(3000) && core.autoForwardable(8080));
+assert.ok(!core.autoForwardable(80) && !core.autoForwardable(5432) && !core.autoForwardable(6379) && !core.autoForwardable(2375), "never by itself: privileged, databases, Docker's API");
 
 const upper = (d) => Buffer.from(d.map((b) => (b >= 0x61 && b <= 0x7a ? b - 32 : b)));
 const server = createServer((c) => c.on("data", (d) => c.write(upper(d))).on("end", () => c.end()));

@@ -17,6 +17,8 @@ use std::time::Duration;
 
 /// How far past the port it asked for Desk looks for a free one.
 const TRIES: u16 = 20;
+/// Connections open at once per forward; each runs a provider command.
+const MAX_RELAYS: usize = 32;
 
 struct Forward {
     port: u16,
@@ -160,6 +162,10 @@ pub fn start(state: &PortState, key: &str, args: Vec<String>, want: u16) -> Resu
             while !stop.load(Ordering::SeqCst) {
                 match listener.accept() {
                     Ok((client, _)) => {
+                        if relays.lock().unwrap().len() >= MAX_RELAYS {
+                            drop(client);
+                            continue;
+                        }
                         let (relays, path, args) = (relays.clone(), path.clone(), args.clone());
                         std::thread::spawn(move || relay(client, &args, &path, &relays));
                     }

@@ -12,7 +12,7 @@ import { useDesk } from "../store";
 import { useChats } from "../chat";
 import { provider, run, useSandboxes } from "./index";
 import type { Sandbox } from "./types";
-import { PORTS_SCRIPT, parseListening, relayScript } from "./portsCore";
+import { PORTS_SCRIPT, autoForwardable, parseListening, relayScript } from "./portsCore";
 
 const EVERY_MS = 10_000;
 
@@ -104,7 +104,7 @@ export async function scan(sandbox: Sandbox, auto = useDesk.getState().preferenc
     const quiet = before === undefined;
     for (const port of now) {
       const key = keyOf(sandbox.id, port);
-      if (usePorts.getState().forwards[key] || dismissed.has(key)) continue;
+      if (usePorts.getState().forwards[key] || dismissed.has(key) || !autoForwardable(port)) continue;
       try {
         const f = await forward(sandbox, port);
         if (!quiet) announce(f);
