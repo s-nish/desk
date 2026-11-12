@@ -10,6 +10,7 @@ mod pty;
 mod search;
 mod sessions;
 mod notch;
+mod sandbox;
 mod tray;
 mod ssh;
 mod usage_live;
@@ -584,6 +585,38 @@ fn tray_update(app: AppHandle, items: Vec<tray::TrayItem>) -> Result<(), String>
     tray::update(&app, &items).map_err(|e| e.to_string())
 }
 
+/// One provider command (docker, boat, render, the Modal helper), with its output.
+#[tauri::command]
+async fn sandbox_run(opts: sandbox::RunOpts) -> Result<sandbox::RunOutput, String> {
+    tauri::async_runtime::spawn_blocking(move || sandbox::run(opts)).await.map_err(|e| e.to_string())?
+}
+
+/// A script Desk uploads into sandboxes (the runner) or builds them from (the Dockerfile).
+#[tauri::command]
+fn sandbox_resource(name: String) -> Result<String, String> {
+    sandbox::resource(&name).map(str::to_string)
+}
+
+#[tauri::command]
+fn sandbox_helper(name: String) -> Result<String, String> {
+    sandbox::helper_path(&name).map(|p| p.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+async fn sandbox_secret_set(key: String, value: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || sandbox::secret_set(&key, &value)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn sandbox_secret_has(key: String) -> bool {
+    sandbox::secret_has(&key)
+}
+
+#[tauri::command]
+fn sandbox_secret_delete(key: String) -> Result<(), String> {
+    sandbox::secret_delete(&key)
+}
+
 /// The feed for the notch, from the main window.
 #[tauri::command]
 fn notch_update(app: AppHandle, payload: Value) {
@@ -712,6 +745,12 @@ pub fn run() {
             notch_action,
             notch_resize,
             notch_focus,
+            sandbox_run,
+            sandbox_resource,
+            sandbox_helper,
+            sandbox_secret_set,
+            sandbox_secret_has,
+            sandbox_secret_delete,
             ]);
             move |invoke: tauri::ipc::Invoke| {
                 let label = invoke.message.webview().label().to_string();
