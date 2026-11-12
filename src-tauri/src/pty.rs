@@ -157,7 +157,7 @@ impl PtyManager {
     /// with the exit code after the output stream has drained.
     pub fn spawn<D, E>(
         self: &Arc<Self>,
-        opts: SpawnOpts,
+        mut opts: SpawnOpts,
         on_data: D,
         on_exit: E,
     ) -> Result<u32, String>
@@ -173,9 +173,15 @@ impl PtyManager {
                 pixel_height: 0,
             })
             .map_err(|e| e.to_string())?;
+        // Saved tokens (MCP servers' keys) go in the environment, not the shell script.
+        let secrets = crate::sandbox::take_secrets(&mut opts.env);
+        let mut command = build_command(&opts)?;
+        for (key, value) in &secrets {
+            command.env(key, value);
+        }
         let mut child = pty
             .slave
-            .spawn_command(build_command(&opts)?)
+            .spawn_command(command)
             .map_err(|e| e.to_string())?;
         drop(pty.slave);
 

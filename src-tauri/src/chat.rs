@@ -61,13 +61,15 @@ fn scrubbed(key: &str) -> bool {
 }
 
 impl ChatManager {
-    pub fn spawn<F>(self: &Arc<Self>, opts: ChatOpts, on_line: F) -> Result<u32, String>
+    pub fn spawn<F>(self: &Arc<Self>, mut opts: ChatOpts, on_line: F) -> Result<u32, String>
     where
         F: Fn(String) + Send + Sync + 'static,
     {
         if opts.args.is_empty() {
             return Err("nothing to run".into());
         }
+        // Saved tokens (MCP servers' keys) go in the environment, not on the command line.
+        let secrets = crate::sandbox::take_secrets(&mut opts.env);
         let shell = crate::pty::user_shell();
         // `env` applies the account after rc files run, so they can't override it.
         // Arguments go through "$@", so nothing is quoted or parsed by the shell.
@@ -88,6 +90,9 @@ impl ChatManager {
             }
         }
         cmd.env("NO_COLOR", "1").env("TERM", "dumb").env("SHELL", &shell);
+        for (key, value) in &secrets {
+            cmd.env(key, value);
+        }
         cmd.stdin(if opts.stdin { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
         #[cfg(unix)]
         {

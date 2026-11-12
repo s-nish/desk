@@ -19,12 +19,16 @@ export const useCrossReview = create<{ running: Record<string, Running | undefin
 const setRunning = (root: string, run: Running | undefined) =>
   useCrossReview.setState((s) => ({ running: { ...s.running, [root]: run } }));
 
+const CLAUDE_BLOCKED = ["Bash", "BashOutput", "KillShell", "Edit", "Write", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch", "Task", "SlashCommand"];
+
 /** The reviewer's command: one shot, nothing it can change. */
 export function reviewArgs(tool: Reviewer, prompt: string, untrusted: boolean) {
   if (tool === "claude") {
-    // In print mode anything that would ask (Bash, edits) is refused; edits are also switched off.
-    return ["claude", "-p", "--output-format", "json", "--permission-mode", "default", "--disallowedTools", "Edit", "Write", "MultiEdit", "NotebookEdit", "--no-session-persistence", ...(untrusted ? UNTRUSTED_CLAUDE_ARGS : []), "--", prompt];
+    // Only reading tools: anything that runs, writes or fetches is switched off outright,
+    // not just left to print mode refusing to ask (the diff may be written to mislead it).
+    return ["claude", "-p", "--output-format", "json", "--permission-mode", "default", "--disallowedTools", ...CLAUDE_BLOCKED, "--no-session-persistence", ...(untrusted ? UNTRUSTED_CLAUDE_ARGS : []), "--", prompt];
   }
+  // Read-only sandbox, and never asks to step outside it.
   return ["codex", "exec", "--json", "--skip-git-repo-check", "-c", 'sandbox_mode="read-only"', "-c", 'approval_policy="never"', "--", prompt];
 }
 

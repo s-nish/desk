@@ -180,6 +180,26 @@ fn secret_get(key: &str) -> Result<String, String> {
     std::fs::read_to_string(secret_path(key)?).map(|s| s.trim().to_string()).map_err(|_| format!("No saved token named {key}."))
 }
 
+/// Env values of the form `desk-secret:<key>` name a saved token. Takes those
+/// out of `env` and returns them resolved, for the process environment (never
+/// argv or a script, where `ps` would show them). Unknown ones are dropped.
+pub const SECRET_PREFIX: &str = "desk-secret:";
+
+pub fn take_secrets(env: &mut std::collections::HashMap<String, String>) -> Vec<(String, String)> {
+    let keys: Vec<String> = env.iter().filter(|(_, v)| v.starts_with(SECRET_PREFIX)).map(|(k, _)| k.clone()).collect();
+    let mut out = Vec::new();
+    for name in keys {
+        let key = env.remove(&name).unwrap_or_default();
+        if !valid_name(&name) {
+            continue;
+        }
+        if let Ok(value) = secret_get(&key[SECRET_PREFIX.len()..]) {
+            out.push((name, value));
+        }
+    }
+    out
+}
+
 pub fn secret_has(key: &str) -> bool {
     secret_path(key).is_ok_and(|p| p.is_file())
 }
@@ -239,6 +259,18 @@ mod tests {
         assert!(check_key("../x").is_err());
         assert!(check_key("a/b").is_err());
         assert!(check_key("").is_err());
+    }
+
+    #[test]
+    fn secrets_leave_the_env_map() {
+        let mut env = std::collections::HashMap::new();
+        env.insert("PLAIN".to_string(), "x".to_string());
+        env.insert("GONE".to_string(), "desk-secret:no-such-token-here".to_string());
+        env.insert("BAD NAME".to_string(), "desk-secret:x".to_string());
+        let got = take_secrets(&mut env);
+        assert!(got.is_empty());
+        assert_eq!(env.len(), 1);
+        assert_eq!(env["PLAIN"], "x");
     }
 
     #[test]
