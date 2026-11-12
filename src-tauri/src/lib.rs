@@ -10,6 +10,7 @@ mod pty;
 mod search;
 mod sessions;
 mod notch;
+mod ports;
 mod remote;
 mod sandbox;
 mod tray;
@@ -603,6 +604,19 @@ fn sandbox_helper(name: String) -> Result<String, String> {
     sandbox::helper_path(&name).map(|p| p.to_string_lossy().into_owned())
 }
 
+/// Forwards localhost to a server in a sandbox; returns the local port. See ports.rs.
+#[tauri::command]
+async fn port_forward_start(app: AppHandle, key: String, args: Vec<String>, port: u16) -> Result<u16, String> {
+    tauri::async_runtime::spawn_blocking(move || ports::start(&app.state::<ports::PortState>(), &key, args, port))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn port_forward_stop(state: State<ports::PortState>, key: String) {
+    ports::stop(&state, &key);
+}
+
 #[tauri::command]
 fn sandbox_bridge(key: String, conf: String) -> Result<sandbox::Bridge, String> {
     sandbox::bridge(&key, &conf)
@@ -708,6 +722,7 @@ pub fn run() {
         .manage(files::Watchers::default())
         .manage(QuitState::default())
         .manage(remote::RemoteState::default())
+        .manage(ports::PortState::default())
         .menu(build_menu)
         .setup(|app| {
             // The menu bar icon is a nicety: Desk runs without it.
@@ -813,6 +828,8 @@ pub fn run() {
             sandbox_resource,
             sandbox_helper,
             sandbox_bridge,
+            port_forward_start,
+            port_forward_stop,
             sandbox_secret_set,
             sandbox_secret_has,
             sandbox_secret_delete,
@@ -840,6 +857,7 @@ pub fn run() {
         RunEvent::Exit => {
             handle.state::<Arc<PtyManager>>().kill_all();
             handle.state::<Arc<chat::ChatManager>>().kill_all();
+            ports::stop_all(&handle.state::<ports::PortState>());
         }
         _ => {}
     });

@@ -104,6 +104,8 @@ export interface Preferences {
   sandboxHours?: number;
   /** Stop a sandbox that has had no running agent for 10 minutes (its disk is kept). */
   sandboxAutoStop?: boolean;
+  /** Forward ports that open in a sandbox to localhost here (default on). */
+  forwardPorts?: boolean;
   /** The one-line "run it in a sandbox" suggestion on long local tasks. */
   sandboxHints?: boolean;
   /** Projects where you said "Not now" to that suggestion. */

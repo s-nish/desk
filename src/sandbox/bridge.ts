@@ -38,7 +38,9 @@ export function bridgeInstructions(label: string) {
     "Read, search and edit files here as usual, and use git here.",
     "To install dependencies, build, run tests, start servers or run any of the project's own commands, run them through `desk-sandbox run '<command>'` from the project folder.",
     "It sends the project's changed files to the sandbox, runs the command there (in the same folder you're in) and prints its output and exit code.",
-    "Don't run those commands on this Mac directly. Long-running servers keep running there; their output comes back while the command runs.",
+    "Don't run those commands on this Mac directly.",
+    "For a server that should keep running (a dev server, an API), use `desk-sandbox serve '<command>'` instead: it starts it in the background there and says which port it listens on.",
+    "Desk forwards ports that open in the sandbox to this Mac, so the server is at http://localhost:<port> here (Desk shows the address if that port was taken).",
   ].join(" ");
 }
 

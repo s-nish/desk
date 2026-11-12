@@ -5,6 +5,7 @@ Desk calls it as an ordinary command, like the other providers' CLIs:
 
     desk_modal.py create <name> <timeout-seconds>   prints the sandbox id
     desk_modal.py exec <id> <shell command>         stdin and stdout stream through
+    desk_modal.py pipe <id> <shell command>         the same, byte for byte (port forwarding)
     desk_modal.py status <id>                       prints running or stopped
     desk_modal.py stop <id>
 
@@ -62,10 +63,10 @@ def gone(e):
     return isinstance(e, modal.exception.NotFoundError) or "already shut down" in str(e) or "not found" in str(e).lower()
 
 
-def run(sid, command):
+def run(sid, command, binary=False):
     try:
         sb = modal.Sandbox.from_id(sid)
-        return _run(sb, command)
+        return _run(sb, command, binary)
     except Exception as e:
         if gone(e):
             sys.stderr.write(GONE + "\n")
@@ -73,8 +74,9 @@ def run(sid, command):
         raise
 
 
-def _run(sb, command):
-    proc = sb.exec("sh", "-lc", f"chown desk {HOME} 2>/dev/null; export HOME={HOME}; cd {HOME}; {command}")
+def _run(sb, command, binary=False):
+    proc = sb.exec("sh", "-lc", f"chown desk {HOME} 2>/dev/null; export HOME={HOME}; cd {HOME}; {command}", text=not binary)
+    out = sys.stdout.buffer if binary else sys.stdout
 
     def pump_in():
         data = sys.stdin.buffer.read1(65536) if hasattr(sys.stdin.buffer, "read1") else sys.stdin.buffer.read(65536)
@@ -87,15 +89,18 @@ def _run(sb, command):
 
     def pump_err():
         for chunk in proc.stderr:
-            sys.stderr.write(chunk)
+            if binary:
+                sys.stderr.buffer.write(chunk)
+            else:
+                sys.stderr.write(chunk)
             sys.stderr.flush()
 
     threading.Thread(target=pump_in, daemon=True).start()
     err = threading.Thread(target=pump_err, daemon=True)
     err.start()
     for chunk in proc.stdout:
-        sys.stdout.write(chunk)
-        sys.stdout.flush()
+        out.write(chunk)
+        out.flush()
     code = proc.wait()
     err.join(timeout=2)
     sys.exit(code or 0)
@@ -127,6 +132,8 @@ def main(argv):
         create(*args)
     elif cmd == "exec" and len(args) == 2:
         run(*args)
+    elif cmd == "pipe" and len(args) == 2:
+        run(*args, binary=True)
     elif cmd == "status" and len(args) == 1:
         status(*args)
     elif cmd == "stop" and len(args) == 1:

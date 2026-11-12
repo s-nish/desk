@@ -43,6 +43,7 @@ import { watchSandboxes } from "./sandbox";
 import { AgentSidebar } from "./components/AgentSidebar";
 import { watchRemote } from "./components/Phone";
 import { watchSandboxChats } from "./sandbox/chats";
+import { watchPorts } from "./sandbox/ports";
 import { attach, closeChat, closeStripTab, markUnread, newChat, showStripTab, useChats } from "./chat";
 import { Workspace } from "./components/Workspace";
 import { BrowserPane } from "./components/Browser";
@@ -255,6 +256,7 @@ export function App() {
     const unphone = watchPhone();
     const unsandboxes = watchSandboxes();
     const unsandboxChats = watchSandboxChats();
+    const unports = watchPorts();
     const unremote = watchRemote();
     // Limits move slowly and are only re-read while Desk is on screen.
     const limits = setInterval(() => { if (!document.hidden) void refreshLimits(); }, 60_000);
@@ -292,7 +294,8 @@ export function App() {
       untray();
       unnotch();
       unphone();
-      unsandboxes(); unsandboxChats(); unremote();
+      unsandboxes(); unsandboxChats();
+      unports(); unremote();
       clearInterval(limits);
       clearInterval(live);
       window.removeEventListener("keydown", onKeyDown, true);

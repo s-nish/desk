@@ -4,7 +4,7 @@
 // here is ever required: "This Mac" is always first and needs no account.
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, Container, Copy, Download, ExternalLink, GitBranch, LoaderCircle, MoreHorizontal, Play, Plus, RefreshCw, Settings2, Square, SquareTerminal, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, Container, Copy, Download, ExternalLink, GitBranch, Globe, Network, LoaderCircle, MoreHorizontal, Play, Plus, RefreshCw, Settings2, Square, SquareTerminal, Trash2, X } from "lucide-react";
 import { TOOL_LABEL, uid, useDesk, type SandboxStartup } from "../store";
 import { restartAgent, updateItems } from "../chat";
 import { useChats, type Chat } from "../chat";
@@ -21,7 +21,9 @@ import {
 import { forgetBridge, pullWork } from "../sandbox/chats";
 import { MODE_TEXT, chatSandboxMode, defaultSandboxMode, type SandboxMode } from "../sandbox/bridge";
 import { canRunTerminal, openSandboxTerminal } from "../sandbox/terminal";
-import type { Agent, TerminalTab } from "../types";
+import { forward, localUrl, scan, unforward, usePorts } from "../sandbox/ports";
+import { openBrowser } from "./Browser";
+import type { Agent, MenuItem, TerminalTab } from "../types";
 
 const HINT_AFTER_MS = 10 * 60_000;
 
@@ -269,6 +271,7 @@ export function SandboxBar({ sandbox, remote, projectId, tool, accountId, idle =
       {!waking && (state === "stopped" || state === "missing") && <button className="sandbox-bar-btn is-primary" title={state === "missing" ? "It's gone at the provider: Desk makes a new one with the same name" : "Start it again; its disk was kept"} onClick={() => void wakeSandbox(sandbox).catch(toastError)}><Play size={12} /><span>{state === "missing" ? "Make a new one" : "Start"}</span></button>}
       {move && <button className="sandbox-bar-btn" title="Move this chat to another sandbox, or to this Mac" onClick={(e) => move(e.currentTarget)}><RefreshCw size={12} /><span>Move</span></button>}
       {remote && <button className="sandbox-bar-btn" disabled={pulling} title="Bring the branch home as a worktree, with uncommitted changes" onClick={() => void pull()}>{pulling ? <LoaderCircle size={12} className="is-spinning" /> : <Download size={12} />}<span>{pulling ? "Pulling…" : "Pull changes"}</span></button>}
+      {state === "running" && <PortsButton sandbox={sandbox} />}
       {shell && <button className="sandbox-bar-btn" title="A terminal tab with a shell in the sandbox" onClick={() => openTerminal(projectId, "shell", { command: shell })}><SquareTerminal size={12} /><span>Shell</span></button>}
       <button className="sandbox-bar-btn is-icon" aria-label="More sandbox actions" title="More" onClick={(e) => openMenu(e.currentTarget, [
         ...(codeOnly ? [] : [{ label: `Sign in to ${tool === "codex" ? "Codex" : "Claude Code"} there…`, disabled: !shell || tool === "shell", onSelect: signIn }]),
@@ -281,6 +284,39 @@ export function SandboxBar({ sandbox, remote, projectId, tool, accountId, idle =
       ])}><MoreHorizontal size={14} /></button>
       {extra}
     </div>
+  );
+}
+
+/** Servers running in the sandbox, forwarded to localhost here. */
+function PortsButton({ sandbox }: { sandbox: Sandbox }) {
+  const forwards = usePorts((s) => s.forwards);
+  const seen = usePorts((s) => s.seen[sandbox.id]);
+  const mine = Object.values(forwards).filter((f) => f.sandboxId === sandbox.id).sort((a, b) => a.remote - b.remote);
+  const others = (seen ?? []).filter((port) => !mine.some((f) => f.remote === port));
+  const show = async (el: HTMLElement) => {
+    const items: MenuItem[] = [];
+    for (const f of mine) {
+      const url = localUrl(f);
+      if (items.length) items.push({ separator: true });
+      items.push(
+        { label: `localhost:${f.local}`, hint: f.local === f.remote ? "Open in Desk" : `Port ${f.remote} there`, icon: <Globe size={13} />, onSelect: () => openBrowser(url) },
+        { label: "Open in your browser", icon: <ExternalLink size={13} />, onSelect: () => void ipc.openExternal(url) },
+        { label: "Copy address", icon: <Copy size={13} />, onSelect: () => void navigator.clipboard.writeText(url) },
+        { label: "Stop forwarding", icon: <X size={13} />, onSelect: () => unforward(f, true) },
+      );
+    }
+    if (others.length) {
+      if (items.length) items.push({ separator: true });
+      for (const port of others) items.push({ label: `Forward port ${port}`, icon: <Plus size={13} />, onSelect: () => void forward(sandbox, port).then((f) => openBrowser(localUrl(f))).catch(toastError) });
+    }
+    if (!items.length) items.push({ label: "Nothing is listening there yet", hint: "Servers show up here when they start", disabled: true });
+    items.push({ separator: true }, { label: "Look again", icon: <RefreshCw size={13} />, onSelect: () => void scan(sandbox) });
+    openMenu(el, items);
+  };
+  return (
+    <button className="sandbox-bar-btn" title="Servers in the sandbox, at localhost on this Mac" onClick={(e) => void show(e.currentTarget)}>
+      <Network size={12} /><span>{mine.length ? `Ports · ${mine.length}` : "Ports"}</span>
+    </button>
   );
 }
 
@@ -697,6 +733,7 @@ export function SandboxSettings({ provider: focus }: { provider?: ProviderId }) 
             {[1, 2, 4, 8, 12, 24].map((h) => <option key={h} value={h}>{h} hour{h > 1 ? "s" : ""}</option>)}
           </select>
         </div>
+        <Switch label="Forward ports automatically" description="When a server starts listening in a sandbox you're using, it opens at localhost on this Mac. Nothing is made public." checked={prefs.forwardPorts !== false} onChange={() => setPreferences({ forwardPorts: prefs.forwardPorts === false })} />
         <Switch label="Stop idle sandboxes" description="After 10 minutes with no agent running, while Desk is open. The disk is kept." checked={prefs.sandboxAutoStop !== false} onChange={() => setPreferences({ sandboxAutoStop: prefs.sandboxAutoStop === false })} />
         <Switch label="Suggest a sandbox for long tasks" description="One line under the message box after ten minutes, once per project." checked={prefs.sandboxHints !== false} onChange={() => setPreferences({ sandboxHints: prefs.sandboxHints === false, sandboxHintOff: [] })} />
       </div>

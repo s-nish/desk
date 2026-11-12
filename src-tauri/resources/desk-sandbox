@@ -15,6 +15,8 @@ die() { printf 'desk-sandbox: %s\n' "$*" >&2; exit 2; }
 usage() {
   cat <<'EOF'
 Usage: desk-sandbox run '<command>'   send the project's changed files to the sandbox, run the command there
+       desk-sandbox serve '<command>' the same for a server: it keeps running there in the background,
+                                      and Desk opens its port on this Mac at http://localhost:<port>
        desk-sandbox sync              only send the files
        desk-sandbox info              which sandbox, and where the files go
 EOF
@@ -24,10 +26,42 @@ EOF
 # Sets DESK_LABEL, DESK_KEY, DESK_REMOTE_DIR, DESK_SANDBOX_STATE and DESK_EXEC (an array).
 . "$DESK_SANDBOX_CONF"
 
+# Single-quotes a string for the sandbox's shell.
+sq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+
+# What `serve` runs there (with bash), after `c=<the server command>`: the server,
+# detached with its output in a log, then up to 30 seconds watching for the port
+# it opens. Desk forwards ports that open to localhost on this Mac by itself.
+SERVE_BODY=$(cat <<'SERVE'
+listening() { cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | awk '$4=="0A"{split($2,a,":"); print a[2]}' | sort -u; }
+d="$HOME/.desk/serve"; mkdir -p "$d"; log="$d/$(date +%s)-$$.log"
+before=$(listening)
+if command -v setsid >/dev/null 2>&1; then setsid nohup bash -c "$c" > "$log" 2>&1 < /dev/null &
+else nohup bash -c "$c" > "$log" 2>&1 < /dev/null & fi
+pid=$!
+echo "Started in the background there (pid $pid); its output goes to $log in the sandbox."
+new=
+for _ in $(seq 1 30); do
+  sleep 1
+  new=$(comm -13 <(printf '%s\n' "$before") <(listening) | grep . || true)
+  [ -n "$new" ] && break
+  kill -0 "$pid" 2>/dev/null || { echo "It exited. Its output:"; tail -n 40 "$log"; exit 1; }
+done
+echo "--- last lines of its output ---"; tail -n 15 "$log"; echo "---"
+if [ -n "$new" ]; then
+  for h in $new; do p=$((16#$h)); echo "Listening on port $p there. Desk opens it on this Mac at http://localhost:$p (or the next free port if that one is taken here; Desk shows the address)."; done
+else
+  echo "No new port is listening yet; Desk forwards it to localhost on this Mac as soon as it opens. To see its output: desk-sandbox run 'tail -n 50 $log'"
+fi
+SERVE
+)
+
 sub="${1:-}"
 [ $# -gt 0 ] && shift
 case "$sub" in
   run) [ $# -gt 0 ] || { usage >&2; exit 2; }; cmd="$*" ;;
+  serve) [ $# -gt 0 ] || { usage >&2; exit 2; }; cmd="c=$(sq "$*")
+$SERVE_BODY" ;;
   sync) cmd=":" ;;
   info) printf '%s\nFiles go to %s there.\n' "$DESK_LABEL" "$DESK_REMOTE_DIR"; exit 0 ;;
   ""|-h|--help|help) usage; exit 0 ;;
@@ -48,9 +82,6 @@ manifest="$DESK_SANDBOX_STATE/$key.manifest"
 token_file="$DESK_SANDBOX_STATE/$key.token"
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/desk-sandbox.XXXXXX") || exit 2
 trap 'rm -rf "$tmp"' EXIT
-
-# Single-quotes a string for the sandbox's shell.
-sq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 
 # Every file to mirror: tracked and new, not ignored, that exists. Names with a
 # newline in them are skipped.

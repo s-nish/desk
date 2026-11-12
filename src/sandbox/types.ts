@@ -69,6 +69,8 @@ export interface SandboxProvider {
   keepAlive?(run: Runner, remoteId: string, hours: number): Promise<void>;
   /** Argv that runs a shell script in the sandbox. Stdin and stdout pass through. */
   exec(remoteId: string, script: string): Promise<string[]>;
+  /** Like exec, byte for byte, for port forwarding. exec is used when it's already that. */
+  pipe?(remoteId: string, script: string): Promise<string[]>;
   /** A command line for a terminal tab with a shell in the sandbox. */
   shell?(remoteId: string): string;
   /** A command line for a terminal tab running `script` in the sandbox, with a terminal. */

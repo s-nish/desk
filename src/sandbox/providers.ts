@@ -243,6 +243,8 @@ export const modal: SandboxProvider = {
   async stop(run, id) { await run(await py(["stop", id]), { timeoutSecs: 120 }); },
   async remove(run, id) { await run(await py(["stop", id]), { timeoutSecs: 120 }); },
   async exec(id, script) { return py(["exec", id, script]); },
+  // Text mode would mangle a web page's images and gzip; port forwarding needs bytes.
+  async pipe(id, script) { return py(["pipe", id, script]); },
   // `modal shell` attaches to a running sandbox with a terminal; the home folder is Desk's.
   shell: (id) => `modal shell ${q(id)} --pty -c ${q(`export HOME=${MODAL_HOME}; cd "$HOME"; exec bash -l`)}`,
   tty: (id, script) => `modal shell ${q(id)} --pty -c ${q(`export HOME=${MODAL_HOME}; cd "$HOME"; exec sh -lc ${q(script)}`)}`,

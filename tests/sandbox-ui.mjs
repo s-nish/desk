@@ -123,6 +123,47 @@ assert.equal(await page.getByRole('menuitemradio', { name: /^New .* sandbox/ }).
 if (shot) { await page.waitForTimeout(700); await page.screenshot({ path: shot.replace('.png', '-terminal.png') }); }
 await page.keyboard.press('Escape');
 
+// Ports: a server that opens in the chat's sandbox is forwarded to localhost, with a toast and a menu.
+await page.getByRole('radio', { name: 'Chat view' }).click();
+await page.waitForTimeout(300);
+await page.evaluate(async () => {
+  const { useDesk } = await import('/src/store.ts');
+  const { useChats } = await import('/src/chat.ts');
+  const { useSandboxes } = await import('/src/sandbox/index.ts');
+  const desk = useDesk.getState();
+  const id = useChats.getState().activeId;
+  const sandbox = { id: 'sb1', provider: 'docker', remoteId: 'c0ffee', projectId: useChats.getState().chats[id].projectId, name: 'studio-1', createdAt: Date.now() };
+  useDesk.setState({ sandboxes: [...desk.sandboxes, sandbox] });
+  useSandboxes.getState().set({ states: { sb1: 'running' } });
+  useChats.getState().patch(id, { where: 'sb1', sandboxMode: 'code' });
+  window.testSandbox = sandbox;
+});
+await page.locator('.sandbox-bar').getByRole('button', { name: /^Ports/ }).waitFor();
+const tcp = (ports) => '  sl  local_address rem_address   st\n' + ports.map((p, i) => `   ${i}: 00000000:${p.toString(16).toUpperCase().padStart(4, '0')} 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000 0 1\n`).join('');
+// Already open the first time Desk looks: forwarded quietly.
+await page.evaluate(async (t) => { window.testListening = t; const m = await import('/src/sandbox/ports.ts'); await m.scan(window.testSandbox); }, tcp([3000]));
+await page.locator('.sandbox-bar').getByRole('button', { name: 'Ports · 1' }).waitFor();
+// One that opens later: a toast with the address here (5173 was taken, so 5174).
+await page.evaluate(async (t) => { window.testListening = t; const m = await import('/src/sandbox/ports.ts'); await m.scan(window.testSandbox); }, tcp([3000, 5173]));
+await page.getByText('Port 5173 → localhost:5174 (5173 was taken here)').waitFor();
+await page.locator('.sandbox-bar').getByRole('button', { name: 'Ports · 2' }).click();
+await page.getByRole('menuitem', { name: /localhost:5174/ }).waitFor();
+await page.getByRole('menuitem', { name: /localhost:3000/ }).waitFor();
+if (shot) await page.screenshot({ path: shot.replace('.png', '-ports.png') });
+// Stopping one keeps it stopped while it stays open there.
+await page.getByRole('menuitem', { name: 'Stop forwarding' }).first().click();
+await page.locator('.sandbox-bar').getByRole('button', { name: 'Ports · 1' }).waitFor();
+await page.evaluate(async () => { const m = await import('/src/sandbox/ports.ts'); await m.scan(window.testSandbox); });
+assert.equal(await page.locator('.sandbox-bar').getByRole('button', { name: 'Ports · 1' }).count(), 1, 'a stopped port is not forwarded again by itself');
+assert.ok(await page.evaluate(() => window.testCalls.some((c) => c.cmd === 'port_forward_stop' && c.args.key === 'sb1:3000')));
+// Its relay runs the provider's exec with the relay script.
+const started = await page.evaluate(() => window.testCalls.find((c) => c.cmd === 'port_forward_start' && c.args.port === 5173).args);
+assert.deepEqual(started.args.slice(0, 6), ['docker', 'exec', '-i', 'c0ffee', 'sh', '-lc']);
+assert.match(started.args[6], /connect\(5173,/);
+// Closed there: the forward goes.
+await page.evaluate(async () => { window.testListening = ''; const m = await import('/src/sandbox/ports.ts'); await m.scan(window.testSandbox); });
+await page.locator('.sandbox-bar').getByRole('button', { name: 'Ports', exact: true }).waitFor();
+
 assert.deepEqual(errors, []);
 await browser.close();
-console.log('PASS sandbox-ui: settings page, four providers, dots and refresh, inline setup, startup saved, Start Docker, radial Run in');
+console.log('PASS sandbox-ui: settings page, four providers, dots and refresh, inline setup, startup saved, Start Docker, radial Run in, ports forwarded with a toast, menu, stop, closed');
