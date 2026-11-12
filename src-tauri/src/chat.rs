@@ -285,7 +285,7 @@ const MAX_IMAGE_BYTES: u64 = 5 * 1024 * 1024;
 
 /// Desk's own folder for pasted images, so Codex (which takes file paths) can read them.
 fn attachment_dir() -> PathBuf {
-    dirs::cache_dir().unwrap_or_else(std::env::temp_dir).join("dev.desk.Desk").join("attachments")
+    dirs::cache_dir().unwrap_or_else(std::env::temp_dir).join(crate::variant::cache_dir()).join("attachments")
 }
 
 /// Saves a pasted image and returns its path. Old pastes are cleared after a week.

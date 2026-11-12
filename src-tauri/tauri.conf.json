@@ -24,7 +24,8 @@
         "backgroundColor": "#02070A"
       }
     ],
-    "security": { "csp": null }
+    "security": { "csp": null },
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,

@@ -12,7 +12,9 @@
     "test:backend": "cargo test --manifest-path src-tauri/Cargo.toml",
     "test:home": "node tests/home.mjs",
     "test:acp": "node tests/acp.mjs",
-    "test:feed": "node tests/feed.mjs"
+    "test:feed": "node tests/feed.mjs",
+    "dev:app": "DESK_VARIANT=dev tauri dev --config src-tauri/tauri.dev-app.conf.json",
+    "build:dev-app": "DESK_VARIANT=dev tauri build --config src-tauri/tauri.dev-app.conf.json"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",

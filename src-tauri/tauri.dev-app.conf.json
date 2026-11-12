@@ -1,0 +1,21 @@
+{
+  "productName": "Desk Dev",
+  "identifier": "dev.desk.DeskDev",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Desk Dev",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 960,
+        "minHeight": 600,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": { "x": 16, "y": 26 },
+        "backgroundColor": "#02070A"
+      }
+    ]
+  },
+  "bundle": { "targets": ["app"] }
+}

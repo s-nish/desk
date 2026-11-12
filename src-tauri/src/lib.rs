@@ -9,9 +9,11 @@ mod chat;
 mod pty;
 mod search;
 mod sessions;
+mod notch;
 mod tray;
 mod ssh;
 mod usage_live;
+mod variant;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -42,7 +44,7 @@ struct FsChange {
 fn state_file() -> PathBuf {
     dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("Desk")
+        .join(variant::app_dir())
         .join("state.json")
 }
 
@@ -582,6 +584,32 @@ fn tray_update(app: AppHandle, items: Vec<tray::TrayItem>) -> Result<(), String>
     tray::update(&app, &items).map_err(|e| e.to_string())
 }
 
+/// The feed for the notch, from the main window.
+#[tauri::command]
+fn notch_update(app: AppHandle, payload: Value) {
+    notch::update(&app, payload);
+}
+
+#[tauri::command]
+fn notch_snapshot(app: AppHandle) -> notch::Snapshot {
+    notch::snapshot(&app)
+}
+
+#[tauri::command]
+fn notch_action(app: AppHandle, action: Value) {
+    notch::action(&app, action);
+}
+
+#[tauri::command]
+fn notch_resize(app: AppHandle, width: f64, height: f64) {
+    notch::resize(&app, width, height);
+}
+
+#[tauri::command]
+fn notch_focus(app: AppHandle, focus: bool) {
+    notch::focus(&app, focus);
+}
+
 pub fn run() {
     let ptys = Arc::new(PtyManager::default());
     bridge::start(Arc::clone(&ptys));
@@ -597,6 +625,10 @@ pub fn run() {
             // The menu bar icon is a nicety: Desk runs without it.
             if let Err(e) = tray::create(app.handle()) {
                 eprintln!("Couldn't add the menu bar icon: {e}");
+            }
+            // So is the notch.
+            if let Err(e) = notch::create(app.handle()) {
+                eprintln!("Couldn't add the notch: {e}");
             }
             Ok(())
         })
@@ -675,9 +707,16 @@ pub fn run() {
             ssh_forget_password,
             ssh_has_password,
             tray_update,
+            notch_update,
+            notch_snapshot,
+            notch_action,
+            notch_resize,
+            notch_focus,
             ]);
             move |invoke: tauri::ipc::Invoke| {
-                if invoke.message.webview().label() != "main" {
+                let label = invoke.message.webview().label().to_string();
+                let allowed = label == "main" || (label == notch::LABEL && notch::COMMANDS.contains(&invoke.message.command()));
+                if !allowed {
                     invoke.resolver.reject("Not allowed from this page");
                     return true;
                 }

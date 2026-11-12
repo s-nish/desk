@@ -51,7 +51,7 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 fn support_dir() -> Result<PathBuf, String> {
-    Ok(dirs::data_dir().ok_or("no Application Support folder")?.join("Desk"))
+    Ok(dirs::data_dir().ok_or("no Application Support folder")?.join(crate::variant::app_dir()))
 }
 
 /// Owner-only folder holding one file per saved password.

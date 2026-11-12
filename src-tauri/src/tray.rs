@@ -100,7 +100,7 @@ pub fn create<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon(false))
         .icon_as_template(true)
-        .tooltip("Desk")
+        .tooltip(crate::variant::name())
         .menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -125,9 +125,9 @@ pub fn update<R: Runtime>(app: &AppHandle<R>, items: &[TrayItem]) -> tauri::Resu
     tray.set_icon_as_template(true)?;
     let waiting = items.iter().filter(|i| i.waiting).count();
     let tip = match (items.len(), waiting) {
-        (0, _) => "Desk".to_string(),
-        (n, 0) => format!("Desk · {n} working"),
-        (n, w) => format!("Desk · {} working, {w} waiting for you", n - w),
+        (0, _) => crate::variant::name().to_string(),
+        (n, 0) => format!("{} · {n} working", crate::variant::name()),
+        (n, w) => format!("{} · {} working, {w} waiting for you", crate::variant::name(), n - w),
     };
     tray.set_tooltip(Some(tip))?;
     Ok(())
