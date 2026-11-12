@@ -988,11 +988,7 @@ export function codexHistory(records: Json[]): ChatItem[] {
 }
 
 /** Live chats that are working or waiting on an answer, for the sidebar dots. */
-export function chatBusy(chat: Chat | undefined) {
-  if (!chat) return null;
-  if (chat.items.some((i) => i.kind === "approval" && i.state === "pending")) return "waiting";
-  return chat.status === "idle" ? null : "running";
-}
+export { chatBusy } from "./feedCore";
 
 // ACP agents: Gemini CLI, Cursor Agent, Grok, OpenCode
 

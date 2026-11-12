@@ -11,7 +11,8 @@
     "test:appearance": "node tests/appearance.mjs",
     "test:backend": "cargo test --manifest-path src-tauri/Cargo.toml",
     "test:home": "node tests/home.mjs",
-    "test:acp": "node tests/acp.mjs"
+    "test:acp": "node tests/acp.mjs",
+    "test:feed": "node tests/feed.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",
