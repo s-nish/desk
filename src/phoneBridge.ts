@@ -127,6 +127,16 @@ export function phonePayload(now = Date.now()): PhonePayload {
   return { sessions, usage: notchPayload(now).usage, threads };
 }
 
+/**
+ * What the phone may type into an agent's terminal: one line of plain text. No
+ * control or escape characters (they could drive the screen or quit the agent),
+ * and not "!", which runs a shell command in Claude Code without asking.
+ */
+export function terminalText(text: string) {
+  const line = text.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").replace(/\s+/g, " ").trim();
+  return line.startsWith("!") ? "" : line.slice(0, 4_000);
+}
+
 function agentTab(id: string) {
   const tab = useDesk.getState().tabs.find((t) => t.id === id.slice(2));
   return tab?.type === "terminal" && tab.tool !== "shell" && !tab.sshId ? tab : null;
@@ -148,7 +158,7 @@ export function applyPhoneAction(action: PhoneAction) {
     case "reply":
       if (!action.text.trim()) return;
       if (chat) { if (chat.status === "idle") void send(chat.id, action.text); else enqueue(chat.id, action.text); }
-      else if (tab) typeIntoTerminal(tab.id, action.text);
+      else if (tab?.status === "running") { const text = terminalText(action.text); if (text) typeIntoTerminal(tab.id, text); }
       return;
     case "stop":
       if (chat) stop(chat.id);
