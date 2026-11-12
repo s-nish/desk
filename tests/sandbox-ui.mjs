@@ -23,6 +23,13 @@ const box = await page.locator('.settings-page').boundingBox();
 assert.ok(box.width >= 1270, `settings spans the window (${box.width})`);
 await page.getByRole('button', { name: /Sandboxes/ }).first().click();
 await page.getByText('Unattended for up to').waitFor();
+// How sandboxes work: the agent here and the code there is the default; the other is one click.
+const modes = page.getByRole('radiogroup', { name: 'How sandboxes work' });
+assert.equal(await modes.getByRole('radio', { name: /Agent on this Mac, code runs in the sandbox/ }).getAttribute('aria-checked'), 'true');
+await modes.getByRole('radio', { name: /Agent runs in the sandbox/ }).click();
+assert.equal(await modes.getByRole('radio', { name: /Agent runs in the sandbox/ }).getAttribute('aria-checked'), 'true');
+await modes.getByRole('radio', { name: /Agent on this Mac/ }).click();
+assert.equal(await modes.getByRole('radio', { name: /Agent on this Mac/ }).getAttribute('aria-checked'), 'true');
 for (const name of ['Docker', 'Docker Cloud', 'Boat', 'Modal']) await page.locator('.sandbox-provider-name strong', { hasText: new RegExp(`^${name}$`) }).waitFor();
 assert.equal(await page.getByText('Render', { exact: true }).count(), 0, 'Render is gone');
 await page.locator('.sandbox-provider').first().getByText('Not installed').waitFor();

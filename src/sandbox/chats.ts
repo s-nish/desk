@@ -5,7 +5,8 @@ import { addWorktreeProject, branchSlug, rootProject } from "../actions";
 import { reattachChat, restoreChat, updateItems, useChats, type Chat } from "../chat";
 import { ipc } from "../ipc";
 import { useDesk } from "../store";
-import { TOKEN_VAR, ensureRunning, provider, runStartScripts, tokenKey } from "./index";
+import { TOKEN_VAR, ensureRunning, provider, runStartScripts, startScripts, tokenKey } from "./index";
+import { readyBridge, type Bridge } from "./bridge";
 import { pullOut, syncIn, type RemoteWork } from "./sync";
 import { remoteRuns, sandboxExec, type RemoteTarget } from "./transport";
 import { provider as providerOf } from "./providers";
@@ -24,6 +25,50 @@ function sandboxOf(chatId: string) {
 
 function progress(chatId: string, text: string) {
   updateItems(chatId, (items) => [...items.filter((i) => i.id !== NOTICE), ...(text ? [{ kind: "notice" as const, id: NOTICE, text }] : [])]);
+}
+
+const bridges = new Map<string, Bridge>();
+/** Sandbox and project pairs whose start script has run in this session of Desk. */
+const started = new Set<string>();
+
+/** A code-mode chat's desk-sandbox setup, once its first message has gone. */
+export const bridgeOf = (chatId: string) => bridges.get(chatId) ?? null;
+export const forgetBridge = (chatId: string) => bridges.delete(chatId);
+
+/**
+ * Agent here, code there: makes sure the sandbox is up and desk-sandbox can
+ * reach it. The first time for a project, sends the files and runs your start
+ * script there.
+ */
+export async function prepareBridge(chatId: string) {
+  const found = sandboxOf(chatId);
+  if (!found) return;
+  const { chat, sandbox } = found;
+  const project = useDesk.getState().projects.find((p) => p.id === chat.projectId);
+  if (!project) throw new Error("This chat's project was removed.");
+  const root = rootProject(project);
+  const say = (t: string) => progress(chatId, t);
+  try {
+    const known = bridges.has(chatId);
+    const bridge = await readyBridge(sandbox, root, say);
+    bridges.set(chatId, bridge);
+    const current = useDesk.getState().sandboxes.find((x) => x.id === sandbox.id) ?? sandbox;
+    const scripts = startScripts(root.id);
+    const key = `${current.remoteId}|${root.id}`;
+    if (scripts.length && !started.has(key)) {
+      say("Sending the code and running your start script…");
+      const out = await ipc.sandboxRun(
+        ["sh", "-c", 'cd "$1" && DESK_SANDBOX_CONF="$2" exec "$3/desk-sandbox" run "$4"', "desk", chat.cwd || root.path, bridge.env.DESK_SANDBOX_CONF, bridge.env.DESK_PATH_PREPEND, scripts.join("\n")],
+        { timeoutSecs: 1800 },
+      );
+      started.add(key);
+      if (out.code !== 0) updateItems(chatId, (items) => [...items, { kind: "notice", id: `sb-script-${Date.now()}`, text: `Your start script failed in the sandbox; the agent starts anyway.\n${(out.stderr || out.stdout).trim().split("\n").slice(-4).join("\n")}` }]);
+    }
+    say("");
+    if (!known) updateItems(chatId, (items) => [...items, { kind: "notice", id: `sb-${Date.now()}`, text: `${chat.tool === "codex" ? "Codex" : chat.tool === "claude" ? "Claude Code" : "The agent"} works on this Mac with your sign-in; your code builds and runs in ${bridge.label} (desk-sandbox run).` }]);
+  } finally {
+    say("");
+  }
 }
 
 /** Wakes the sandbox and, on the first message, sends the code and makes a worktree there. */

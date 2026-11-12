@@ -2945,3 +2945,15 @@ body.is-resizing-rows, body.is-resizing-rows * { cursor: row-resize !important; 
 .phone-log ol { margin: 10px 0 0; padding: 0; list-style: none; display: grid; gap: 4px; font: 11px var(--font-mono, monospace); color: var(--muted); }
 .phone-log time { color: var(--text-2); }
 .phone-warn { color: var(--ui-warn, #f0a54a); }
+
+/* Settings ▸ Sandboxes ▸ How sandboxes work */
+.sandbox-modes { display: flex; flex-direction: column; padding: 4px; gap: 2px; }
+.sandbox-mode { display: flex; align-items: flex-start; gap: 12px; padding: 12px; border: 0; border-radius: 10px; background: transparent; color: var(--text); text-align: left; cursor: pointer; font: inherit; }
+.sandbox-mode:hover { background: var(--bg-hover); }
+.sandbox-mode.is-on { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.sandbox-mode strong { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+.sandbox-mode strong em { font-style: normal; font-size: 10.5px; font-weight: 600; padding: 1px 7px; border-radius: 99px; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.sandbox-mode small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.sandbox-mode-dot { flex: none; width: 15px; height: 15px; margin-top: 1px; border-radius: 50%; border: 1.5px solid var(--border-strong, var(--muted)); }
+.sandbox-mode.is-on .sandbox-mode-dot { border-color: var(--accent); background: radial-gradient(circle, var(--accent) 0 4px, transparent 4.5px); }
+.sandbox-bar-mode { font-size: 11px; padding: 1px 8px; border-radius: 99px; color: var(--muted); background: color-mix(in srgb, var(--text) 7%, transparent); white-space: nowrap; }

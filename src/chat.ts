@@ -14,7 +14,9 @@ import { create } from "zustand";
 import { ipc } from "./ipc";
 import { agentKill, agentSpawn, agentWrite } from "./sandbox/transport";
 import { acpMcpServers, claudeMcpArgs, codexMcpArgs, secretEnv, serversFor } from "./mcp";
-import { prepareRemote, remoteTarget } from "./sandbox/chats";
+import { bridgeOf, prepareBridge, prepareRemote, remoteTarget } from "./sandbox/chats";
+import { chatSandboxMode, codexBridgeArgs, type SandboxMode } from "./sandbox/bridge";
+import { setBusySource } from "./sandbox/index";
 import { TOOL_LABEL, chatView, projectAccount, sessionEnv, uid, useDesk } from "./store";
 import { addWorktreeProject, branchSlug, refreshLimits, rootProject, UNTRUSTED_CLAUDE_ARGS, untrustedPath } from "./actions";
 import { notify } from "./notify";
@@ -112,6 +114,8 @@ export interface Chat {
   acpCommands?: SlashCommand[];
   /** The sandbox it runs in (its id in Desk), or nothing for this Mac. Chosen before the first message. */
   where?: string | null;
+  /** With a sandbox: the agent runs there ("agent"), or here with only the code there ("code"). */
+  sandboxMode?: SandboxMode;
   /** In a sandbox: the worktree there, its branch and what it started from. */
   remote?: { cwd: string; branch: string; base: string } | null;
   /** In a sandbox: the runner's id for the agent, while one runs. */
@@ -343,6 +347,15 @@ const seed = (account: Account | undefined) => ({ model: account?.model ?? "", e
 /** Trust follows the folder the agent runs in, as well as the project the chat is filed under. */
 const untrusted = (chat: Chat) => untrustedPath(chat.cwd) || !!desk().projects.find((p) => p.id === chat.projectId)?.untrusted;
 
+/** Ends the chat's agent process, if any, so its next message starts it again (same conversation). */
+export function restartAgent(chatId: string) {
+  const chat = chats().chats[chatId];
+  if (!chat) return;
+  if (isAcpAgent(chat.tool)) dropAcp(chat.id);
+  else if (chat.proc != null) void agentKill(chat.proc);
+  chats().patch(chat.id, { proc: null });
+}
+
 /** A folder was just marked untrusted: agents already running there were started with its
  *  own settings, so stop them. Chats restart restricted on the next message, in a read-only mode. */
 export function distrustChats(path: string) {
@@ -412,6 +425,12 @@ export function closeChat(id: string) {
 
 // Sending
 
+// A chat working here with its code in a sandbox keeps that sandbox from stopping as idle.
+setBusySource(() => [
+  ...Object.values(chats().chats).filter((c) => chatSandboxMode(c) === "code" && c.status !== "idle" && c.where).map((c) => c.where!),
+  ...desk().tabs.flatMap((t) => (t.type === "terminal" && t.codeSandbox && t.status === "running" ? [t.codeSandbox] : [])),
+]);
+
 function accountFor(chat: Chat) {
   const s = desk();
   const project = s.projects.find((p) => p.id === chat.projectId);
@@ -424,7 +443,7 @@ function accountFor(chat: Chat) {
 function mcpFor(chat: Chat) {
   const project = desk().projects.find((p) => p.id === chat.projectId);
   const servers = serversFor(desk().preferences.mcpServers, project?.worktreeOf ?? chat.projectId, chat.tool, untrusted(chat));
-  return chat.where ? servers.filter((s) => s.kind === "http") : servers;
+  return chatSandboxMode(chat) === "agent" ? servers.filter((s) => s.kind === "http") : servers;
 }
 
 export async function send(chatId: string, text: string, attachments: Attachment[] = []) {
@@ -442,7 +461,7 @@ export async function send(chatId: string, text: string, attachments: Attachment
     status: c.proc != null ? "running" : "starting",
     startedAt: Date.now(),
   }));
-  if (chat.where) {
+  if (chatSandboxMode(chat) === "agent") {
     try {
       await prepareRemote(chatId, text || attachments.map((a) => a.name).join(" "));
     } catch (e) {
@@ -454,6 +473,15 @@ export async function send(chatId: string, text: string, attachments: Attachment
       await moveToWorktree(chatId, text || attachments.map((a) => a.name).join(" "));
     } catch (e) {
       fail(chatId, `Couldn't create a worktree: ${String(e)}`);
+      return;
+    }
+  }
+  // Agent here, code in the sandbox: wake it and set up desk-sandbox before the agent starts.
+  if (chatSandboxMode(chat) === "code") {
+    try {
+      await prepareBridge(chatId);
+    } catch (e) {
+      fail(chatId, `Couldn't start the sandbox: ${e instanceof Error ? e.message : String(e)}`);
       return;
     }
   }
@@ -616,6 +644,8 @@ async function startClaude(chatId: string) {
   const { account, env, unset } = accountFor(chat);
   const mcp = mcpFor(chat);
   Object.assign(env, secretEnv(mcp));
+  const bridge = bridgeOf(chatId);
+  if (bridge) Object.assign(env, bridge.env);
   const id = chat.sessionId ?? uid();
   // A chat whose session Claude Code has saved is resumed; a new one is started under its id.
   const target = await remoteTarget(chatId);
@@ -636,6 +666,7 @@ async function startClaude(chatId: string) {
     ...(chat.effort ? ["--effort", chat.effort] : []),
     // Questions come as plain text instead; the chat has no card for answering them.
     "--disallowedTools", "AskUserQuestion",
+    ...(bridge ? ["--append-system-prompt", bridge.instructions] : []),
     ...claudeMcpArgs(mcp),
     ...(state === "resumable" ? ["--resume", sessionId] : ["--session-id", sessionId]),
   ];
@@ -946,9 +977,11 @@ async function runCodex(chatId: string, text: string, attachments: Attachment[] 
   const { account, env, unset } = accountFor(chat);
   const mcp = mcpFor(chat);
   Object.assign(env, secretEnv(mcp));
+  const bridge = bridgeOf(chatId);
+  if (bridge) Object.assign(env, bridge.env);
   const access = chat.mode === "danger-full-access" ? ["--dangerously-bypass-approvals-and-sandbox"] : ["-c", `sandbox_mode="${chat.mode === "read-only" ? "read-only" : "workspace-write"}"`];
   const images = attachments.filter((a) => a.image).map((a) => `--image=${a.path}`);
-  const common = ["--json", "--skip-git-repo-check", ...access, ...(chat.model ? ["-m", chat.model] : []), ...(chat.effort ? ["-c", `model_reasoning_effort="${chat.effort}"`] : []), ...codexMcpArgs(mcp), ...images];
+  const common = ["--json", "--skip-git-repo-check", ...access, ...(chat.model ? ["-m", chat.model] : []), ...(chat.effort ? ["-c", `model_reasoning_effort="${chat.effort}"`] : []), ...codexMcpArgs(mcp), ...(bridge ? codexBridgeArgs(bridge, chat.mode) : []), ...images];
   text = withFiles(text, attachments, false) || "See the attached image.";
   const args = chat.sessionId
     ? ["codex", "exec", "resume", ...common, "--", chat.sessionId, text]
@@ -1137,6 +1170,8 @@ async function startAcp(chatId: string): Promise<AcpConnection> {
   const { account, env, unset } = accountFor(chat);
   const mcpServers = acpMcpServers(mcpFor(chat));
   Object.assign(env, secretEnv(mcpFor(chat)));
+  const bridge = bridgeOf(chatId);
+  if (bridge) Object.assign(env, bridge.env);
   dropAcp(chatId);
   const holder: { conn?: AcpConnection } = {};
   const target = await remoteTarget(chatId);
@@ -1274,6 +1309,8 @@ function exitText(tool: Agent, code: number | null, stderr: string) {
   return stderr || `${TOOL_LABEL[tool]} stopped (exit ${code ?? "?"}).`;
 }
 
+const told = new WeakSet<AcpConnection>();
+
 async function sendAcp(chatId: string, text: string, attachments: Attachment[] = []) {
   let conn = conns.get(chatId);
   if (!conn?.alive) conn = await startAcp(chatId);
@@ -1284,7 +1321,10 @@ async function sendAcp(chatId: string, text: string, attachments: Attachment[] =
     const { mediaType, data } = await ipc.attachmentImage(a.path);
     return { type: "image", mimeType: mediaType, data };
   }));
-  const body = withFiles(text, attachments, !images.length) || "See the attached image.";
+  let body = withFiles(text, attachments, !images.length) || "See the attached image.";
+  // ACP agents have no flag for extra instructions; the first prompt carries them.
+  const bridge = bridgeOf(chatId);
+  if (bridge && !told.has(conn)) { told.add(conn); body = `<desk-sandbox>${bridge.instructions}</desk-sandbox>\n\n${body}`; }
   folds.set(chatId, newFold(uid()));
   chats().patch(chatId, { status: "running" });
   rememberAcp(chatId, text);

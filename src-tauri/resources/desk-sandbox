@@ -1,0 +1,120 @@
+#!/bin/bash
+# desk-sandbox: runs a command in this session's sandbox, on the project's
+# current files. The agent works on this Mac (with your sign-in, which never
+# leaves it); only the code goes to the sandbox.
+#
+# Desk puts this on the agent's PATH and writes how to reach the sandbox to
+# $DESK_SANDBOX_CONF. Each run sends only the files that changed since the
+# last one (tracked and new files, never .gitignore'd ones), then runs the
+# command there, in the same folder you're in here, and streams its output.
+
+set -u
+export COPYFILE_DISABLE=1 LC_ALL=C
+
+die() { printf 'desk-sandbox: %s\n' "$*" >&2; exit 2; }
+usage() {
+  cat <<'EOF'
+Usage: desk-sandbox run '<command>'   send the project's changed files to the sandbox, run the command there
+       desk-sandbox sync              only send the files
+       desk-sandbox info              which sandbox, and where the files go
+EOF
+}
+
+[ -n "${DESK_SANDBOX_CONF:-}" ] && [ -f "$DESK_SANDBOX_CONF" ] || die "no sandbox is set up for this session (pick one in Desk's Run in menu)."
+# Sets DESK_LABEL, DESK_KEY, DESK_REMOTE_DIR, DESK_SANDBOX_STATE and DESK_EXEC (an array).
+. "$DESK_SANDBOX_CONF"
+
+sub="${1:-}"
+[ $# -gt 0 ] && shift
+case "$sub" in
+  run) [ $# -gt 0 ] || { usage >&2; exit 2; }; cmd="$*" ;;
+  sync) cmd=":" ;;
+  info) printf '%s\nFiles go to %s there.\n' "$DESK_LABEL" "$DESK_REMOTE_DIR"; exit 0 ;;
+  ""|-h|--help|help) usage; exit 0 ;;
+  *) cmd="$sub${*:+ $*}" ;;
+esac
+
+root=$(git rev-parse --show-toplevel 2>/dev/null) || die "run this inside the project folder (a git repository)."
+rel=$(git rev-parse --show-prefix 2>/dev/null)
+cd "$root" || exit 2
+
+# Where it remembers what was sent; somewhere temporary if that's not writable here.
+if ! { mkdir -p "$DESK_SANDBOX_STATE" && [ -w "$DESK_SANDBOX_STATE" ]; } 2>/dev/null; then
+  DESK_SANDBOX_STATE="${TMPDIR:-/tmp}/desk-sandbox-state"
+  mkdir -p "$DESK_SANDBOX_STATE" || exit 2
+fi
+key=$(printf '%s|%s' "$DESK_KEY" "$root" | shasum | cut -c1-16)
+manifest="$DESK_SANDBOX_STATE/$key.manifest"
+token_file="$DESK_SANDBOX_STATE/$key.token"
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/desk-sandbox.XXXXXX") || exit 2
+trap 'rm -rf "$tmp"' EXIT
+
+# Single-quotes a string for the sandbox's shell.
+sq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+
+# Every file to mirror: tracked and new, not ignored, that exists. Names with a
+# newline in them are skipped.
+git ls-files -co --exclude-standard -z | while IFS= read -r -d '' f; do
+  case "$f" in *$'\n'*) continue ;; esac
+  if [ -f "$f" ] || [ -L "$f" ]; then printf '%s\n' "$f"; fi
+done | sort -u > "$tmp/files"
+git hash-object --stdin-paths < "$tmp/files" > "$tmp/hashes" 2>/dev/null || die "couldn't read the project's files."
+paste -d '\t' "$tmp/hashes" "$tmp/files" | sort > "$tmp/manifest"
+
+attempt() { # $1 = 1 to send everything
+  local full=$1 old new script hdr
+  old=$(cat "$token_file" 2>/dev/null || true)
+  [ -z "$old" ] || [ ! -f "$manifest" ] && full=1
+  new=$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')
+  if [ "$full" = 1 ]; then
+    cut -f2- "$tmp/manifest" > "$tmp/send"
+    : > "$tmp/gone"
+  else
+    comm -13 "$manifest" "$tmp/manifest" | cut -f2- > "$tmp/send"
+    comm -23 <(cut -f2- "$manifest" | sort) <(cut -f2- "$tmp/manifest" | sort) > "$tmp/gone"
+  fi
+  tr '\n' '\0' < "$tmp/send" > "$tmp/send0"
+
+  {
+    printf 'd=%s\n' "$DESK_REMOTE_DIR"
+    printf 'mkdir -p "$d" && cd "$d" || exit 1\n'
+    if [ "$full" != 1 ]; then
+      # The sandbox lost the files, or the last send didn't finish: start over.
+      printf '[ "$(cat .desk-sync 2>/dev/null)" = %s ] || { echo "desk-sandbox: the copy in the sandbox is out of date; sending every file." >&2; exit 213; }\n' "$(sq "$old")"
+    fi
+    while IFS= read -r f; do printf 'rm -f -- %s\n' "$(sq "$f")"; done < "$tmp/gone"
+    if [ -s "$tmp/send" ]; then
+      printf 'o=; tar --version 2>/dev/null | grep -q GNU && o="--warning=no-unknown-keyword --no-same-owner"\n'
+      printf 'tar $o -xf - || { echo "desk-sandbox: the files did not arrive whole." >&2; exit 1; }\n'
+    fi
+    printf 'printf %%s %s > .desk-sync\n' "$(sq "$new")"
+    printf 'cd ./%s 2>/dev/null || true\n' "$(sq "$rel")"
+    printf 'c=%s\n' "$(sq "$cmd")"
+    printf 'if command -v bash >/dev/null 2>&1; then exec bash -c "$c"; else exec sh -c "$c"; fi\n'
+  } > "$tmp/script"
+  hdr=$(base64 < "$tmp/script" | tr -d '\n')
+
+  # The new state counts from here: if this send doesn't finish, the sandbox's
+  # marker won't match next time and everything goes again.
+  printf '%s' "$new" > "$token_file"
+  cp "$tmp/manifest" "$manifest"
+
+  # Output streams straight through; a copy of stderr is kept to spot a resend.
+  : > "$tmp/code"
+  { {
+    {
+      printf '%s\n' "$hdr"
+      if [ -s "$tmp/send" ]; then tar --null -T "$tmp/send0" --no-xattrs --no-mac-metadata -cf - 2>/dev/null; fi
+    } | "${DESK_EXEC[@]}"
+    echo $? > "$tmp/code"
+  } 2>&1 1>&3 | tee "$tmp/err" >&2; } 3>&1
+  return "$(cat "$tmp/code" 2>/dev/null || echo 1)"
+}
+
+attempt 0
+code=$?
+if [ "$code" = 213 ] && grep -q "sending every file" "$tmp/err" 2>/dev/null; then
+  attempt 1
+  code=$?
+fi
+exit "$code"

@@ -260,12 +260,15 @@ export function shellCommand(sandbox: Sandbox): string | null {
 
 const IDLE_MS = 10 * 60_000;
 const lastUsed = new Map<string, number>();
+/** Other things keeping sandboxes busy (chats whose agent runs here and its code there). */
+let busySource: () => string[] = () => [];
+export const setBusySource = (f: () => string[]) => { busySource = f; };
 
 export function watchSandboxes() {
   const tick = setInterval(() => {
     const desk = useDesk.getState();
     if (desk.preferences.sandboxAutoStop === false) return;
-    const busy = new Set(remoteRuns().map((r) => r.sandboxId));
+    const busy = new Set([...remoteRuns().map((r) => r.sandboxId), ...busySource()]);
     for (const x of desk.sandboxes) {
       if (busy.has(x.id)) { lastUsed.set(x.id, Date.now()); continue; }
       const since = lastUsed.get(x.id);

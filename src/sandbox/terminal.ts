@@ -12,6 +12,7 @@ import { TOKEN_VAR, createSandbox, ensureRunning, provider, runStartScripts, tok
 import { syncIn } from "./sync";
 import { sandboxExec } from "./transport";
 import { q, type ProviderId, type Sandbox } from "./types";
+import { defaultSandboxMode, readyBridge } from "./bridge";
 
 /** Agents the sandbox image has. */
 export const SANDBOX_TERMINAL_AGENTS: Agent[] = ["claude", "codex"];
@@ -37,6 +38,12 @@ export async function openSandboxTerminal(projectId: string, tool: Agent, where:
     let sandbox: Sandbox | undefined = "sandboxId" in where ? desk.sandboxes.find((x) => x.id === where.sandboxId) : undefined;
     if ("provider" in where) sandbox = await createSandbox(root.id, where.provider, key);
     if (!sandbox) throw new Error("That sandbox was removed.");
+    if (defaultSandboxMode() === "code") {
+      // The agent runs in a tab here; desk-sandbox sends the code there when it builds or runs something.
+      await readyBridge(sandbox, root, say);
+      openTerminal(projectId, tool, { codeSandbox: sandbox.id });
+      return;
+    }
     say("Starting the sandbox…");
     sandbox = await ensureRunning(sandbox, say);
     const slug = `${tool}-${Date.now().toString(36).slice(-5)}`;

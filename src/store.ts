@@ -95,6 +95,11 @@ export interface Preferences {
   notchRings?: boolean;
   /** A pill under the menu bar on screens without a notch. */
   notchOnOtherScreens?: boolean;
+  /**
+   * How sandbox chats work: "code" (default) runs the agent on this Mac and only
+   * the code in the sandbox; "agent" runs the agent there too.
+   */
+  sandboxMode?: "code" | "agent";
   /** How long a sandbox run may go on without you, in hours; the provider stops it then. */
   sandboxHours?: number;
   /** Stop a sandbox that has had no running agent for 10 minutes (its disk is kept). */

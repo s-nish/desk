@@ -604,6 +604,11 @@ fn sandbox_helper(name: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn sandbox_bridge(key: String, conf: String) -> Result<sandbox::Bridge, String> {
+    sandbox::bridge(&key, &conf)
+}
+
+#[tauri::command]
 async fn sandbox_secret_set(key: String, value: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || sandbox::secret_set(&key, &value)).await.map_err(|e| e.to_string())?
 }
@@ -801,6 +806,7 @@ pub fn run() {
             sandbox_run,
             sandbox_resource,
             sandbox_helper,
+            sandbox_bridge,
             sandbox_secret_set,
             sandbox_secret_has,
             sandbox_secret_delete,

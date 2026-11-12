@@ -6,7 +6,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Container, Copy, Download, ExternalLink, GitBranch, LoaderCircle, MoreHorizontal, Play, Plus, RefreshCw, Settings2, Square, SquareTerminal, Trash2, X } from "lucide-react";
 import { TOOL_LABEL, uid, useDesk, type SandboxStartup } from "../store";
-import { updateItems } from "../chat";
+import { restartAgent, updateItems } from "../chat";
 import { useChats, type Chat } from "../chat";
 import { openTerminal, rootProject } from "../actions";
 import { ipc } from "../ipc";
@@ -18,7 +18,8 @@ import {
   PROVIDERS, checkAllProviders, checkProvider, createSandbox, making, provider, refreshStates, removeSandbox, shellCommand, startProvider, stopSandbox, tokenKey, useSandboxes, wakeSandbox,
   type ProviderCheck, type ProviderId, type Sandbox,
 } from "../sandbox";
-import { pullWork } from "../sandbox/chats";
+import { forgetBridge, pullWork } from "../sandbox/chats";
+import { MODE_TEXT, chatSandboxMode, defaultSandboxMode, type SandboxMode } from "../sandbox/bridge";
 import { canRunTerminal, openSandboxTerminal } from "../sandbox/terminal";
 import type { Agent, TerminalTab } from "../types";
 
@@ -92,7 +93,10 @@ function whereItems(o: {
 }
 
 function setWhere(chat: Chat, where: string | null) {
-  useChats.getState().patch(chat.id, { where, remote: null, ...(where ? { worktree: false } : {}) });
+  const mode = where ? defaultSandboxMode() : undefined;
+  forgetBridge(chat.id);
+  // The agent stays here in code mode, so a worktree still makes sense; in the sandbox it gets a branch there.
+  useChats.getState().patch(chat.id, { where, sandboxMode: mode, remote: null, ...(mode === "agent" ? { worktree: false } : {}) });
 }
 
 /**
@@ -133,7 +137,9 @@ export function RunInChip({ chat, fresh, repo }: { chat: Chat; fresh: boolean; r
     : !fresh
       ? `${current ? `Runs in ${label(current.provider)} (${current.name})` : "Runs on this Mac"}. Pick another place to move this chat (a new conversation there).`
       : current
-        ? `Runs in ${label(current.provider)} (${current.name}). Keeps going when you close Desk.`
+        ? chatSandboxMode(chat) === "code"
+          ? `The agent works on this Mac; your code builds and runs in ${label(current.provider)} (${current.name}).`
+          : `Runs in ${label(current.provider)} (${current.name}). Keeps going when you close Desk.`
         : "Where this chat runs. A sandbox keeps going when you close Desk (or the lid, with a cloud one).";
   return (
     <>
@@ -211,7 +217,7 @@ export function sandboxTabItems(at: HTMLElement, projectId: string, picker: Retu
 }
 
 /** One slim bar on a sandbox chat or tab: where, its state, the branch, and what you can do. */
-export function SandboxBar({ sandbox, remote, projectId, tool, accountId, idle = true, terminal, move, moving, extra }: {
+export function SandboxBar({ sandbox, remote, projectId, tool, accountId, idle = true, terminal, move, moving, extra, codeOnly }: {
   sandbox: Sandbox;
   remote: { cwd: string; branch: string; base: string } | null;
   projectId: string;
@@ -224,6 +230,8 @@ export function SandboxBar({ sandbox, remote, projectId, tool, accountId, idle =
   move?: (el: HTMLElement) => void;
   moving?: string;
   extra?: React.ReactNode;
+  /** The agent runs on this Mac; only the code runs in the sandbox. */
+  codeOnly?: boolean;
 }) {
   const state = useSandboxes((s) => s.states[sandbox.id]);
   const waking = useSandboxes((s) => s.progress[`wake:${sandbox.id}`]);
@@ -254,6 +262,7 @@ export function SandboxBar({ sandbox, remote, projectId, tool, accountId, idle =
       <span className="sandbox-bar-logo"><SandboxLogo provider={sandbox.provider} size={14} /></span>
       <span className="sandbox-bar-where"><strong>{p?.label}</strong><span>{sandbox.name}</span></span>
       <span className={"sandbox-bar-state is-" + shown.dot} title={waking || undefined}><i />{shown.text}</span>
+      {codeOnly && <span className="sandbox-bar-mode" title={MODE_TEXT.code.body}>{MODE_TEXT.code.short}</span>}
       {remote && <span className="sandbox-bar-branch" title={`From ${remote.base}`}><GitBranch size={11} />{remote.branch}</span>}
       <span className="sandbox-bar-gap" />
       {moving && <span className="sandbox-bar-moving"><LoaderCircle size={12} className="is-spinning" />{moving}</span>}
@@ -262,7 +271,7 @@ export function SandboxBar({ sandbox, remote, projectId, tool, accountId, idle =
       {remote && <button className="sandbox-bar-btn" disabled={pulling} title="Bring the branch home as a worktree, with uncommitted changes" onClick={() => void pull()}>{pulling ? <LoaderCircle size={12} className="is-spinning" /> : <Download size={12} />}<span>{pulling ? "Pulling…" : "Pull changes"}</span></button>}
       {shell && <button className="sandbox-bar-btn" title="A terminal tab with a shell in the sandbox" onClick={() => openTerminal(projectId, "shell", { command: shell })}><SquareTerminal size={12} /><span>Shell</span></button>}
       <button className="sandbox-bar-btn is-icon" aria-label="More sandbox actions" title="More" onClick={(e) => openMenu(e.currentTarget, [
-        { label: `Sign in to ${tool === "codex" ? "Codex" : "Claude Code"} there…`, disabled: !shell || tool === "shell", onSelect: signIn },
+        ...(codeOnly ? [] : [{ label: `Sign in to ${tool === "codex" ? "Codex" : "Claude Code"} there…`, disabled: !shell || tool === "shell", onSelect: signIn }]),
         { label: "Check again", icon: <RefreshCw size={13} />, onSelect: () => void refreshStates(sandbox.projectId) },
         state !== "running"
           ? { label: "Start the sandbox", icon: <Play size={13} />, onSelect: () => void wakeSandbox(sandbox).catch(toastError) }
@@ -282,16 +291,27 @@ export function SandboxBar({ sandbox, remote, projectId, tool, accountId, idle =
  */
 export function moveChat(chat: Chat, to: Sandbox | null) {
   const project = useDesk.getState().projects.find((p) => p.id === chat.projectId);
+  const toMode: SandboxMode | null = to ? defaultSandboxMode() : null;
+  forgetBridge(chat.id);
+  // The agent stays on this Mac either way: same conversation, only where the code runs changes.
+  if (chatSandboxMode(chat) !== "agent" && toMode !== "agent") {
+    restartAgent(chat.id);
+    useChats.getState().patch(chat.id, { where: to?.id ?? null, sandboxMode: toMode ?? undefined, remote: null, runId: null });
+    if (chat.saved || chat.items.length) updateItems(chat.id, (items) => [...items, { kind: "notice", id: `move-${Date.now()}`, text: to ? `Same conversation; your code now builds and runs in ${label(to.provider)} (${to.name}).` : "Same conversation; your code runs on this Mac again." }]);
+    return;
+  }
   const started = !!chat.remote || chat.saved;
+  restartAgent(chat.id);
   useChats.getState().patch(chat.id, {
     where: to?.id ?? null,
+    sandboxMode: toMode ?? undefined,
     remote: null,
     runId: null,
     worktree: false,
     ...(started ? { sessionId: chat.tool === "claude" ? uid() : null, saved: false } : {}),
     ...(project ? { cwd: project.path } : {}),
   });
-  if (started) updateItems(chat.id, (items) => [...items, { kind: "notice", id: `move-${Date.now()}`, text: to ? `Continues in ${label(to.provider)} (${to.name}) as a new conversation. Your next message sends the code there.` : "Continues on this Mac, in the project folder, as a new conversation." }]);
+  if (started) updateItems(chat.id, (items) => [...items, { kind: "notice", id: `move-${Date.now()}`, text: to ? (toMode === "agent" ? `Continues in ${label(to.provider)} (${to.name}) as a new conversation. Your next message sends the code there.` : `Continues on this Mac as a new conversation; your code builds and runs in ${label(to.provider)} (${to.name}).`) : "Continues on this Mac, in the project folder, as a new conversation." }]);
 }
 
 /** Picks somewhere else for a started chat: the same radial, with every provider. */
@@ -334,15 +354,15 @@ export function SandboxStrip({ chat }: { chat: Chat }) {
       </div>
     );
   }
-  return <SandboxBar sandbox={sandbox} remote={chat.remote ?? null} projectId={chat.projectId} tool={chat.tool} accountId={chat.accountId} idle={idle}
+  return <SandboxBar sandbox={sandbox} remote={chat.remote ?? null} projectId={chat.projectId} tool={chat.tool} accountId={chat.accountId} idle={idle} codeOnly={chatSandboxMode(chat) === "code"}
     move={idle && !progress ? (el) => mover.open(el) : undefined} moving={progress} extra={mover.element} />;
 }
 
 /** The bar above a terminal tab whose agent runs in a sandbox. */
 export function SandboxTabBar({ tab }: { tab: TerminalTab }) {
-  const sandbox = useDesk((s) => s.sandboxes.find((x) => x.id === tab.sandboxId));
+  const sandbox = useDesk((s) => s.sandboxes.find((x) => x.id === (tab.sandboxId ?? tab.codeSandbox)));
   if (!sandbox) return null;
-  return <SandboxBar terminal sandbox={sandbox} remote={tab.remote ?? null} projectId={tab.projectId} tool={tab.tool as Agent} accountId={tab.accountId} idle={!tab.busy} />;
+  return <SandboxBar terminal sandbox={sandbox} remote={tab.remote ?? null} projectId={tab.projectId} tool={tab.tool as Agent} accountId={tab.accountId} idle={!tab.busy} codeOnly={!tab.sandboxId} />;
 }
 
 /** Shown in the terminal view while sandbox tabs are being prepared: one line each. */
@@ -619,8 +639,23 @@ export function SandboxSettings({ provider: focus }: { provider?: ProviderId }) 
     return [...by.entries()];
   }, [sandboxes, pending.length]); // eslint-disable-line react-hooks/exhaustive-deps
   const refreshAll = async () => { setRefreshing(true); await refreshStates().finally(() => setRefreshing(false)); };
+  const mode = prefs.sandboxMode ?? "code";
   return (
     <>
+      <h3 className="settings-label">How sandboxes work</h3>
+      <div className="settings-card sandbox-modes" role="radiogroup" aria-label="How sandboxes work">
+        {(["code", "agent"] as SandboxMode[]).map((m) => (
+          <button key={m} className={"sandbox-mode" + (mode === m ? " is-on" : "")} role="radio" aria-checked={mode === m} onClick={() => setPreferences({ sandboxMode: m })}>
+            <span className="sandbox-mode-dot" aria-hidden="true" />
+            <span>
+              <strong>{MODE_TEXT[m].title}{m === "code" && <em>Recommended</em>}</strong>
+              <small>{MODE_TEXT[m].body}</small>
+            </span>
+          </button>
+        ))}
+      </div>
+      <p className="settings-note">Applies to chats you put in a sandbox from now on. A chat keeps the way it started; Move switches it.</p>
+
       <div className="settings-label sandbox-section-head">
         <span>Providers</span>
         <Refresh busy={anyChecking} label="Check every provider again" onClick={() => void checkAllProviders(true)} />
@@ -666,7 +701,7 @@ export function SandboxSettings({ provider: focus }: { provider?: ProviderId }) 
       <div className="settings-card">
         {accounts.map((a) => <TokenRow key={a.id} accountId={a.id} name={`${a.kind === "claude" ? "Claude Code" : "Codex"} · ${a.name}`} kind={a.kind} />)}
       </div>
-      <p className="settings-note">Agents in a sandbox sign in there, with their own login, so Desk never sees the token. Pasting one is optional: it's kept in an owner-only file on this Mac and sent to the sandbox on stdin, never in a command line or a log. Code goes in and comes back with git; Desk commits and pushes nothing.</p>
+      <p className="settings-note">Only for "{MODE_TEXT.agent.title}": with the agent on this Mac, no token or sign-in goes anywhere. Agents in a sandbox sign in there, with their own login, so Desk never sees the token. Pasting one is optional: it's kept in an owner-only file on this Mac and sent to the sandbox on stdin, never in a command line or a log. Code goes in and comes back with git; Desk commits and pushes nothing.</p>
     </>
   );
 }

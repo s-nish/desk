@@ -74,7 +74,9 @@ impl ChatManager {
         // `env` applies the account after rc files run, so they can't override it.
         // Arguments go through "$@", so nothing is quoted or parsed by the shell.
         let mut cmd = Command::new(&shell);
-        cmd.arg("-l").arg("-i").arg("-c").arg("exec env \"$@\"").arg("desk");
+        // A folder to put first on PATH (desk-sandbox) goes on after rc files set PATH.
+        let prepend = opts.env.remove("DESK_PATH_PREPEND");
+        cmd.arg("-l").arg("-i").arg("-c").arg("[ -n \"${DESK_PATH_PREPEND:-}\" ] && PATH=\"$DESK_PATH_PREPEND:$PATH\" && export PATH; exec env \"$@\"").arg("desk");
         for key in &opts.unset {
             cmd.arg("-u").arg(key);
         }
@@ -90,6 +92,9 @@ impl ChatManager {
             }
         }
         cmd.env("NO_COLOR", "1").env("TERM", "dumb").env("SHELL", &shell);
+        if let Some(dir) = &prepend {
+            cmd.env("DESK_PATH_PREPEND", dir);
+        }
         for (key, value) in &secrets {
             cmd.env(key, value);
         }

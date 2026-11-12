@@ -73,7 +73,7 @@ function openRow(r: Row, project: Project) {
 function AgentRow({ row, project, active }: { row: Row; project: Project; active: boolean }) {
   const state = rowState(row);
   const where = row.kind === "past" ? null : row.kind === "chat" ? "Chat" : "Terminal";
-  const sandboxId = row.kind === "chat" ? row.chat.where : row.kind === "term" ? row.tab.sandboxId : null;
+  const sandboxId = row.kind === "chat" ? row.chat.where : row.kind === "term" ? row.tab.sandboxId ?? row.tab.codeSandbox : null;
   const sandbox = useDesk((s) => (sandboxId ? s.sandboxes.find((x) => x.id === sandboxId) : undefined));
   return (
     <button

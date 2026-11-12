@@ -25,6 +25,9 @@ pub const RUNNER: &str = include_str!("../resources/desk-run.sh");
 pub const DOCKERFILE: &str = include_str!("../resources/Dockerfile.sandbox");
 /// Modal has no sandbox commands in its CLI; this helper uses its Python SDK.
 pub const MODAL_HELPER: &str = include_str!("../resources/desk_modal.py");
+/// "Agent on this Mac, code in the sandbox": the command an agent runs to send
+/// the project's files to its sandbox and run something there.
+pub const BRIDGE: &str = include_str!("../resources/desk-sandbox");
 
 const OUTPUT_LIMIT: usize = 64 * 1024 * 1024;
 
@@ -224,6 +227,41 @@ pub fn helper_path(name: &str) -> Result<PathBuf, String> {
     write_private(&dir.join(format!(".{name}.tmp")), body)?;
     std::fs::rename(dir.join(format!(".{name}.tmp")), &path).map_err(|e| e.to_string())?;
     Ok(path)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Bridge {
+    /// The folder with `desk-sandbox` in it, for the agent's PATH.
+    bin: String,
+    /// The session's config: how to reach its sandbox.
+    conf: String,
+}
+
+/// Writes `desk-sandbox` and one sandbox's config for it (owner-only; it names
+/// the sandbox and how to reach it, never a token). `key` names the config file.
+pub fn bridge(key: &str, conf: &str) -> Result<Bridge, String> {
+    let base = dirs::data_dir().ok_or("no Application Support folder")?.join(crate::variant::app_dir()).join("helpers");
+    let bin = base.join("bin");
+    let confs = base.join("bridges");
+    std::fs::create_dir_all(&bin).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(confs.join("state")).map_err(|e| e.to_string())?;
+    let _ = std::fs::set_permissions(&confs, std::fs::Permissions::from_mode(0o700));
+    let script = bin.join("desk-sandbox");
+    write_private(&bin.join(".desk-sandbox.tmp"), BRIDGE)?;
+    std::fs::set_permissions(bin.join(".desk-sandbox.tmp"), std::fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
+    std::fs::rename(bin.join(".desk-sandbox.tmp"), &script).map_err(|e| e.to_string())?;
+    let name: String = key.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' }).take(80).collect();
+    let path = confs.join(format!("{name}.conf"));
+    let state = confs.join("state");
+    let body = format!("DESK_SANDBOX_STATE={}\n{conf}", shell_quote(&state.to_string_lossy()));
+    write_private(&confs.join(format!(".{name}.tmp")), &body)?;
+    std::fs::rename(confs.join(format!(".{name}.tmp")), &path).map_err(|e| e.to_string())?;
+    Ok(Bridge { bin: bin.to_string_lossy().into_owned(), conf: path.to_string_lossy().into_owned() })
+}
+
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 fn write_private(path: &Path, body: &str) -> Result<(), String> {

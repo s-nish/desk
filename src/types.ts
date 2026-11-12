@@ -88,6 +88,8 @@ export interface TerminalTab {
   command?: string;
   /** The agent runs in this sandbox (see src/sandbox/terminal.ts), in this checkout there. */
   sandboxId?: string;
+  /** The agent runs here; its code builds and runs in this sandbox (desk-sandbox). */
+  codeSandbox?: string;
   remote?: { cwd: string; branch: string; base: string };
 }
 

@@ -125,7 +125,7 @@ function TabButton({ tab, project, active, showProject, dragging, dropBefore, on
 }) {
   const accounts = useDesk((s) => s.accounts);
   const connection = useDesk((s) => (tab.type === "terminal" && tab.sshId ? s.connections.find((c) => c.id === tab.sshId) : undefined));
-  const sandbox = useDesk((s) => (tab.type === "terminal" && tab.sandboxId ? s.sandboxes.find((x) => x.id === tab.sandboxId) : undefined));
+  const sandbox = useDesk((s) => { const id = tab.type === "terminal" ? tab.sandboxId ?? tab.codeSandbox : undefined; return id ? s.sandboxes.find((x) => x.id === id) : undefined; });
   const select = () => useDesk.getState().selectTab(tab.id);
   let color = "transparent";
   let label: string;
@@ -349,7 +349,7 @@ export function TerminalPane({ tab, visible, focused }: { tab: TerminalTab; visi
   return (
     <div className={"pane terminal-pane" + (visible ? " is-visible" : "")} style={{ "--acct": account?.color ?? "var(--line-strong)" } as React.CSSProperties}>
       <div className="pane-rule" />
-      {tab.sandboxId && <SandboxTabBar tab={tab} />}
+      {(tab.sandboxId || tab.codeSandbox) && <SandboxTabBar tab={tab} />}
       {tab.restored ? <RestoredSession tab={tab} /> : <div className="terminal-mount" ref={ref} />}
     </div>
   );

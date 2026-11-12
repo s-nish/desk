@@ -34,6 +34,7 @@ export const ipc = {
     invoke<{ code: number | null; stdout: string; stderr: string }>("sandbox_run", { opts: { args, ...opts } }),
   sandboxResource: (name: string) => invoke<string>("sandbox_resource", { name }),
   sandboxHelper: (name: string) => invoke<string>("sandbox_helper", { name }),
+  sandboxBridge: (key: string, conf: string) => invoke<{ bin: string; conf: string }>("sandbox_bridge", { key, conf }),
   sandboxSecretSet: (key: string, value: string) => invoke<void>("sandbox_secret_set", { key, value }),
   sandboxSecretHas: (key: string) => invoke<boolean>("sandbox_secret_has", { key }),
   sandboxSecretDelete: (key: string) => invoke<void>("sandbox_secret_delete", { key }),
