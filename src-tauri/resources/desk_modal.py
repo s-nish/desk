@@ -48,8 +48,25 @@ def create(name, timeout):
     print(sb.object_id, flush=True)
 
 
+GONE = "This Modal sandbox has shut down (it reached its time limit, or was stopped). Desk makes a new one next time."
+
+
+def gone(e):
+    return isinstance(e, modal.exception.NotFoundError) or "already shut down" in str(e) or "not found" in str(e).lower()
+
+
 def run(sid, command):
-    sb = modal.Sandbox.from_id(sid)
+    try:
+        sb = modal.Sandbox.from_id(sid)
+        return _run(sb, command)
+    except Exception as e:
+        if gone(e):
+            sys.stderr.write(GONE + "\n")
+            sys.exit(4)
+        raise
+
+
+def _run(sb, command):
     proc = sb.exec("sh", "-lc", f"chown desk {HOME} 2>/dev/null; export HOME={HOME}; cd {HOME}; {command}")
 
     def pump_in():
@@ -78,12 +95,17 @@ def run(sid, command):
 
 
 def status(sid):
+    # poll() can still say "running" for a sandbox that has shut down, so ask it to run something.
     try:
         sb = modal.Sandbox.from_id(sid)
+        if sb.poll() is not None:
+            print("stopped")
+            return
+        proc = sb.exec("true", timeout=60)
+        proc.wait()
+        print("running")
     except Exception:
         print("missing")
-        return
-    print("running" if sb.poll() is None else "stopped")
 
 
 def stop(sid):

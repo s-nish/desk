@@ -187,7 +187,8 @@ export const boat: SandboxProvider = {
   async keepAlive(run, id, hours) { await run(["boat", "extend", id, "--hours", String(Math.max(1, Math.round(hours)))]); },
   // ssh hands the remote side one string, so the script travels quoted.
   async exec(id, script) { return ["boat", "ssh", id, "--", `sh -lc ${q(script)}`]; },
-  shell: (id) => `boat ssh ${q(id)}`,
+  shell: (id) => `boat ssh -t ${q(id)}`,
+  tty: (id, script) => `boat ssh -t ${q(id)} -- ${q(`sh -lc ${q(script)}`)}`,
 };
 
 let modalHelper: string | null = null;
@@ -211,6 +212,8 @@ async function py(args: string[]) {
   return ["sh", "-c", `${MODAL_PYTHON}\nexec "$py" "$@"`, "desk", await helper(), ...args];
 }
 
+const MODAL_HOME = "/home/desk";
+
 export const modal: SandboxProvider = {
   id: "modal",
   label: "Modal",
@@ -218,7 +221,7 @@ export const modal: SandboxProvider = {
   install: { command: "pipx install modal && modal setup", url: "https://modal.com/docs/guide" },
   signup: "https://modal.com/signup",
   login: ["modal", "setup"],
-  caps: { lidClosed: true, keepsDisk: true, maxHours: 24, terminal: false },
+  caps: { lidClosed: true, keepsDisk: true, maxHours: 24, terminal: true },
   // Ready only when the Python Desk will use can load the SDK, and you're signed in.
   async whoami() {
     return ["sh", "-c", `${MODAL_PYTHON}\n"$py" -c "import modal" 2>/dev/null || { echo "The modal package isn't in $py. Install it with pipx install modal." >&2; exit 3; }\nexec modal profile current`];
@@ -240,6 +243,9 @@ export const modal: SandboxProvider = {
   async stop(run, id) { await run(await py(["stop", id]), { timeoutSecs: 120 }); },
   async remove(run, id) { await run(await py(["stop", id]), { timeoutSecs: 120 }); },
   async exec(id, script) { return py(["exec", id, script]); },
+  // `modal shell` attaches to a running sandbox with a terminal; the home folder is Desk's.
+  shell: (id) => `modal shell ${q(id)} --pty -c ${q(`export HOME=${MODAL_HOME}; cd "$HOME"; exec bash -l`)}`,
+  tty: (id, script) => `modal shell ${q(id)} --pty -c ${q(`export HOME=${MODAL_HOME}; cd "$HOME"; exec sh -lc ${q(script)}`)}`,
 };
 
 export const PROVIDERS: SandboxProvider[] = [docker, dockerCloud, boat, modal];

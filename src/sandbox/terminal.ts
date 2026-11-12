@@ -30,11 +30,12 @@ export async function openSandboxTerminal(projectId: string, tool: Agent, where:
   const project = desk.projects.find((p) => p.id === projectId);
   if (!project) return;
   const root = rootProject(project);
-  const key = `term:${root.id}`;
+  // One progress line per tab being opened, so several can be on their way at once.
+  const key = `term:|${root.id}|${tool}|${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
   const say = (text: string) => useSandboxes.getState().set({ progress: { [key]: text } });
   try {
     let sandbox: Sandbox | undefined = "sandboxId" in where ? desk.sandboxes.find((x) => x.id === where.sandboxId) : undefined;
-    if ("provider" in where) sandbox = await createSandbox(root.id, where.provider);
+    if ("provider" in where) sandbox = await createSandbox(root.id, where.provider, key);
     if (!sandbox) throw new Error("That sandbox was removed.");
     say("Starting the sandbox…");
     sandbox = await ensureRunning(sandbox, say);
@@ -46,7 +47,7 @@ export async function openSandboxTerminal(projectId: string, tool: Agent, where:
   } catch (e) {
     useDesk.getState().toast(e instanceof Error ? e.message : String(e), "error");
   } finally {
-    say("");
+    useSandboxes.setState((s) => { const progress = { ...s.progress }; delete progress[key]; return { progress }; });
   }
 }
 

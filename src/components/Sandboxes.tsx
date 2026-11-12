@@ -4,8 +4,9 @@
 // here is ever required: "This Mac" is always first and needs no account.
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, Copy, Download, ExternalLink, GitBranch, LoaderCircle, MoreHorizontal, Play, Plus, RefreshCw, Settings2, Square, SquareTerminal, Trash2, X } from "lucide-react";
-import { TOOL_LABEL, useDesk, type SandboxStartup } from "../store";
+import { Check, ChevronDown, Container, Copy, Download, ExternalLink, GitBranch, LoaderCircle, MoreHorizontal, Play, Plus, RefreshCw, Settings2, Square, SquareTerminal, Trash2, X } from "lucide-react";
+import { TOOL_LABEL, uid, useDesk, type SandboxStartup } from "../store";
+import { updateItems } from "../chat";
 import { useChats, type Chat } from "../chat";
 import { openTerminal, rootProject } from "../actions";
 import { ipc } from "../ipc";
@@ -14,7 +15,7 @@ import { Radial, useRadial, type RadialItem } from "./Radial";
 import { SandboxLogo } from "./SandboxLogo";
 import { ToolLogo } from "./ToolLogo";
 import {
-  PROVIDERS, checkAllProviders, checkProvider, createSandbox, provider, refreshStates, removeSandbox, shellCommand, startProvider, stopSandbox, tokenKey, useSandboxes, wakeSandbox,
+  PROVIDERS, checkAllProviders, checkProvider, createSandbox, making, provider, refreshStates, removeSandbox, shellCommand, startProvider, stopSandbox, tokenKey, useSandboxes, wakeSandbox,
   type ProviderCheck, type ProviderId, type Sandbox,
 } from "../sandbox";
 import { pullWork } from "../sandbox/chats";
@@ -97,9 +98,10 @@ export function RunInChip({ chat, fresh, repo }: { chat: Chat; fresh: boolean; r
   const sandboxes = useDesk((s) => s.sandboxes);
   useSandboxes((s) => s.checks);
   useSandboxes((s) => s.states);
-  const progress = useSandboxes((s) => s.progress[`new:${chat.projectId}`]);
   const current = sandboxes.find((x) => x.id === chat.where);
   const projectId = useDesk((s) => s.projects.find((p) => p.id === chat.projectId)?.worktreeOf ?? chat.projectId);
+  // Only this chat's own sandbox in the making; others may be on their way at the same time.
+  const progress = useSandboxes((s) => Object.entries(s.progress).find(([k, v]) => v && k.startsWith("new:") && k.endsWith(`|${chat.id}`))?.[1]);
   const radial = useRadial();
 
   if (!fresh) {
@@ -109,7 +111,7 @@ export function RunInChip({ chat, fresh, repo }: { chat: Chat; fresh: boolean; r
   if (!repo) return null;
   const make = (id: ProviderId) => void withProvider(id, async () => {
     try {
-      const sandbox = await createSandbox(projectId, id);
+      const sandbox = await createSandbox(projectId, id, chat.id);
       setWhere(chat, sandbox.id);
       useDesk.getState().toast(`${label(id)} sandbox ready. Your first message sends the code there.`);
     } catch (e) { toastError(e); }
@@ -164,6 +166,24 @@ export function useSandboxTerminalPicker() {
   return { open, element };
 }
 
+/**
+ * The tab bar's sandbox button: Claude Code in a sandbox, in one click and a pick
+ * from the radial (every provider, and this project's sandboxes). ⌥-click for Codex.
+ */
+export function SandboxTabButton({ projectId, picker }: { projectId: string; picker: ReturnType<typeof useSandboxTerminalPicker> }) {
+  const root = useDesk((s) => { const p = s.projects.find((x) => x.id === projectId); return p ? (p.worktreeOf ?? p.id) : projectId; });
+  const sandboxes = useDesk((s) => s.sandboxes);
+  const states = useSandboxes((s) => s.states);
+  const running = sandboxes.filter((x) => x.projectId === root && states[x.id] === "running").length;
+  const busy = useSandboxes((s) => Object.entries(s.progress).some(([k, v]) => v && (k.startsWith("term:|") || k.startsWith("new:|")) && k.split("|")[1] === root));
+  return (
+    <button className={"icon-btn sandbox-tab-button" + (busy ? " is-busy" : "")} aria-label="Agent in a sandbox" title={"Claude Code in a sandbox: Docker, Docker Cloud, Boat or Modal\n⌥-click for Codex"} onClick={(e) => picker.open(e.currentTarget, projectId, e.altKey ? "codex" : "claude")}>
+      {busy ? <LoaderCircle size={15} className="is-spinning" /> : <Container size={15} />}
+      {running > 0 && <span className="sandbox-tab-count" aria-label={`${running} running`}>{running}</span>}
+    </button>
+  );
+}
+
 /** Menu items for a new agent tab in a sandbox; `pick` opens the radial at the menu's button. */
 export function sandboxTabItems(at: HTMLElement, projectId: string, picker: ReturnType<typeof useSandboxTerminalPicker>) {
   return (["claude", "codex"] as Agent[]).map((tool) => ({
@@ -175,7 +195,7 @@ export function sandboxTabItems(at: HTMLElement, projectId: string, picker: Retu
 }
 
 /** One slim bar on a sandbox chat or tab: where, its state, the branch, and what you can do. */
-export function SandboxBar({ sandbox, remote, projectId, tool, accountId, idle = true, terminal }: {
+export function SandboxBar({ sandbox, remote, projectId, tool, accountId, idle = true, terminal, move, moving, extra }: {
   sandbox: Sandbox;
   remote: { cwd: string; branch: string; base: string } | null;
   projectId: string;
@@ -184,6 +204,10 @@ export function SandboxBar({ sandbox, remote, projectId, tool, accountId, idle =
   idle?: boolean;
   /** Sits above a terminal tab instead of a message box. */
   terminal?: boolean;
+  /** Opens the picker to move a chat elsewhere. */
+  move?: (el: HTMLElement) => void;
+  moving?: string;
+  extra?: React.ReactNode;
 }) {
   const state = useSandboxes((s) => s.states[sandbox.id]);
   const waking = useSandboxes((s) => s.progress[`wake:${sandbox.id}`]);
@@ -216,6 +240,9 @@ export function SandboxBar({ sandbox, remote, projectId, tool, accountId, idle =
       <span className={"sandbox-bar-state is-" + shown.dot} title={waking || undefined}><i />{shown.text}</span>
       {remote && <span className="sandbox-bar-branch" title={`From ${remote.base}`}><GitBranch size={11} />{remote.branch}</span>}
       <span className="sandbox-bar-gap" />
+      {moving && <span className="sandbox-bar-moving"><LoaderCircle size={12} className="is-spinning" />{moving}</span>}
+      {!waking && (state === "stopped" || state === "missing") && <button className="sandbox-bar-btn is-primary" title={state === "missing" ? "It's gone at the provider: Desk makes a new one with the same name" : "Start it again; its disk was kept"} onClick={() => void wakeSandbox(sandbox).catch(toastError)}><Play size={12} /><span>{state === "missing" ? "Make a new one" : "Start"}</span></button>}
+      {move && <button className="sandbox-bar-btn" title="Move this chat to another sandbox, or to this Mac" onClick={(e) => move(e.currentTarget)}><RefreshCw size={12} /><span>Move</span></button>}
       {remote && <button className="sandbox-bar-btn" disabled={pulling} title="Bring the branch home as a worktree, with uncommitted changes" onClick={() => void pull()}>{pulling ? <LoaderCircle size={12} className="is-spinning" /> : <Download size={12} />}<span>{pulling ? "Pulling…" : "Pull changes"}</span></button>}
       {shell && <button className="sandbox-bar-btn" title="A terminal tab with a shell in the sandbox" onClick={() => openTerminal(projectId, "shell", { command: shell })}><SquareTerminal size={12} /><span>Shell</span></button>}
       <button className="sandbox-bar-btn is-icon" aria-label="More sandbox actions" title="More" onClick={(e) => openMenu(e.currentTarget, [
@@ -227,15 +254,71 @@ export function SandboxBar({ sandbox, remote, projectId, tool, accountId, idle =
         { separator: true },
         { label: "Sandbox settings…", onSelect: () => useDesk.getState().setModal({ kind: "settings", section: "sandboxes" }) },
       ])}><MoreHorizontal size={14} /></button>
+      {extra}
     </div>
   );
 }
 
-/** The bar on a sandbox chat. */
+/**
+ * Moves a chat that has already started to another sandbox, or back to this Mac.
+ * The agent there starts a new conversation (its history was in the old place);
+ * the messages above stay.
+ */
+export function moveChat(chat: Chat, to: Sandbox | null) {
+  const project = useDesk.getState().projects.find((p) => p.id === chat.projectId);
+  const started = !!chat.remote || chat.saved;
+  useChats.getState().patch(chat.id, {
+    where: to?.id ?? null,
+    remote: null,
+    runId: null,
+    worktree: false,
+    ...(started ? { sessionId: chat.tool === "claude" ? uid() : null, saved: false } : {}),
+    ...(project ? { cwd: project.path } : {}),
+  });
+  if (started) updateItems(chat.id, (items) => [...items, { kind: "notice", id: `move-${Date.now()}`, text: to ? `Continues in ${label(to.provider)} (${to.name}) as a new conversation. Your next message sends the code there.` : "Continues on this Mac, in the project folder, as a new conversation." }]);
+}
+
+/** Picks somewhere else for a started chat: the same radial, with every provider. */
+function useMovePicker(chat: Chat) {
+  const radial = useRadial();
+  useSandboxes((s) => s.checks);
+  useSandboxes((s) => s.states);
+  const projectId = useDesk((s) => s.projects.find((p) => p.id === chat.projectId)?.worktreeOf ?? chat.projectId);
+  const open = (el: HTMLElement) => { void checkAllProviders(); void refreshStates(projectId); radial.open(el); };
+  const element = radial.state ? (
+    <Radial state={radial.state} label="Move this chat" onClosed={radial.close} items={whereItems({
+      projectId,
+      current: chat.where ?? null,
+      onMac: () => moveChat(chat, null),
+      onSandbox: (x) => moveChat(chat, x),
+      onNew: (id) => void withProvider(id, async () => {
+        try { moveChat(chat, await createSandbox(projectId, id, chat.id)); } catch (e) { toastError(e); }
+      }),
+    })} />
+  ) : null;
+  return { open, element, opened: radial.opened };
+}
+
+/** The bar on a sandbox chat; when its sandbox was deleted, a way on. */
 export function SandboxStrip({ chat }: { chat: Chat }) {
   const sandbox = useDesk((s) => s.sandboxes.find((x) => x.id === chat.where));
-  if (!sandbox) return null;
-  return <SandboxBar sandbox={sandbox} remote={chat.remote ?? null} projectId={chat.projectId} tool={chat.tool} accountId={chat.accountId} idle={chat.status === "idle"} />;
+  const mover = useMovePicker(chat);
+  const progress = useSandboxes((s) => Object.entries(s.progress).find(([k, v]) => v && k.startsWith("new:") && k.endsWith(`|${chat.id}`))?.[1]);
+  const idle = chat.status === "idle";
+  if (!sandbox) {
+    return (
+      <div className="sandbox-bar is-missing" role="status">
+        <span className="sandbox-bar-state is-bad"><i />deleted</span>
+        <span className="sandbox-bar-where"><span>{progress ?? "This chat's sandbox was deleted."}</span></span>
+        <span className="sandbox-bar-gap" />
+        <button className="sandbox-bar-btn is-primary" disabled={!!progress} onClick={(e) => mover.open(e.currentTarget)}>{progress ? <LoaderCircle size={12} className="is-spinning" /> : <Plus size={12} />}<span>New sandbox</span></button>
+        <button className="sandbox-bar-btn" disabled={!!progress} onClick={() => moveChat(chat, null)}><SandboxLogo provider="mac" size={12} /><span>This Mac</span></button>
+        {mover.element}
+      </div>
+    );
+  }
+  return <SandboxBar sandbox={sandbox} remote={chat.remote ?? null} projectId={chat.projectId} tool={chat.tool} accountId={chat.accountId} idle={idle}
+    move={idle && !progress ? (el) => mover.open(el) : undefined} moving={progress} extra={mover.element} />;
 }
 
 /** The bar above a terminal tab whose agent runs in a sandbox. */
@@ -245,12 +328,17 @@ export function SandboxTabBar({ tab }: { tab: TerminalTab }) {
   return <SandboxBar terminal sandbox={sandbox} remote={tab.remote ?? null} projectId={tab.projectId} tool={tab.tool as Agent} accountId={tab.accountId} idle={!tab.busy} />;
 }
 
-/** Shown in the terminal view while a sandbox tab is being prepared. */
+/** Shown in the terminal view while sandbox tabs are being prepared: one line each. */
 export function SandboxTerminalProgress({ projectId }: { projectId: string }) {
   const root = useDesk((s) => { const p = s.projects.find((x) => x.id === projectId); return p ? (p.worktreeOf ?? p.id) : null; });
-  const text = useSandboxes((s) => (root ? s.progress[`term:${root}`] || s.progress[`new:${root}`] : ""));
-  if (!text) return null;
-  return <div className="sandbox-progress" role="status"><LoaderCircle size={12} className="is-spinning" />{text}</div>;
+  const progress = useSandboxes((s) => s.progress);
+  const lines = Object.entries(progress).filter(([k, v]) => v && k.startsWith("term:|") && k.split("|")[1] === root).map(([k, v]) => ({ k, v, tool: k.split("|")[2] as Agent }));
+  if (!lines.length) return null;
+  return (
+    <div className="sandbox-progress" role="status">
+      {lines.map((l) => <span key={l.k}><LoaderCircle size={12} className="is-spinning" /><ToolLogo tool={l.tool} size={12} />{l.v}</span>)}
+    </div>
+  );
 }
 
 /** Once per project, on a long local task: a calm suggestion. Never blocks anything. */
@@ -501,6 +589,8 @@ export function SandboxSettings({ provider: focus }: { provider?: ProviderId }) 
   const allAccounts = useDesk((s) => s.accounts);
   const accounts = useMemo(() => allAccounts.filter((a) => a.kind === "claude" || a.kind === "codex"), [allAccounts]);
   const anyChecking = useSandboxes((s) => Object.values(s.checking).some(Boolean));
+  useSandboxes((s) => s.progress);
+  const pending = making();
   const [open, setOpen] = useState<ProviderId | null>(focus ?? null);
   const [refreshing, setRefreshing] = useState(false);
   useEffect(() => { void checkAllProviders(true); void refreshStates(); }, []);
@@ -508,8 +598,9 @@ export function SandboxSettings({ provider: focus }: { provider?: ProviderId }) 
   const groups = useMemo(() => {
     const by = new Map<string, Sandbox[]>();
     for (const x of sandboxes) by.set(x.projectId, [...(by.get(x.projectId) ?? []), x]);
+    for (const m of pending) if (!by.has(m.projectId)) by.set(m.projectId, []);
     return [...by.entries()];
-  }, [sandboxes]);
+  }, [sandboxes, pending.length]); // eslint-disable-line react-hooks/exhaustive-deps
   const refreshAll = async () => { setRefreshing(true); await refreshStates().finally(() => setRefreshing(false)); };
   return (
     <>
@@ -522,13 +613,20 @@ export function SandboxSettings({ provider: focus }: { provider?: ProviderId }) 
       </div>
 
       <div className="settings-label sandbox-section-head">
-        <span>Your sandboxes <span className="section-count">{sandboxes.length}</span></span>
+        <span>Your sandboxes <span className="section-count">{sandboxes.length}{pending.length ? ` + ${pending.length} on the way` : ""}</span></span>
         {sandboxes.length > 0 && <Refresh busy={refreshing} label="Check every sandbox again" onClick={() => void refreshAll()} />}
       </div>
       {groups.length ? groups.map(([projectId, list]) => (
         <div className="settings-card sandbox-group" key={projectId}>
           <div className="sandbox-group-head">{projects.find((p) => p.id === projectId)?.name ?? "Removed project"}</div>
           {list.map((x) => <SandboxRow key={x.id} sandbox={x} />)}
+          {pending.filter((m) => m.projectId === projectId).map((m) => (
+            <div className="sandbox-row is-making" key={m.key}>
+              <SandboxLogo provider={m.provider} size={16} />
+              <span className="sandbox-row-name"><strong>{m.name}</strong><small>{label(m.provider)} · {m.text}</small></span>
+              <span className="sandbox-bar-state is-warn"><LoaderCircle size={11} className="is-spinning" />making</span>
+            </div>
+          ))}
         </div>
       )) : <p className="settings-note">None yet. Pick one under "Run in" in a chat's message box, or "in a sandbox" from the terminal's new-tab menu.</p>}
 

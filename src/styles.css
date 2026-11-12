@@ -2705,6 +2705,22 @@ body.is-resizing-rows, body.is-resizing-rows * { cursor: row-resize !important; 
   animation: desk-pop .2s var(--ease-spring, ease) both;
 }
 .tab-sandbox { display: grid; place-items: center; }
+.sandbox-tab-button { position: relative; }
+.sandbox-tab-count { position: absolute; right: -2px; top: -2px; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 999px; display: grid; place-items: center; font-size: 9px; font-weight: 600; color: #fff; background: #3fb27f; border: 2px solid var(--bg); }
+.sandbox-progress { flex-direction: column; align-items: stretch; gap: 4px; }
+.sandbox-progress span { display: inline-flex; align-items: center; gap: 7px; }
+.sandbox-bar.is-missing { border-color: color-mix(in srgb, #e5534b 40%, var(--line-strong)); }
+.sandbox-bar-btn.is-primary { color: var(--ui-accent-ink, #fff); background: var(--ui-accent, var(--accent)); }
+.sandbox-bar-btn.is-primary:hover:not(:disabled) { color: var(--ui-accent-ink, #fff); background: var(--ui-accent, var(--accent)); filter: brightness(1.08); }
+.sandbox-bar-moving { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-2); white-space: nowrap; }
+.sandbox-row.is-making { opacity: .85; }
+/* Chat text can be selected and copied. */
+.chat-thread, .chat-thread * { user-select: text; -webkit-user-select: text; cursor: auto; }
+.chat-thread button, .chat-thread button *, .chat-thread summary { user-select: none; -webkit-user-select: none; cursor: default; }
+/* The composer's chips give way before the send button leaves the box. */
+.chat-composer-row > .chat-chip { flex-shrink: 1; min-width: 0; overflow: hidden; }
+.chat-composer-row > .chat-chip:not(.is-icon) .chip-label { min-width: 0; }
+.chat-composer-row > .chat-send, .chat-composer-row > .chat-agent { flex-shrink: 0; }
 
 .sandbox-logo-stack { position: relative; display: inline-grid; place-items: center; flex: none; }
 .sandbox-logo-badge { position: absolute; right: -3px; bottom: -3px; color: #9cc4ff; background: var(--bg-raised, var(--bg)); border-radius: 999px; padding: 1px; }

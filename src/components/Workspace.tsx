@@ -9,7 +9,7 @@ import { FileViewer, OpenDefaultButton, TableView } from "./FileViewer";
 import { isBinaryPreview, onDiskChange, previewKind } from "../preview";
 import { Home } from "./Home";
 import { openMenu } from "./Menu";
-import { SandboxTabBar, SandboxTerminalProgress, sandboxTabItems, useSandboxTerminalPicker } from "./Sandboxes";
+import { SandboxTabBar, SandboxTabButton, SandboxTerminalProgress, sandboxTabItems, useSandboxTerminalPicker } from "./Sandboxes";
 import { SandboxLogo } from "./SandboxLogo";
 import type { Account, Agent, FileTab, MenuItem, Project, Tab, TerminalTab } from "../types";
 
@@ -100,6 +100,7 @@ function TabBar({ project }: { project: Project }) {
       </div>
       <div className="tabbar-actions">
         <button className="icon-btn" aria-label="Toggle split panes" title="Split workspace (⌘\\)" onClick={splitWorkspace}><Columns2 size={15} /></button>
+        <SandboxTabButton projectId={project.id} picker={picker} />
         <button
           className="new-tab"
           aria-label={`New Claude Code tab in ${project.name}`}

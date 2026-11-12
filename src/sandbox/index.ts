@@ -161,15 +161,23 @@ function slug(text: string) {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 20) || "project";
 }
 
-/** Makes a new sandbox for a project. */
-export async function createSandbox(projectId: string, id: ProviderId): Promise<Sandbox> {
+/** Sandboxes being made, each with its own progress line (any number at once). */
+export interface Making { key: string; projectId: string; provider: ProviderId; name: string; text: string; for?: string }
+export const making = (projectId?: string) =>
+  Object.entries(useSandboxes.getState().progress)
+    .filter(([k, v]) => k.startsWith("new:") && v)
+    .map(([key, text]) => { const [, pid, provider, name, forId] = key.split("|"); return { key, projectId: pid, provider: provider as ProviderId, name, text, for: forId || undefined }; })
+    .filter((m) => !projectId || m.projectId === projectId);
+
+/** Makes a new sandbox for a project. `forId` marks what asked (a chat, a tab), for its spinner. */
+export async function createSandbox(projectId: string, id: ProviderId, forId = ""): Promise<Sandbox> {
   const desk = useDesk.getState();
   const project = desk.projects.find((p) => p.id === projectId);
   if (!project) throw new Error("No such project.");
   const p = provider(id)!;
   const local = `${Date.now().toString(36)}`;
   const name = `${slug(project.name)}-${local.slice(-5)}`;
-  const key = `new:${projectId}`;
+  const key = `new:|${projectId}|${id}|${name}|${forId}`;
   sb().set({ progress: { [key]: `Making a ${p.label} sandbox…` } });
   try {
     const remoteId = await p.create(run, name, createOpts(), (text) => sb().set({ progress: { [key]: text } }));
@@ -178,7 +186,7 @@ export async function createSandbox(projectId: string, id: ProviderId): Promise<
     sb().set({ states: { [sandbox.id]: "running" } });
     return sandbox;
   } finally {
-    sb().set({ progress: { [key]: "" } });
+    useSandboxes.setState((s) => { const progress = { ...s.progress }; delete progress[key]; return { progress }; });
   }
 }
 

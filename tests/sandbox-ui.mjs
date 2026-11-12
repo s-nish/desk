@@ -12,7 +12,6 @@ const shot = process.env.DESK_SCREENSHOT;
 const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
 const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
 const errors = [];
-page.on('pageerror', (e) => errors.push(e.message));
 await page.addInitScript(mockDesktop);
 await page.goto(base);
 await page.waitForTimeout(1200);
@@ -79,16 +78,30 @@ assert.equal(await page.locator('.radial-item .radial-dot.is-bad').count(), 3, '
 if (shot) { await page.waitForTimeout(700); await page.screenshot({ path: shot.replace('.png', '-radial.png') }); }
 await page.keyboard.press('Escape');
 
-// Terminal view: the new-tab menu offers an agent in a sandbox, with only the
-// providers that can run a terminal (Docker and Docker Cloud).
+// The composer keeps Send inside the box, even narrow.
+await page.setViewportSize({ width: 1000, height: 860 });
+await page.waitForTimeout(300);
+const fit = await page.evaluate(() => { const c = document.querySelector('.chat-composer').getBoundingClientRect(); const b = document.querySelector('.chat-send').getBoundingClientRect(); return b.right <= c.right + 0.5; });
+assert.ok(fit, 'send button inside the composer');
+await page.setViewportSize({ width: 1280, height: 860 });
+assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.chat-thread') ?? document.body).userSelect), await page.evaluate(() => document.querySelector('.chat-thread') ? 'text' : 'none'), 'chat text selectable');
+
+// Terminal view: every provider can run an agent tab.
 await page.getByRole('radio', { name: 'Terminal view' }).click();
 await page.getByRole('button', { name: 'More tab types' }).click();
 await page.getByRole('menuitem', { name: /Claude Code in a sandbox/ }).click();
 await page.locator('.radial.is-shown').waitFor();
 await page.getByRole('menuitemradio', { name: /^New Docker sandbox/ }).waitFor();
 await page.getByRole('menuitemradio', { name: /^New Docker Cloud sandbox/ }).waitFor();
-assert.equal(await page.getByRole('menuitemradio', { name: /^New (Boat|Modal) sandbox/ }).count(), 0, 'no Boat or Modal for terminal tabs');
+await page.getByRole('menuitemradio', { name: /^New Boat sandbox/ }).waitFor();
+await page.getByRole('menuitemradio', { name: /^New Modal sandbox/ }).waitFor();
 assert.equal(await page.getByRole('menuitemradio', { name: /^This Mac/ }).count(), 0, 'already a choice in the menu');
+await page.keyboard.press('Escape');
+await page.waitForTimeout(300);
+// The tab bar's own sandbox button opens the same radial.
+await page.getByRole('button', { name: 'Agent in a sandbox' }).click();
+await page.locator('.radial.is-shown').waitFor();
+assert.equal(await page.getByRole('menuitemradio', { name: /^New .* sandbox/ }).count(), 4, 'all four providers');
 if (shot) { await page.waitForTimeout(700); await page.screenshot({ path: shot.replace('.png', '-terminal.png') }); }
 await page.keyboard.press('Escape');
 
