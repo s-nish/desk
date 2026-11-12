@@ -2762,3 +2762,39 @@ body.is-resizing-rows, body.is-resizing-rows * { cursor: row-resize !important; 
 .agent-list { animation: agent-list-in .22s cubic-bezier(.22, 1, .36, 1); transform-origin: top; }
 @keyframes agent-list-in { from { opacity: 0; transform: translateY(-4px); } }
 :root[data-motion="reduced"] .agent-list { animation: none; }
+
+/* ───────── Motion ─────────
+   One vocabulary: things that appear spring in quickly from where they came from;
+   nothing waits on an animation to be usable. Only transform and opacity move, so
+   it stays on the compositor. Reduce motion (themes.css) turns all of it off. */
+:root {
+  --ease-out: cubic-bezier(.22, 1, .36, 1);
+  --ease-spring: cubic-bezier(.22, 1.25, .36, 1);
+  --dur-fast: .14s;
+  --dur: .22s;
+}
+@keyframes desk-pop { from { opacity: 0; transform: scale(.96) translateY(-4px); } }
+@keyframes desk-rise { from { opacity: 0; transform: translateY(8px) scale(.985); } }
+@keyframes desk-fade { from { opacity: 0; } }
+@keyframes desk-slide-in { from { opacity: 0; transform: translateY(6px); } }
+@keyframes desk-tab-in { from { opacity: 0; transform: translateY(3px) scale(.97); } }
+
+.menu { animation: desk-pop var(--dur-fast) var(--ease-out); transform-origin: top left; will-change: transform, opacity; }
+.modal-backdrop { animation: desk-fade var(--dur-fast) ease-out; }
+.modal { animation: desk-rise .26s var(--ease-spring); }
+.toast { animation: desk-rise .3s var(--ease-spring); }
+.tab, .chat-tab { animation: desk-tab-in .2s var(--ease-out); }
+.chat-user { animation: desk-slide-in .24s var(--ease-out); }
+.chat-main > *, .workspace { animation: desk-fade .18s ease-out; }
+
+/* Pressing gives a little; hovering eases in instead of snapping. */
+.btn, .mini-btn, .icon-btn, .chat-chip, .chat-send, .text-button, .chat-side-action, .radial-item, .chat-agent {
+  transition-property: background-color, border-color, color, box-shadow, transform, opacity, filter;
+  transition-duration: var(--dur-fast);
+  transition-timing-function: var(--ease-out);
+}
+.btn:not(:disabled):active, .mini-btn:not(:disabled):active, .icon-btn:not(:disabled):active, .chat-chip:not(:disabled):not(.is-static):active, .chat-send:not(:disabled):active, .text-button:not(:disabled):active, .chat-side-action:active { transform: scale(.96); transition-duration: .06s; }
+.chat-row, .project, .menu-item, .review-file, .setting-row[role="switch"] { transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
+.chat-project-caret, .project-caret { transition: transform var(--dur) var(--ease-spring); }
+.toggle-track, .toggle-track > span { transition: background-color var(--dur) var(--ease-out), transform var(--dur) var(--ease-spring); }
+.chat-approval, .chat-working { animation: desk-rise .26s var(--ease-spring); }
