@@ -1,21 +1,18 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { ArrowUp, GitBranch, Pencil, Trash2, FileText, Image as ImageIcon, Paperclip, Check, ChevronDown, ChevronRight, Ellipsis, Gauge, LoaderCircle, MessageSquarePlus, Plus, Search, Server, Slash, Square, SquareTerminal, UserRound, X } from "lucide-react";
-import { AGENTS, TOOL_LABEL, TOOL_SHORT, projectTree, useDesk } from "../store";
-import { addProjectsFromDialog, closeTab, openTerminal } from "../actions";
+import { ArrowUp, GitBranch, Pencil, Trash2, FileText, Image as ImageIcon, Paperclip, Check, ChevronDown, ChevronRight, Ellipsis, Gauge, LoaderCircle, Plus, Server, Slash, Square, SquareTerminal, UserRound, X } from "lucide-react";
+import { AGENTS, TOOL_LABEL, TOOL_SHORT, useDesk } from "../store";
+import { closeTab, openTerminal } from "../actions";
 import { TerminalPane, cleanTitle } from "./Workspace";
 import { Home } from "./Home";
-import { SidebarFooter } from "./SidebarFooter";
 import { useTabReorder } from "./useTabReorder";
 import { openBrowser } from "./Browser";
 import { ipc } from "../ipc";
 import { openMenu } from "./Menu";
-import { Accounts, Connections } from "./Sidebar";
-import { relativeTime } from "./Sessions";
 import {
-  CLAUDE_EFFORTS, CLAUDE_MODELS, CLAUDE_MODES, CODEX_MODES, LOCAL_COMMANDS, acpOptions, answer, releaseAcp, chatBusy, closeChat, codexModelList, commandList, loadAllSessions, loadClaudeCommands,
-  attach, attachBlob, detach, closeStripTab, markUnread, setWorktree, moveStripTab, loadCodexModels, loadSessions, newChat, showStripTab, openSession, send, sendNext, enqueue, unqueue, setAccount, setEffort, setMode, setModel, setTool, stop, useChats, type Attachment, type Chat, type ChatItem, type SlashCommand,
+  CLAUDE_EFFORTS, CLAUDE_MODELS, CLAUDE_MODES, CODEX_MODES, LOCAL_COMMANDS, acpOptions, answer, releaseAcp, chatBusy, closeChat, codexModelList, commandList, loadClaudeCommands,
+  attach, attachBlob, detach, closeStripTab, markUnread, setWorktree, moveStripTab, loadCodexModels, newChat, showStripTab, openSession, send, sendNext, enqueue, unqueue, setAccount, setEffort, setMode, setModel, setTool, stop, useChats, type Attachment, type Chat, type ChatItem, type SlashCommand,
 } from "../chat";
 import type { Agent, AgentSession, MenuItem, Project, TerminalTab } from "../types";
 import { isAcpAgent } from "../acp";
@@ -27,134 +24,6 @@ export function ToolGlyph({ tool, size = 13 }: { tool: Agent; size?: number }) {
   return <span className="tool-glyph" role="img" aria-label={TOOL_LABEL[tool]}><ToolLogo tool={tool} size={size} /></span>;
 }
 
-// Sidebar
-
-const SHOWN = 6;
-
-export function ChatSidebar() {
-  const projects = useDesk((s) => s.projects);
-  const query = useChats((s) => s.query);
-  const setQuery = useChats((s) => s.setQuery);
-  const activeProjectId = useDesk((s) => s.activeProjectId);
-  const accountCount = useDesk((s) => s.accounts.length);
-  const searchRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    loadAllSessions();
-    const onFocus = () => loadAllSessions();
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, [projects.length, accountCount]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.metaKey && !e.shiftKey && e.key.toLowerCase() === "f" && !(e.target as HTMLElement)?.closest?.(".cm-editor")) {
-        e.preventDefault();
-        searchRef.current?.focus();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
-  const roots = projectTree(projects).map((t) => t.root);
-  const startNew = () => {
-    const id = activeProjectId ?? roots[0]?.id;
-    if (id) newChat(id);
-    else void addProjectsFromDialog();
-  };
-
-  return (
-    <aside className="sidebar chat-sidebar">
-      <div className="chat-side-top">
-        <button className="chat-side-action" onClick={startNew}><MessageSquarePlus size={15} /><span>New chat</span><kbd>⌘N</kbd></button>
-        <label className="chat-side-search">
-          <Search size={14} />
-          <input ref={searchRef} aria-label="Search chats" placeholder="Search chats" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setQuery("")} />
-          {query && <button className="icon-btn" aria-label="Clear search" onClick={() => setQuery("")}><X size={12} /></button>}
-        </label>
-      </div>
-      <header className="side-header chat-side-header">
-        <h2>Projects</h2>
-        <button className="icon-btn" aria-label="Add project folder" title="Add project folder (⌘O)" onClick={() => void addProjectsFromDialog()}><Plus size={14} /></button>
-      </header>
-      <div className="side-scroll chat-side-scroll">
-        {roots.map((p) => <ProjectChats key={p.id} project={p} query={query.trim().toLowerCase()} />)}
-        {roots.length === 0 && <button className="side-empty" onClick={() => void addProjectsFromDialog()}>Add a project folder to start chatting</button>}
-      </div>
-      <Connections />
-      <Accounts />
-      <SidebarFooter />
-    </aside>
-  );
-}
-
-interface Row { key: string; title: string; tool: Agent; updated: number; session?: AgentSession; chat?: Chat }
-
-function ProjectChats({ project, query }: { project: Project; query: string }) {
-  const sessions = useChats((s) => s.sessions[project.path]);
-  const chats = useChats((s) => s.chats);
-  const activeId = useChats((s) => s.activeId);
-  const termId = useChats((s) => s.termId);
-  const [expanded, setOpen] = useExpanded(project.id);
-  const open = expanded || !!query;
-  const [all, setAll] = useState(false);
-
-  const rows = useMemo(() => {
-    const live = Object.values(chats).filter((c) => c.projectId === project.id);
-    const out: Row[] = [];
-    // Chats started here that the CLI hasn't listed yet go first.
-    for (const c of live) {
-      if (!c.items.length) continue;
-      if (!sessions?.some((s) => s.tool === c.tool && s.id === c.sessionId)) out.push({ key: c.id, title: c.title, tool: c.tool, updated: Date.now(), chat: c });
-    }
-    for (const s of sessions ?? []) out.push({ key: s.tool + s.id, title: s.title, tool: s.tool, updated: s.updated, session: s, chat: live.find((c) => c.tool === s.tool && c.sessionId === s.id) });
-    return query ? out.filter((r) => `${r.title} ${r.session?.prompt ?? ""}`.toLowerCase().includes(query)) : out;
-  }, [sessions, chats, project.id, query]);
-
-  if (query && !rows.length && !project.name.toLowerCase().includes(query)) return null;
-  const shown = all || query ? rows : rows.slice(0, SHOWN);
-  const menu = (at: Element | { x: number; y: number }) => openMenu(at, [
-    ...chatAgents().map((tool) => ({ label: `New ${TOOL_LABEL[tool]} chat`, icon: <ToolLogo tool={tool} size={14} />, onSelect: () => newChat(project.id, tool) })),
-    { separator: true },
-    { label: "Refresh", onSelect: () => void loadSessions(project) },
-    { label: "Reveal in Finder", onSelect: () => void ipc.reveal(project.path) },
-  ]);
-  return (
-    <section className="chat-project">
-      <div className="chat-project-head" onContextMenu={(e) => { e.preventDefault(); menu({ x: e.clientX, y: e.clientY }); }}>
-        <button className="chat-project-name" aria-expanded={open} onClick={() => setOpen(!expanded)} title={project.path}>
-          <ChevronRight size={12} className={"chat-project-caret" + (open ? " is-open" : "")} />
-          <span>{project.name}</span>
-          {!open && rows.length > 0 && <span className="chat-project-count">{rows.length}</span>}
-          {rows.some((r) => chatBusy(r.chat)) && !open && <span className="chat-dot is-running" />}
-        </button>
-        <button className="icon-btn row-more" aria-label={`New chat in ${project.name}`} title="New chat" onClick={() => newChat(project.id)}><Plus size={13} /></button>
-        <button className="icon-btn row-more" aria-label={`Actions for ${project.name}`} onClick={(e) => menu(e.currentTarget)}><Ellipsis size={13} /></button>
-      </div>
-      {open && <>
-        {shown.map((r) => {
-          const busy = chatBusy(r.chat) ?? (r.chat?.unread ? "unread" : null);
-          return (
-            <button
-              key={r.key}
-              className={"chat-row" + (r.chat && r.chat.id === activeId && !termId ? " is-active" : "")}
-              title={`${r.title}${r.session ? `\n${TOOL_LABEL[r.tool]}, ${relativeTime(r.updated)}` : ""}`}
-              onClick={() => (r.chat ? (useChats.getState().select(r.chat.id), useDesk.getState().selectProject(project.id)) : r.session && openSession(r.session, project))}
-              onContextMenu={(e) => { e.preventDefault(); chatMenu(r.chat, { x: e.clientX, y: e.clientY }, r.session, project); }}
-            >
-              <ToolGlyph tool={r.tool} />
-              <span className="chat-row-title">{r.title}</span>
-              {busy ? <span className={"chat-dot is-" + busy} aria-label={busy === "waiting" ? "Waiting for you" : "Working"} /> : <span className="chat-row-time">{shortTime(r.updated)}</span>}
-            </button>
-          );
-        })}
-        {!query && rows.length > SHOWN && <button className="chat-more" onClick={() => setAll(!all)}>{all ? "Show less" : `Show ${rows.length - SHOWN} more`}</button>}
-        {!rows.length && !query && <p className="chat-none">No chats yet</p>}
-      </>}
-    </section>
-  );
-}
 
 /** Claude Code and Codex, plus the other agents once they have an account. */
 export function chatAgents(): Agent[] {

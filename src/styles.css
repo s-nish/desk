@@ -2752,3 +2752,13 @@ body.is-resizing-rows, body.is-resizing-rows * { cursor: row-resize !important; 
 .radial.is-shown .radial-label { transform: translate(-50%, -50%); }
 .radial-label strong { font-size: 14px; }
 :root[data-motion="reduced"] .radial-item, :root[data-motion="reduced"] .radial-label, :root[data-motion="reduced"] .radial-arc path { transition: opacity .12s linear !important; }
+
+/* One sidebar for both views */
+.agent-side-new { display: flex; align-items: center; gap: 4px; }
+.agent-side-new .chat-side-action { flex: 1; min-width: 0; }
+.agent-side-pick { flex: none; width: 30px; height: 30px; }
+.agent-row .agent-row-where { display: grid; place-items: center; color: var(--muted); opacity: .7; flex: none; }
+.agent-row.is-past .chat-row-title { color: var(--text-2); }
+.agent-list { animation: agent-list-in .22s cubic-bezier(.22, 1, .36, 1); transform-origin: top; }
+@keyframes agent-list-in { from { opacity: 0; transform: translateY(-4px); } }
+:root[data-motion="reduced"] .agent-list { animation: none; }

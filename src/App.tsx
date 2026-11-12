@@ -34,12 +34,12 @@ import { isLightTheme, resolvedTheme } from "./appearance";
 import { PIXEL_THEMES } from "./themeCatalog";
 import { updateEditorAppearance } from "./editors";
 import { clearTerminal, pasteIntoTerminal, updateTerminalAppearance } from "./terminals";
-import { Sidebar } from "./components/Sidebar";
-import { ChatSidebar, ChatView } from "./components/Chat";
+import { ChatView } from "./components/Chat";
 import { takeNotified } from "./notify";
 import { watchTray } from "./tray";
 import { watchNotch } from "./notchBridge";
 import { watchSandboxes } from "./sandbox";
+import { AgentSidebar } from "./components/AgentSidebar";
 import { watchSandboxChats } from "./sandbox/chats";
 import { attach, closeChat, closeStripTab, markUnread, newChat, showStripTab, useChats } from "./chat";
 import { Workspace } from "./components/Workspace";
@@ -305,7 +305,7 @@ export function App() {
         {layout.sidebarOpen && (
           <>
             <div className="col" style={{ width: layout.sidebarWidth }}>
-              {preferences.uiMode === "chat" ? <ChatSidebar /> : <Sidebar />}
+              <AgentSidebar />
             </div>
             <Splitter value={layout.sidebarWidth} side="left" min={190} max={420} onChange={(v) => setLayout({ sidebarWidth: v })} />
           </>

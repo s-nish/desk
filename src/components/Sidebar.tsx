@@ -1,27 +1,13 @@
-import { useEffect, useState } from "react";
-import { Search, ChevronDown, ChevronRight, Copy, Ellipsis, Eye, Folder, FolderOpen, FolderSearch, GitBranch, GitBranchPlus, GitMerge, KeyRound, LogIn, Palette, Pencil, Plug, Plus, Server, SquareTerminal, Trash2 } from "lucide-react";
-import { ACCOUNT_COLORS, ACCOUNT_KINDS, EXTRA_AGENTS, TOOL_LABEL, isChatTool, projectAccount, projectTree, useDesk } from "../store";
+import { useState } from "react";
+import { ChevronDown, ChevronRight, Copy, Ellipsis, Eye, Folder, FolderOpen, FolderSearch, GitBranch, GitBranchPlus, GitMerge, KeyRound, LogIn, Palette, Pencil, Plug, Plus, Server, SquareTerminal, Trash2 } from "lucide-react";
+import { ACCOUNT_COLORS, ACCOUNT_KINDS, EXTRA_AGENTS, TOOL_LABEL, isChatTool, projectAccount, useDesk } from "../store";
 import { ToolLogo } from "./ToolLogo";
-import { addProjectsFromDialog, chooseProjectAccount, resumeSession, connectionLabel, deleteConnection, mergeWorktree, openConnection, openTerminal, removeAccount, removeProject, removeWorktree, saveConnection } from "../actions";
+import { chooseProjectAccount, connectionLabel, deleteConnection, mergeWorktree, openConnection, openTerminal, removeAccount, removeProject, removeWorktree, saveConnection } from "../actions";
 import { ipc } from "../ipc";
-import { DeskLogo } from "./DeskLogo";
-import { SidebarFooter } from "./SidebarFooter";
-import { ToolGlyph, shortTime, useExpanded } from "./Chat";
-import { loadSessions, useChats } from "../chat";
+import { useExpanded } from "./Chat";
+import { useChats } from "../chat";
 import { openMenu } from "./Menu";
 import type { Account, AccountKind, Agent, MenuItem, Project, SshConnection } from "../types";
-
-export function Sidebar() {
-  return (
-    <aside className="sidebar">
-      <div className="sidebar-brand"><span className="brand-mark"><DeskLogo size={27} /></span><div><strong>Desk</strong></div></div>
-      <Projects />
-      <Connections />
-      <Accounts />
-      <SidebarFooter />
-    </aside>
-  );
-}
 
 /** The accounts a project can use for one tool, with the current one checked. */
 export function accountChoices(project: Project, kind: AccountKind, withAdd = true): MenuItem[] {
@@ -94,7 +80,7 @@ function worktreeMenu(project: Project): MenuItem[] {
   ];
 }
 
-function WorktreeRow({ project }: { project: Project }) {
+export function WorktreeRow({ project }: { project: Project }) {
   const active = useDesk((s) => s.activeProjectId === project.id);
   const changes = useDesk((s) => s.changeCounts[project.path] ?? 0);
   const menu = (at: { x: number; y: number } | Element) => openMenu(at, worktreeMenu(project));
@@ -121,7 +107,7 @@ function WorktreeRow({ project }: { project: Project }) {
   );
 }
 
-function ProjectRow({ project, index }: { project: Project; index: number }) {
+export function ProjectRow({ project, index }: { project: Project; index: number }) {
   const active = useDesk((s) => s.activeProjectId === project.id);
   const [open, setOpen] = useExpanded(project.id);
   const count = useChats((s) => s.sessions[project.path]?.length);
@@ -213,69 +199,6 @@ function ProjectRow({ project, index }: { project: Project; index: number }) {
         </button>
       </div>
     </div>
-  );
-}
-
-/** The project's past conversations, shown while its row is open. Clicking one resumes it in a tab. */
-function ProjectSessions({ project }: { project: Project }) {
-  const [open] = useExpanded(project.id);
-  const sessions = useChats((s) => s.sessions[project.path]);
-  const tabs = useDesk((s) => s.tabs);
-  const running = tabs.flatMap((t) => (t.type === "terminal" && t.status !== "exited" ? [t.sessionId, t.resume] : []));
-  const [all, setAll] = useState(false);
-  useEffect(() => { if (open || !sessions) void loadSessions(project); }, [open, project.path]); // eslint-disable-line react-hooks/exhaustive-deps
-  const list = sessions ?? [];
-  const shown = all ? list : list.slice(0, 6);
-  if (!open || !sessions) return null;
-  return (
-    <div className="project-sessions">
-      <div className="project-sessions-list">
-        {shown.map((s) => (
-          <button key={s.tool + s.id} className={"chat-row" + (running.includes(s.id) ? " is-active" : "")} title={`${s.title}\n${TOOL_LABEL[s.tool]}, click to resume in a tab`} onClick={() => resumeSession(s, project.id)}>
-            <ToolGlyph tool={s.tool} />
-            <span className="chat-row-title">{s.title}</span>
-            <span className="chat-row-time">{shortTime(s.updated)}</span>
-          </button>
-        ))}
-        {list.length > 6 && <button className="chat-more" onClick={() => setAll(!all)}>{all ? "Show less" : `Show ${list.length - 6} more`}</button>}
-        {sessions && !list.length && <p className="chat-none">No conversations yet</p>}
-      </div>
-    </div>
-  );
-}
-
-function Projects() {
-  const projects = useDesk((s) => s.projects);
-  const [query, setQuery] = useState("");
-  const matches = (p: Project) => `${p.name} ${p.path}`.toLowerCase().includes(query.toLowerCase());
-  const tree = projectTree(projects)
-    .map(({ root, worktrees }) => ({ root, worktrees: worktrees.filter((w) => !query || matches(w) || matches(root)) }))
-    .filter(({ root, worktrees }) => !query || matches(root) || worktrees.length > 0);
-  return (
-    <section className="side-section projects">
-      <header className="side-header">
-        <h2>Projects <span className="section-count">{projects.filter((p) => !p.worktreeOf).length}</span></h2>
-        <button className="icon-btn" aria-label="Add project folder" title="Add project folder (⌘O)" onClick={() => void addProjectsFromDialog()}>
-          <Plus size={15} />
-        </button>
-      </header>
-      <label className="project-search"><Search size={13} /><input aria-label="Search projects" placeholder="Find a project…" value={query} onChange={(e) => setQuery(e.target.value)} /></label>
-      <div className="side-scroll">
-        {tree.map(({ root, worktrees }) => (
-          <div key={root.id} className={"project-group" + (worktrees.length ? " has-worktrees" : "")}>
-            <ProjectRow project={root} index={projects.indexOf(root)} />
-            <ProjectSessions project={root} />
-            {worktrees.length > 0 && <div className="worktree-list">{worktrees.map((w) => <WorktreeRow key={w.id} project={w} />)}</div>}
-          </div>
-        ))}
-        {query && tree.length === 0 && <p className="search-empty">No matching projects.</p>}
-        {projects.length === 0 && (
-          <button className="side-empty" onClick={() => void addProjectsFromDialog()}>
-            Add a folder, or drop one here
-          </button>
-        )}
-      </div>
-    </section>
   );
 }
 

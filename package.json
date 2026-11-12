@@ -22,7 +22,8 @@
     "test:sandbox-ui": "node tests/sandbox-ui.mjs",
     "test:crossreview": "node tests/crossreview.mjs",
     "test:config": "node tests/config.mjs",
-    "test:agent-setup": "node tests/agent-setup.mjs"
+    "test:agent-setup": "node tests/agent-setup.mjs",
+    "test:sidebar": "node tests/sidebar.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",
