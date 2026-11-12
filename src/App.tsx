@@ -40,6 +40,7 @@ import { watchTray } from "./tray";
 import { watchNotch } from "./notchBridge";
 import { watchSandboxes } from "./sandbox";
 import { AgentSidebar } from "./components/AgentSidebar";
+import { watchRemote } from "./components/Phone";
 import { watchSandboxChats } from "./sandbox/chats";
 import { attach, closeChat, closeStripTab, markUnread, newChat, showStripTab, useChats } from "./chat";
 import { Workspace } from "./components/Workspace";
@@ -252,6 +253,7 @@ export function App() {
     const unnotch = watchNotch();
     const unsandboxes = watchSandboxes();
     const unsandboxChats = watchSandboxChats();
+    const unremote = watchRemote();
     // Limits move slowly and are only re-read while Desk is on screen.
     const limits = setInterval(() => { if (!document.hidden) void refreshLimits(); }, 60_000);
     // Live numbers from Claude and Codex themselves, so they move even when nothing runs.
@@ -287,7 +289,7 @@ export function App() {
       unwatch();
       untray();
       unnotch();
-      unsandboxes(); unsandboxChats();
+      unsandboxes(); unsandboxChats(); unremote();
       clearInterval(limits);
       clearInterval(live);
       window.removeEventListener("keydown", onKeyDown, true);

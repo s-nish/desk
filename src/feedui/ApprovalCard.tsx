@@ -10,7 +10,8 @@ interface CardProps {
   selected: boolean;
   keys: boolean;
   onAnswer: (allow: boolean) => void;
-  onOpen: () => void;
+  /** Absent on the phone, where there's no Desk window to open. */
+  onOpen?: () => void;
   onSelect: () => void;
 }
 
@@ -55,13 +56,13 @@ export function ApprovalCard({ item, answered, selected, keys, onAnswer, onOpen,
                 {approval.plan ? "Approve" : "Allow"}{keys && <kbd>⌘↵</kbd>}
               </button>
             ) : (
-              <button className="feed-btn is-primary" title="This agent only offers “always allow”, so answer it in Desk" onClick={(e) => { e.stopPropagation(); onOpen(); }}>
-                Allow in Desk…
-              </button>
+              onOpen
+                ? <button className="feed-btn is-primary" title="This agent only offers “always allow”, so answer it in Desk" onClick={(e) => { e.stopPropagation(); onOpen(); }}>Allow in Desk…</button>
+                : <span className="feed-answered">Only “always allow” here; answer it in Desk.</span>
             )}
           </>
         )}
-        <button className="feed-link" onClick={(e) => { e.stopPropagation(); onOpen(); }}>Open ↗</button>
+        {onOpen && <button className="feed-link" onClick={(e) => { e.stopPropagation(); onOpen(); }}>Open ↗</button>}
       </div>
     </div>
   );

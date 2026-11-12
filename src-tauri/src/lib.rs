@@ -10,6 +10,7 @@ mod pty;
 mod search;
 mod sessions;
 mod notch;
+mod remote;
 mod sandbox;
 mod tray;
 mod ssh;
@@ -620,7 +621,50 @@ fn sandbox_secret_delete(key: String) -> Result<(), String> {
 /// The feed for the notch, from the main window.
 #[tauri::command]
 fn notch_update(app: AppHandle, payload: Value) {
+    remote::publish(&app, &payload);
     notch::update(&app, payload);
+}
+
+// Phone remote (see remote.rs). Only the main window may call these.
+
+#[tauri::command]
+fn remote_status(app: AppHandle) -> Value {
+    remote::status_json(&app)
+}
+
+#[tauri::command]
+fn remote_enable(app: AppHandle, on: bool) -> Result<(), String> {
+    if on { remote::start(&app) } else { remote::stop(&app); Ok(()) }
+}
+
+#[tauri::command]
+fn remote_pair(app: AppHandle) -> Result<String, String> {
+    remote::pair_start(&app)
+}
+
+#[tauri::command]
+fn remote_revoke(hash: String) -> Result<(), String> {
+    remote::revoke(&hash)
+}
+
+#[tauri::command]
+fn remote_log() -> Vec<String> {
+    remote::read_log(50)
+}
+
+#[tauri::command]
+async fn remote_tailscale() -> remote::TailscaleInfo {
+    tauri::async_runtime::spawn_blocking(remote::tailscale_info).await.unwrap_or_else(|_| remote::tailscale_info())
+}
+
+#[tauri::command]
+async fn remote_serve(on: bool) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || remote::tailscale_serve(on)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn remote_qr(text: String) -> Result<String, String> {
+    remote::qr_svg(&text)
 }
 
 #[tauri::command]
@@ -653,6 +697,7 @@ pub fn run() {
         .manage(Arc::new(chat::ChatManager::default()))
         .manage(files::Watchers::default())
         .manage(QuitState::default())
+        .manage(remote::RemoteState::default())
         .menu(build_menu)
         .setup(|app| {
             // The menu bar icon is a nicety: Desk runs without it.
@@ -741,6 +786,14 @@ pub fn run() {
             ssh_has_password,
             tray_update,
             notch_update,
+            remote_status,
+            remote_enable,
+            remote_pair,
+            remote_revoke,
+            remote_log,
+            remote_tailscale,
+            remote_serve,
+            remote_qr,
             notch_snapshot,
             notch_action,
             notch_resize,

@@ -23,6 +23,8 @@ tauri-plugin-dialog = "2.8.3"
 trash = "5.2.9"
 sha2 = "0.10.9"
 tauri-plugin-notification = "2"
+tiny_http = "0.12"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.5"

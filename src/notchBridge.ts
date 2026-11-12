@@ -82,6 +82,11 @@ export function watchNotch() {
     if (payload.id.startsWith("preview:")) return;
     applyFeedAction(payload);
   });
+  // The phone (remote.rs has already refused anything but allow, deny, reply, stop, seen).
+  const unlistenRemote = listen<FeedAction>("remote-action", ({ payload }) => {
+    if (payload.id.startsWith("preview:") || payload.type === "open") return;
+    applyFeedAction(payload);
+  });
   schedule();
   return () => {
     offChats();
@@ -92,5 +97,6 @@ export function watchNotch() {
     if (timer) clearTimeout(timer);
     schedule = null;
     void unlisten.then((f) => f()).catch(() => {});
+    void unlistenRemote.then((f) => f()).catch(() => {});
   };
 }

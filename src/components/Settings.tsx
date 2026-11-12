@@ -1,5 +1,5 @@
 import { Fragment, useState } from "react";
-import { Bell, Check, Code2, Gauge, Keyboard, Cloud, MessagesSquare, Monitor, Palette, PanelTop, PanelsTopLeft, Plug, Plus, RotateCcw, Server, SquareTerminal, Users } from "lucide-react";
+import { Bell, Check, Code2, Gauge, Keyboard, Cloud, MessagesSquare, Monitor, Palette, PanelTop, PanelsTopLeft, Plug, Plus, RotateCcw, Server, Smartphone, SquareTerminal, Users } from "lucide-react";
 import { THEMES } from "../appearance";
 import { ACCOUNT_KINDS, DEFAULT_PREFERENCES, TOOL_LABEL, useDesk } from "../store";
 import { UsageSettings } from "./Usage";
@@ -13,6 +13,7 @@ import { AccountDefaults } from "./AccountDefaults";
 import { previewNotch } from "../notchBridge";
 import { SandboxSettings } from "./Sandboxes";
 import { AgentSetupSettings } from "./AgentSetup";
+import { PhoneSettings } from "./Phone";
 
 const sections = [
   { id: "appearance", label: "Appearance", icon: Palette, group: "Personalize" },
@@ -27,6 +28,7 @@ const sections = [
   { id: "agents", label: "Agent setup", icon: Plug, group: "Connections" },
   { id: "sandboxes", label: "Sandboxes", icon: Cloud, group: "Connections" },
   { id: "ssh", label: "SSH", icon: Server, group: "Connections" },
+  { id: "phone", label: "Phone", icon: Smartphone, group: "Connections" },
   { id: "shortcuts", label: "Shortcuts", icon: Keyboard, group: "Help" },
 ] as const;
 
@@ -40,6 +42,7 @@ const INTRO: Record<string, string> = {
   notch: "Your agents beside the camera. See what's working, answer a permission question, or reply, without leaving the app you're in.",
   accounts: "Claude Code, Codex, Gemini CLI, Cursor Agent, Grok and OpenCode accounts, used across your projects.",
   usage: "How much of each plan's limits you've used, or have left, and when they reset.",
+  phone: "Your agents on your phone, over your own tailnet.",
   agents: "Write the rules and add MCP servers once; every agent gets them.",
   sandboxes: "Run a chat on a machine you own elsewhere, so it keeps going when you close Desk or the lid. Your accounts, your bill; Desk has no server.",
   ssh: "Saved commands that open in their own tab, with the password filled in.",
@@ -160,6 +163,7 @@ export function Settings({ initial }: { initial?: string }) {
       {section === "usage" && <UsageSettings />}
       {section === "sandboxes" && <SandboxSettings />}
       {section === "agents" && <AgentSetupSettings />}
+      {section === "phone" && <PhoneSettings />}
       {section === "shortcuts" && <div className="shortcut-list">{[["New Claude Code tab in selected project", "⌘ D  /  ⌘ T"], ["New Codex tab in selected project", "⌘ E"], ["New shell tab in selected project", "⌘ J"], ["New SSH connection", "⌘ ⇧ N"], ["New worktree for selected project", "⌘ ⇧ T"], ["Jump to next waiting agent", "⌘ ⇧ A"], ["Move focused tab left / right", "⌥ ⇧ ← / →"], ["Command palette", "⌘ ⇧ P"], ["Search project", "⌘ ⇧ F"], ["Split panes", "⌘ \\"], ["Side by side / stacked", "⌘ ⌥ \\"], ["Focus left / right pane", "⌘ ⌥ ← / →"], ["Add project folder", "⌘ O"], ["Open file", "⌘ P"], ["Save file", "⌘ S"], ["Close tab", "⌘ W"], ["Toggle projects", "⌘ B"], ["Toggle files", "⌘ ⇧ B"], ["Switch tabs", "⌃ Tab"], ["Switch projects", "⌥ ⌘ ↑ / ↓"], ["Clear terminal", "⌘ K"], ["Open settings", "⌘ ,"]].map(([label, key]) => <div key={label}><span>{label}</span><kbd>{key}</kbd></div>)}</div>}
     </div>
   </div>;

@@ -103,6 +103,8 @@ export interface Preferences {
   sandboxHints?: boolean;
   /** Projects where you said "Not now" to that suggestion. */
   sandboxHintOff?: string[];
+  /** Phone remote over Tailscale (see remote.rs). Off by default. */
+  remote?: boolean;
   /** MCP servers Desk hands every agent at launch (see src/mcp.ts). */
   mcpServers?: McpServer[];
 }

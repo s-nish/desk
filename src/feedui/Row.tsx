@@ -7,7 +7,8 @@ interface RowProps {
   now: number;
   selected: boolean;
   onSelect: () => void;
-  onOpen: () => void;
+  /** Absent on the phone, where there's no Desk window to open. */
+  onOpen?: () => void;
   onStop?: () => void;
   onDismiss?: () => void;
 }
@@ -42,7 +43,7 @@ export function Row({ item, now, selected, onSelect, onOpen, onStop, onDismiss }
         {onDismiss && item.state === "done" && (
           <button className="feed-icon" title="Mark as seen" aria-label={`Mark ${item.title} as seen`} onClick={(e) => { e.stopPropagation(); onDismiss(); }}>✓</button>
         )}
-        <button className="feed-icon" title="Open in Desk" aria-label={`Open ${item.title} in Desk`} onClick={(e) => { e.stopPropagation(); onOpen(); }}>↗</button>
+        {onOpen && <button className="feed-icon" title="Open in Desk" aria-label={`Open ${item.title} in Desk`} onClick={(e) => { e.stopPropagation(); onOpen(); }}>↗</button>}
       </span>
     </div>
   );

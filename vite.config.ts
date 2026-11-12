@@ -8,7 +8,7 @@ export default defineConfig({
   build: {
     target: "safari15",
     chunkSizeWarningLimit: 2000,
-    // The notch is its own small page: no terminal or editor code in it.
-    rollupOptions: { input: { main: "index.html", notch: "notch.html" } },
+    // The notch and the phone page are their own small pages: no terminal or editor code in them.
+    rollupOptions: { input: { main: "index.html", notch: "notch.html", remote: "remote.html" } },
   },
 });

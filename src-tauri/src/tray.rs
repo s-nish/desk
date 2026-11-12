@@ -81,7 +81,12 @@ fn build<R: Runtime>(app: &AppHandle<R>, items: &[TrayItem]) -> tauri::Result<Me
             menu = menu.item(&MenuItemBuilder::with_id(format!("go:{}", item.id), text).build(app)?);
         }
     }
-    menu.separator()
+    menu = menu.separator();
+    // One click turns the phone off, whatever Desk's window is doing.
+    if crate::remote::running(app) {
+        menu = menu.item(&MenuItemBuilder::with_id("remote-off", "Turn Off Phone Remote").build(app)?);
+    }
+    menu
         .item(&MenuItemBuilder::with_id("open", "Open Desk").build(app)?)
         .item(&MenuItemBuilder::with_id("quit", "Quit Desk").build(app)?)
         .build()
@@ -105,6 +110,11 @@ pub fn create<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open" => show(app),
+            "remote-off" => {
+                crate::remote::stop(app);
+                let _ = std::thread::spawn(|| crate::remote::tailscale_serve(false));
+                let _ = app.emit_to("main", "remote-off", ());
+            }
             // The usual quit: Desk saves the workspace first, as with ⌘Q.
             "quit" => app.exit(0),
             id => {
