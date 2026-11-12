@@ -2733,6 +2733,8 @@ body.is-resizing-rows, body.is-resizing-rows * { cursor: row-resize !important; 
 .radial-badge { color: var(--accent-ink, #fff); background: var(--ui-accent, var(--accent)); border-color: var(--bg-raised, var(--bg)); width: 15px; height: 15px; }
 .radial-item.is-disabled { opacity: .45; }
 .run-in-chip.is-open { color: var(--text); background: var(--bg-hover); }
+.chat-composer-row > .run-in-chip { flex-shrink: 0; }
+.run-in-chip.is-gone { color: var(--warn, #e0a84a); }
 
 /* Settings ▸ Sandboxes */
 .sandbox-section-head { display: flex; align-items: center; justify-content: space-between; }

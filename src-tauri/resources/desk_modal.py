@@ -29,7 +29,8 @@ def image():
             "curl -fsSL https://deb.nodesource.com/setup_22.x | bash -",
             "apt-get install -y nodejs",
             "npm install -g @anthropic-ai/claude-code @openai/codex",
-            "useradd --create-home --shell /bin/bash desk",
+            # No home folder in the image: the Volume mounts there, and Modal won't mount over files.
+            "useradd --no-create-home --home-dir /home/desk --shell /bin/bash desk",
         )
     )
 
@@ -45,6 +46,12 @@ def create(name, timeout):
         volumes={HOME: volume},
         workdir=HOME,
     )
+    # A sandbox that dies at start would only show up later as "shut down"; say why now.
+    try:
+        sb.exec("true", timeout=120).wait()
+    except Exception:
+        code = sb.poll()
+        sys.exit(f"The Modal sandbox stopped as soon as it started (exit code {code}). See it at https://modal.com/apps under {APP}.")
     print(sb.object_id, flush=True)
 
 

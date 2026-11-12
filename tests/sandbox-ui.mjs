@@ -78,6 +78,17 @@ assert.equal(await page.locator('.radial-item .radial-dot.is-bad').count(), 3, '
 if (shot) { await page.waitForTimeout(700); await page.screenshot({ path: shot.replace('.png', '-radial.png') }); }
 await page.keyboard.press('Escape');
 
+// After the first message the chip stays, on This Mac too, and moves the chat.
+await page.waitForTimeout(300);
+await page.locator('.chat-composer textarea').fill('hello');
+await page.keyboard.press('Enter');
+await page.waitForTimeout(800);
+assert.equal(await page.locator('.run-in-chip').count(), 1, 'chip after the first message');
+assert.ok(await page.evaluate(() => { const c = document.querySelector('.run-in-chip'); return /This Mac/.test(c.textContent) && c.scrollWidth <= c.clientWidth + 1; }), 'This Mac chip, not cut off');
+await page.locator('.run-in-chip').click();
+await page.locator('.radial.is-shown .radial-hub[aria-label="Move this chat"]').waitFor({ state: 'attached' });
+await page.keyboard.press('Escape');
+
 // The composer keeps Send inside the box, even narrow.
 await page.setViewportSize({ width: 1000, height: 860 });
 await page.waitForTimeout(300);

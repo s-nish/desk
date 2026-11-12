@@ -66,6 +66,8 @@ function whereItems(o: {
   projectId: string;
   current: string | null;
   terminal?: boolean;
+  /** Why sandboxes can't be used from here (shown on them, and they're disabled). */
+  blocked?: string;
   onMac?: () => void;
   onSandbox: (x: Sandbox) => void;
   onNew: (id: ProviderId) => void;
@@ -77,13 +79,13 @@ function whereItems(o: {
   const mine = sandboxes.filter((x) => x.projectId === o.projectId && (!o.terminal || canRunTerminal(x.provider))).sort((a, b) => b.createdAt - a.createdAt).slice(0, 4);
   for (const x of mine) {
     const state = states[x.id];
-    items.push({ key: x.id, icon: <SandboxLogo provider={x.provider} size={20} />, label: x.name, sub: `${label(x.provider)} · ${state ?? "checking…"}`, on: o.current === x.id, dot: stateDot(state), onSelect: () => o.onSandbox(x) });
+    items.push({ key: x.id, icon: <SandboxLogo provider={x.provider} size={20} />, label: x.name, sub: `${label(x.provider)} · ${state ?? "checking…"}`, on: o.current === x.id, dot: stateDot(state), disabled: !!o.blocked, onSelect: () => o.onSandbox(x) });
   }
   for (const p of PROVIDERS) {
     if (o.terminal && !p.tty) continue;
     const check = checks[p.id];
-    const sub = check?.ready ? p.blurb : check?.stopped ? `${p.label} isn't running. Pick to start it` : check ? "Not set up. Pick to set it up" : "Checking…";
-    items.push({ key: `new-${p.id}`, icon: <SandboxLogo provider={p.id} size={20} />, label: `New ${p.label} sandbox`, sub, dot: checkDot(check), badge: <Plus size={9} strokeWidth={3} />, onSelect: () => o.onNew(p.id) });
+    const sub = o.blocked ? o.blocked : check?.ready ? p.blurb : check?.stopped ? `${p.label} isn't running. Pick to start it` : check ? "Not set up. Pick to set it up" : "Checking…";
+    items.push({ key: `new-${p.id}`, icon: <SandboxLogo provider={p.id} size={20} />, label: `New ${p.label} sandbox`, sub, dot: checkDot(check), badge: <Plus size={9} strokeWidth={3} />, disabled: !!o.blocked, onSelect: () => o.onNew(p.id) });
   }
   items.push({ key: "settings", icon: <Settings2 size={17} />, label: "Sandbox settings", sub: "Providers, startup, tokens", onSelect: () => useDesk.getState().setModal({ kind: "settings", section: "sandboxes" }) });
   return items;
@@ -93,22 +95,23 @@ function setWhere(chat: Chat, where: string | null) {
   useChats.getState().patch(chat.id, { where, remote: null, ...(where ? { worktree: false } : {}) });
 }
 
-/** "This Mac" or a sandbox, chosen before the first message: a radial of logos with status dots. */
+/**
+ * Where the chat runs, always in the composer: "This Mac" or a sandbox, with a
+ * radial of logos and status dots. Before the first message it picks the place;
+ * after, it moves the chat (a new conversation there).
+ */
 export function RunInChip({ chat, fresh, repo }: { chat: Chat; fresh: boolean; repo: boolean }) {
   const sandboxes = useDesk((s) => s.sandboxes);
   useSandboxes((s) => s.checks);
   useSandboxes((s) => s.states);
   const current = sandboxes.find((x) => x.id === chat.where);
+  const gone = !!chat.where && !current;
   const projectId = useDesk((s) => s.projects.find((p) => p.id === chat.projectId)?.worktreeOf ?? chat.projectId);
   // Only this chat's own sandbox in the making; others may be on their way at the same time.
   const progress = useSandboxes((s) => Object.entries(s.progress).find(([k, v]) => v && k.startsWith("new:") && k.endsWith(`|${chat.id}`))?.[1]);
   const radial = useRadial();
+  const mover = useMovePicker(chat, repo);
 
-  if (!fresh) {
-    if (!current) return null;
-    return <span className="chat-chip is-static" title={`Runs in ${label(current.provider)} (${current.name})`}><SandboxLogo provider={current.provider} size={13} /><span className="chip-label">{label(current.provider)}</span></span>;
-  }
-  if (!repo) return null;
   const make = (id: ProviderId) => void withProvider(id, async () => {
     try {
       const sandbox = await createSandbox(projectId, id, chat.id);
@@ -117,22 +120,35 @@ export function RunInChip({ chat, fresh, repo }: { chat: Chat; fresh: boolean; r
     } catch (e) { toastError(e); }
   });
   const open = (el: HTMLElement) => {
+    if (!fresh) { mover.open(el); return; }
     void checkAllProviders();
     void refreshStates(projectId);
     radial.open(el);
   };
-  const items = radial.state ? whereItems({ projectId, current: chat.where ?? null, onMac: () => setWhere(chat, null), onSandbox: (x) => setWhere(chat, x.id), onNew: make }) : [];
+  const opened = radial.opened || mover.opened;
+  const items = radial.state ? whereItems({ projectId, current: chat.where ?? null, blocked: repo ? undefined : NEEDS_REPO, onMac: () => setWhere(chat, null), onSandbox: (x) => setWhere(chat, x.id), onNew: make }) : [];
+  const name = progress ? "Making sandbox…" : current ? label(current.provider) : gone ? "Sandbox gone" : "This Mac";
+  const title = gone
+    ? "This chat's sandbox was deleted. Pick where it goes on (a new conversation there)."
+    : !fresh
+      ? `${current ? `Runs in ${label(current.provider)} (${current.name})` : "Runs on this Mac"}. Pick another place to move this chat (a new conversation there).`
+      : current
+        ? `Runs in ${label(current.provider)} (${current.name}). Keeps going when you close Desk.`
+        : "Where this chat runs. A sandbox keeps going when you close Desk (or the lid, with a cloud one).";
   return (
     <>
-      <button className={"chat-chip run-in-chip" + (radial.opened ? " is-open" : "")} aria-haspopup="menu" aria-expanded={radial.opened} title={current ? `Runs in ${label(current.provider)} (${current.name}). Keeps going when you close Desk.` : "Where this chat runs. A sandbox keeps going when you close Desk (or the lid, with a cloud one)."} onClick={(e) => (radial.opened ? radial.close() : open(e.currentTarget))}>
+      <button className={"chat-chip run-in-chip" + (opened ? " is-open" : "") + (gone ? " is-gone" : "")} aria-haspopup="menu" aria-expanded={opened} title={title} onClick={(e) => (radial.opened ? radial.close() : open(e.currentTarget))}>
         {progress ? <LoaderCircle size={12} className="is-spinning" /> : <SandboxLogo provider={current?.provider ?? "mac"} size={13} />}
-        <span className="chip-label">{progress ? "Making sandbox…" : current ? label(current.provider) : "This Mac"}</span>
+        <span className="chip-label">{name}</span>
         <ChevronDown size={11} />
       </button>
       {radial.state && <Radial state={radial.state} items={items} label="Where this chat runs" onClosed={radial.close} />}
+      {mover.element}
     </>
   );
 }
+
+const NEEDS_REPO = "Needs a git repository (the code goes there as a branch)";
 
 /** The terminal's "in a sandbox" picker: opens an agent tab in a sandbox. */
 export function useSandboxTerminalPicker() {
@@ -279,7 +295,7 @@ export function moveChat(chat: Chat, to: Sandbox | null) {
 }
 
 /** Picks somewhere else for a started chat: the same radial, with every provider. */
-function useMovePicker(chat: Chat) {
+function useMovePicker(chat: Chat, repo = true) {
   const radial = useRadial();
   useSandboxes((s) => s.checks);
   useSandboxes((s) => s.states);
@@ -289,8 +305,9 @@ function useMovePicker(chat: Chat) {
     <Radial state={radial.state} label="Move this chat" onClosed={radial.close} items={whereItems({
       projectId,
       current: chat.where ?? null,
-      onMac: () => moveChat(chat, null),
-      onSandbox: (x) => moveChat(chat, x),
+      blocked: repo ? undefined : NEEDS_REPO,
+      onMac: () => { if (chat.where) moveChat(chat, null); },
+      onSandbox: (x) => { if (x.id !== chat.where) moveChat(chat, x); },
       onNew: (id) => void withProvider(id, async () => {
         try { moveChat(chat, await createSandbox(projectId, id, chat.id)); } catch (e) { toastError(e); }
       }),
