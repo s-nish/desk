@@ -81,6 +81,9 @@ export interface Preferences {
   chatToolsOpen: boolean;
   /** New chats start in their own Git worktree, made when the first message is sent. */
   chatWorktree: boolean;
+  /** Accounts you removed. Desk finds them on disk again at every launch, so it
+   *  remembers not to add them back. Adding the account again clears it. */
+  removedAccounts?: string[];
 }
 
 export const DEFAULT_PREFERENCES: Preferences = { theme: "electric", themeVersion: 2, animatedBackground: true, usageShow: "used", density: "comfortable", fontSize: 14, showProjectAccounts: false, accent: "neutral", showStatusBar: true, showPaths: false, showAccountEmails: false, accountColors: false, reduceMotion: false, terminalTheme: "desk", editorTheme: "desk", terminalColors: {}, cursorStyle: "bar", cursorBlink: true, smoothScroll: true, agentAlerts: true, usageLimits: true, alertBadge: true, alertBounce: true, systemNotifications: true, uiMode: "terminal", accentColor: "neutral", corners: "soft", chatFontSize: 14, chatWidth: "comfortable", chatToolsOpen: false, chatWorktree: false };
@@ -224,8 +227,9 @@ function identityOf(d: DetectedAccount): Identity {
   return { path: d.path, email: d.email, org: d.org, signedIn: d.signedIn };
 }
 
-/** Adds any detected config dirs we don't know yet, and always keeps a default account per tool. */
-function mergeAccounts(accounts: Account[], detected: DetectedAccount[]) {
+/** Adds any detected config dirs we don't know yet, and keeps a default account per tool,
+ *  except the ones you removed. */
+export function mergeAccounts(accounts: Account[], detected: DetectedAccount[], removed: string[] = []) {
   const out = accounts.map((a) => (LEGACY_COLORS[a.color] ? { ...a, color: LEGACY_COLORS[a.color] } : a));
   const identities: Record<string, Identity> = {};
   const wanted: { kind: AccountKind; dir: string | null }[] = [
@@ -235,7 +239,7 @@ function mergeAccounts(accounts: Account[], detected: DetectedAccount[]) {
   ];
   for (const w of wanted) {
     const id = accountId(w.kind, w.dir);
-    if (!out.some((a) => a.id === id)) {
+    if (!out.some((a) => a.id === id) && !removed.includes(id)) {
       out.push({ id, kind: w.kind, dir: w.dir, name: nameFromDir(w.kind, w.dir), color: nextColor(out) });
     }
   }
@@ -278,7 +282,7 @@ export const useDesk = create<DeskState>((set, get) => ({
   limits: {},
 
   init(saved, detected) {
-    const { accounts, identities } = mergeAccounts(saved?.accounts ?? [], detected);
+    const { accounts, identities } = mergeAccounts(saved?.accounts ?? [], detected, saved?.preferences?.removedAccounts);
     const projects = saved?.projects ?? [];
     const activeProjectId = projects.some((p) => p.id === saved?.activeProjectId)
       ? saved!.activeProjectId!
@@ -305,7 +309,7 @@ export const useDesk = create<DeskState>((set, get) => ({
   },
 
   mergeDetected(detected) {
-    const { accounts, identities } = mergeAccounts(get().accounts, detected);
+    const { accounts, identities } = mergeAccounts(get().accounts, detected, get().preferences.removedAccounts);
     set((s) => ({ accounts, identities: { ...s.identities, ...identities } }));
   },
 
@@ -373,7 +377,10 @@ export const useDesk = create<DeskState>((set, get) => ({
   },
 
   addAccount(account) {
-    set((s) => ({ accounts: [...s.accounts.filter((a) => a.id !== account.id), account] }));
+    set((s) => ({
+      accounts: [...s.accounts.filter((a) => a.id !== account.id), account],
+      preferences: { ...s.preferences, removedAccounts: (s.preferences.removedAccounts ?? []).filter((id) => id !== account.id) },
+    }));
   },
 
   updateAccount(id, patch) {
@@ -383,6 +390,7 @@ export const useDesk = create<DeskState>((set, get) => ({
   removeAccount(id) {
     set((s) => ({
       accounts: s.accounts.filter((a) => a.id !== id),
+      preferences: { ...s.preferences, removedAccounts: [...(s.preferences.removedAccounts ?? []).filter((r) => r !== id), id] },
       projects: s.projects.map((p) => ({
         ...p,
         claudeAccountId: p.claudeAccountId === id ? null : p.claudeAccountId,
