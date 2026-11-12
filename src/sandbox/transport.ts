@@ -123,6 +123,7 @@ export async function agentSpawn(opts: SpawnOpts, onLine: (line: string) => void
   let runId: string;
   let line = 0;
   if (target.attach) {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(target.attach.runId)) throw new Error("Bad run id.");
     runId = target.attach.runId;
     line = target.attach.line;
   } else {

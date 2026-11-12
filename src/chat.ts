@@ -266,6 +266,29 @@ export function loadAllSessions() {
   for (const p of desk().projects) if (!p.worktreeOf) void loadSessions(p);
 }
 
+// Sandbox chats after a restart
+
+/** Puts back a sandbox chat Desk had open, without taking focus. */
+export function restoreChat(chat: Chat) {
+  if (chats().chats[chat.id]) return;
+  useChats.setState((s) => ({ chats: { ...s.chats, [chat.id]: chat }, strip: s.strip.includes(`c:${chat.id}`) ? s.strip : [...s.strip, `c:${chat.id}`] }));
+}
+
+/** Follows a sandbox agent that kept running while Desk was closed, from the
+ *  line Desk last saw. Claude and Codex only: an ACP agent's replies need the
+ *  requests that asked for them. */
+export async function reattachChat(chatId: string, line: number) {
+  const chat = chats().chats[chatId];
+  if (!chat?.runId || chat.proc != null || (chat.tool !== "claude" && chat.tool !== "codex")) return false;
+  const target = await remoteTarget(chatId);
+  if (!target) return false;
+  target.attach = { runId: chat.runId, line };
+  const parser = chat.tool === "claude" ? claudeParser(chatId) : codexParser(chatId);
+  const proc = await agentSpawn({ cwd: chat.cwd, args: [], env: {}, unset: [], stdin: chat.tool === "claude" }, (l) => parser(l, proc), target);
+  chats().patch(chatId, { proc, status: chat.tool === "codex" ? "running" : chat.status });
+  return true;
+}
+
 // Opening chats
 
 /** A blank chat in a project, using the project's account for `tool`. */

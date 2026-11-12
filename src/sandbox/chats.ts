@@ -2,12 +2,15 @@
 // there on the first message, and bringing the work back.
 
 import { addWorktreeProject, branchSlug, rootProject } from "../actions";
-import { updateItems, useChats } from "../chat";
+import { reattachChat, restoreChat, updateItems, useChats, type Chat } from "../chat";
 import { ipc } from "../ipc";
 import { useDesk } from "../store";
 import { TOKEN_VAR, ensureRunning, provider, tokenKey } from "./index";
 import { pullOut, syncIn } from "./sync";
-import type { RemoteTarget } from "./transport";
+import { remoteRuns, sandboxExec, type RemoteTarget } from "./transport";
+import { provider as providerOf } from "./providers";
+import { q } from "./types";
+import { run } from "./index";
 
 const NOTICE = "sandbox";
 
@@ -78,4 +81,65 @@ export async function pullChanges(chatId: string) {
     addWorktreeProject(parent, pulled.path, pulled.branch, remote.base);
   }
   return pulled;
+}
+
+// Sandbox chats outlive Desk: the agent keeps going there, so Desk remembers the
+// chat (its messages and the last line it read) and follows it again on start.
+
+const SAVED_KEY = "desk.sandboxChats";
+const KEEP_ITEMS = 400;
+
+interface SavedChat { chat: Chat; line: number }
+
+function readSaved(): SavedChat[] {
+  try { const list = JSON.parse(localStorage.getItem(SAVED_KEY) ?? "[]"); return Array.isArray(list) ? list : []; } catch { return []; }
+}
+
+function save() {
+  const lines = new Map(remoteRuns().map((r) => [r.proc, r.line]));
+  const list: SavedChat[] = Object.values(useChats.getState().chats)
+    .filter((c) => c.where && c.remote)
+    .map((c) => ({
+      chat: { ...c, items: c.items.slice(-KEEP_ITEMS), proc: null, status: "idle", loading: false, startedAt: null, stopping: false, pending: undefined, queue: undefined, draft: undefined },
+      line: c.proc != null ? lines.get(c.proc) ?? 0 : 0,
+    }));
+  try { localStorage.setItem(SAVED_KEY, JSON.stringify(list)); } catch { /* Too big: the agent still runs; only the replay is lost. */ }
+}
+
+async function restore(saved: SavedChat) {
+  const { chat, line } = saved;
+  const desk = useDesk.getState();
+  const sandbox = desk.sandboxes.find((x) => x.id === chat.where);
+  if (!sandbox || !desk.projects.some((p) => p.id === chat.projectId)) return;
+  restoreChat({ ...chat, truncated: chat.items.length >= KEEP_ITEMS });
+  if (!chat.runId) return;
+  const p = providerOf(sandbox.provider);
+  const up = p && (await p.status(run, sandbox.remoteId).catch(() => "missing")) === "running";
+  const label = p?.label ?? sandbox.provider;
+  const attached = up && (await reattachChat(chat.id, line).catch(() => false));
+  if (!attached) {
+    // An agent Desk can't follow again would run on unseen; end it.
+    if (up) void sandboxExec(sandbox, `"$HOME/.desk/bin/desk-run" stop ${q(chat.runId)}`).catch(() => {});
+    useChats.getState().patch(chat.id, { runId: null });
+    const text = up
+      ? `This agent was running in ${label} (${sandbox.name}) when Desk closed. Send a message to carry on.`
+      : `${label} (${sandbox.name}) is stopped. Send a message to wake it and carry on.`;
+    updateItems(chat.id, (items) => [...items, { kind: "notice", id: `sb-restore-${Date.now()}`, text }]);
+  }
+}
+
+/** Restores sandbox chats once Desk has loaded, then keeps the saved copy current. */
+export function watchSandboxChats() {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let unsub = () => {};
+  const flush = () => { if (timer) { clearTimeout(timer); timer = null; } save(); };
+  const begin = () => {
+    for (const saved of readSaved()) void restore(saved);
+    unsub = useChats.subscribe(() => { if (!timer) timer = setTimeout(() => { timer = null; save(); }, 1000); });
+    window.addEventListener("beforeunload", flush);
+  };
+  let unloaded = () => {};
+  if (useDesk.getState().loaded) begin();
+  else unloaded = useDesk.subscribe((s) => { if (s.loaded) { unloaded(); begin(); } });
+  return () => { unloaded(); unsub(); window.removeEventListener("beforeunload", flush); flush(); };
 }

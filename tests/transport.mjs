@@ -88,17 +88,28 @@ try {
   for (let i = 0; i < 40 && !lines.some((l) => l.text === 'two'); i++) await sleep(100);
   assert.ok(lines.some((l) => l.text === 'two'));
 
-  await t.agentKill(proc);
-  for (let i = 0; i < 80 && lines.slice(-1)[0]?.type !== 'desk_exit'; i++) await sleep(100);
-  const end = lines.slice(-1)[0];
+  // Desk quits and starts again: a new follower picks up from the saved line.
+  const saved = t.remoteRuns()[0].line;
+  t.agentDetach(proc);
+  assert.ok(!t.isRemote(proc));
+  const again = [];
+  const proc2 = await t.agentSpawn({ cwd: '', args: [], env: {}, unset: [], stdin: true }, (line) => again.push(JSON.parse(line)), { sandbox, cwd: '~/', attach: { runId, line: saved } });
+  await t.agentWrite(proc2, JSON.stringify({ text: 'three' }));
+  for (let i = 0; i < 40 && !again.some((l) => l.text === 'three'); i++) await sleep(100);
+  assert.ok(again.length && again.every((l) => l.text !== 'one' && l.text !== 'two'), `only new lines after reattach: ${JSON.stringify(again)}`);
+  await assert.rejects(t.agentSpawn({ cwd: '', args: [], env: {}, unset: [], stdin: true }, () => {}, { sandbox, cwd: '~/', attach: { runId: 'x; rm -rf ~', line: 0 } }));
+
+  await t.agentKill(proc2);
+  for (let i = 0; i < 80 && again.slice(-1)[0]?.type !== 'desk_exit'; i++) await sleep(100);
+  const end = again.slice(-1)[0];
   assert.equal(end.type, 'desk_exit');
   assert.equal(end.run, runId);
-  assert.ok(!t.isRemote(proc));
+  assert.ok(!t.isRemote(proc2));
 } catch (e) {
   failures.push(e.stack);
 }
 for (const p of procs.values()) p.kill();
 rmSync(home, { recursive: true, force: true });
 if (failures.length) { console.error(failures.join('\n')); process.exit(1); }
-console.log('PASS: transport start in the sandbox home, env and account folders, send, dropped link caught up without loss, new writer, stop.');
+console.log('PASS: transport start in the sandbox home, env and account folders, send, dropped link caught up without loss, new writer, reattach after a restart, stop.');
 process.exit(0);
