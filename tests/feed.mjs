@@ -63,7 +63,7 @@ check("pending approval", () => {
     { kind: "approval", id: "r1", tool: "Bash", summary: "rm -rf build", input: {}, state: "pending" },
   ] })]);
   assert.equal(item.state, "waiting");
-  assert.deepEqual(item.approval, { requestId: "r1", tool: "Bash", summary: "rm -rf build", plan: false });
+  assert.deepEqual(item.approval, { requestId: "r1", tool: "Bash", summary: "rm -rf build", plan: false, allowOnce: true });
 });
 
 check("answered approval is not waiting", () => {

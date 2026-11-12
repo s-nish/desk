@@ -48,7 +48,7 @@ export function sampleFeed(now: number): FeedItem[] {
   return [
     {
       ...base, id: "preview:1", tool: "claude", title: "Fix flaky auth test", project: "desk", accountColor: "#0297de", state: "waiting", since: now - 4 * 60_000,
-      activity: "", approval: { requestId: "preview", tool: "Bash", summary: "npm test -- --runInBand auth", plan: false },
+      activity: "", approval: { requestId: "preview", tool: "Bash", summary: "npm test -- --runInBand auth", plan: false, allowOnce: true },
     },
     { ...base, id: "preview:2", tool: "codex", title: "Migrate settings store", project: "studio", accountColor: "#fc734d", state: "working", since: now - 12 * 60_000, activity: "Edit src/settings/store.ts" },
     { ...base, id: "preview:3", tool: "gemini", title: "Write release notes", project: "desk", accountColor: null, state: "working", since: now - 60_000, activity: "…grouping the changes by area before writing" },

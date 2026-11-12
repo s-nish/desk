@@ -2,7 +2,7 @@
 // open, mark seen. The tray menu, the notch and the phone page all go through here.
 
 import { TOOL_LABEL, chatView, useDesk } from "./store";
-import { answer, enqueue, markUnread, send, showChat, showStripTab, stop, useChats } from "./chat";
+import { answer, canAllowOnce, enqueue, markUnread, send, showChat, showStripTab, stop, useChats } from "./chat";
 import { cleanTitle } from "./components/Workspace";
 import { buildFeedFrom, type FeedAction, type FeedItem } from "./feedCore";
 
@@ -10,7 +10,7 @@ export type { FeedAction, FeedItem, FeedState, FeedApproval } from "./feedCore";
 
 export function buildFeed(): FeedItem[] {
   const desk = useDesk.getState();
-  return buildFeedFrom({
+  const items = buildFeedFrom({
     chats: Object.values(useChats.getState().chats),
     tabs: desk.tabs,
     projects: desk.projects,
@@ -18,6 +18,8 @@ export function buildFeed(): FeedItem[] {
     label: (tool) => TOOL_LABEL[tool],
     tabTitle: (tab) => cleanTitle(tab.title),
   });
+  for (const item of items) if (item.approval) item.approval.allowOnce = canAllowOnce(item.approval.requestId);
+  return items;
 }
 
 /** Shows what a feed row points at: a chat, or a terminal tab in whichever view is on. */
@@ -45,7 +47,8 @@ export function applyFeedAction(action: FeedAction) {
       openFeedItem(action.id);
       return;
     case "answer":
-      if (chat) answer(chat.id, action.requestId, action.allow);
+      // From outside the chat (notch, phone): never a standing "always allow".
+      if (chat) answer(chat.id, action.requestId, action.allow, true);
       return;
     case "reply": {
       if (!chat || !action.text.trim()) return;

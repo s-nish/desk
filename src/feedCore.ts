@@ -13,6 +13,8 @@ export interface FeedApproval {
   summary: string;
   /** Claude Code's "plan ready" question (ExitPlanMode), answered Approve / Keep planning. */
   plan: boolean;
+  /** It can be allowed just this once. When not, the notch sends you to Desk to answer. */
+  allowOnce: boolean;
 }
 
 export interface FeedItem {
@@ -85,7 +87,7 @@ export function chatActivity(chat: Chat): string {
 function pendingApproval(chat: Chat): FeedApproval | null {
   const item = chat.items.find((i) => i.kind === "approval" && i.state === "pending");
   if (item?.kind !== "approval") return null;
-  return { requestId: item.id, tool: item.tool, summary: item.summary, plan: item.tool === "ExitPlanMode" };
+  return { requestId: item.id, tool: item.tool, summary: item.summary, plan: item.tool === "ExitPlanMode", allowOnce: true };
 }
 
 const ORDER: Record<FeedState, number> = { waiting: 0, working: 1, done: 2 };

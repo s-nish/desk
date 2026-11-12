@@ -146,7 +146,7 @@ export function Settings({ initial }: { initial?: string }) {
           <Row label="Open by itself" description="A single card that opens for six seconds and never takes your keyboard."><Choice label="Open by itself" value={preferences.notchPeek ?? "waiting"} options={[["waiting", "When it needs you"], ["all", "Also when it finishes"], ["never", "Never"]]} onChange={(notchPeek) => setPreferences({ notchPeek })} /></Row>
           <Toggle label="Usage rings" description="Show the 5-hour limit of the accounts in use at the bottom of the open notch." checked={preferences.notchRings !== false} onChange={() => setPreferences({ notchRings: preferences.notchRings === false })} />
           <Toggle label="On screens without a notch" description="A small pill under the menu bar, when there's no notch (an external display, or an older Mac)." checked={preferences.notchOnOtherScreens !== false} onChange={() => setPreferences({ notchOnOtherScreens: preferences.notchOnOtherScreens === false })} />
-          <Row label="Preview" description="Shows a sample for 15 seconds, so you can see it without a running agent."><button className="text-button" onClick={previewNotch}>Show preview</button></Row>
+          <Row label="Preview" description="Shows a sample for a minute, so you can see it without a running agent. Its buttons do nothing."><button className="text-button" onClick={previewNotch}>Show preview</button></Row>
         </div>
         <p className="settings-note">Allowing from the notch shows the full command first. It never offers Full access. Keys work once you click the notch: ⌘↵ allow, ⌘⌫ deny, ↑ ↓ move, ⌘O open in Desk, Esc close.</p>
       </>}

@@ -7,7 +7,7 @@ import { useChats } from "./chat";
 import { applyFeedAction, buildFeed } from "./feed";
 import { sampleFeed, type FeedAction, type NotchPayload, type NotchUsage } from "./notch/protocol";
 
-const PREVIEW_MS = 15_000;
+const PREVIEW_MS = 60_000;
 let previewUntil = 0;
 let schedule: (() => void) | null = null;
 

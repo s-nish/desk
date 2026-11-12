@@ -594,9 +594,16 @@ async function startClaude(chatId: string) {
   await ipc.chatWrite(proc, JSON.stringify({ type: "control_request", request_id: `init-${uid()}`, request: { subtype: "initialize" } })).catch(() => {});
 }
 
-/** Answers a permission question from Claude Code. */
-export function answer(chatId: string, requestId: string, allow: boolean) {
-  if (permissions.has(requestId)) return answerAcp(chatId, requestId, allow);
+/** Whether a question can be allowed just this once. Some ACP agents only offer
+ *  "always"; the notch and phone never grant that, so they send you to Desk. */
+export function canAllowOnce(requestId: string) {
+  const p = permissions.get(requestId);
+  return !p || p.options.some((o) => o.kind === "allow_once");
+}
+
+/** Answers a permission question. `onceOnly` (the notch, the phone) never picks an "always" answer. */
+export function answer(chatId: string, requestId: string, allow: boolean, onceOnly = false) {
+  if (permissions.has(requestId)) return answerAcp(chatId, requestId, allow, onceOnly);
   const chat = chats().chats[chatId];
   const item = chat?.items.find((i) => i.kind === "approval" && i.id === requestId);
   if (!chat || chat.proc == null || item?.kind !== "approval" || item.state !== "pending") return;
@@ -1167,13 +1174,14 @@ function acpRequest(chatId: string, conn: AcpConnection, req: AcpRequest) {
   alertChat(chat, `Wants to use ${name}`);
 }
 
-function answerAcp(chatId: string, id: string, allow: boolean) {
+function answerAcp(chatId: string, id: string, allow: boolean, onceOnly = false) {
   const p = permissions.get(id);
   const item = chats().chats[chatId]?.items.find((i) => i.id === id);
   if (!p || item?.kind !== "approval" || item.state !== "pending") return;
+  if (onceOnly && allow && !p.options.some((o) => o.kind === "allow_once")) return;
   permissions.delete(id);
   const pick = (...kinds: string[]) => kinds.map((k) => p.options.find((o) => o.kind === k)).find(Boolean);
-  const option = allow ? pick("allow_once", "allow_always") : pick("reject_once", "reject_always");
+  const option = allow ? pick("allow_once", ...(onceOnly ? [] : ["allow_always"])) : pick("reject_once", "reject_always");
   void p.conn.respond(p.rpcId, option ? { outcome: { outcome: "selected", optionId: option.optionId } } : { outcome: { outcome: "cancelled" } });
   updateItems(chatId, (items) => upsert(items, { ...item, state: allow ? "allowed" : "denied" }));
 }

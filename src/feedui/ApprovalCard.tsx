@@ -50,9 +50,15 @@ export function ApprovalCard({ item, answered, selected, keys, onAnswer, onOpen,
             <button className="feed-btn" onClick={(e) => { e.stopPropagation(); onAnswer(false); }}>
               {approval.plan ? "Keep planning" : "Deny"}{keys && <kbd>⌘⌫</kbd>}
             </button>
-            <button className="feed-btn is-primary" onClick={(e) => { e.stopPropagation(); onAnswer(true); }}>
-              {approval.plan ? "Approve" : "Allow"}{keys && <kbd>⌘↵</kbd>}
-            </button>
+            {approval.allowOnce ? (
+              <button className="feed-btn is-primary" onClick={(e) => { e.stopPropagation(); onAnswer(true); }}>
+                {approval.plan ? "Approve" : "Allow"}{keys && <kbd>⌘↵</kbd>}
+              </button>
+            ) : (
+              <button className="feed-btn is-primary" title="This agent only offers “always allow”, so answer it in Desk" onClick={(e) => { e.stopPropagation(); onOpen(); }}>
+                Allow in Desk…
+              </button>
+            )}
           </>
         )}
         <button className="feed-link" onClick={(e) => { e.stopPropagation(); onOpen(); }}>Open ↗</button>

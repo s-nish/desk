@@ -159,7 +159,7 @@ export function Notch() {
   const target = replyTarget(ordered, sel);
 
   const answer = useCallback((item: FeedItem, allow: boolean) => {
-    if (!item.approval) return;
+    if (!item.approval || (allow && !item.approval.allowOnce)) return;
     setAnswered((a) => ({ ...a, [item.approval!.requestId]: allow ? "Allowed" : "Declined" }));
     act({ type: "answer", id: item.id, requestId: item.approval.requestId, allow });
   }, []);

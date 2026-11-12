@@ -19,8 +19,12 @@
   --n-close: 260ms;
   /* A spring with a touch of overshoot; browsers without linear() use the curve. */
   --n-spring: cubic-bezier(.2, 1.2, .3, 1);
-  --n-spring: linear(0, .006, .025 2.8%, .101 6.1%, .539 18.9%, .721 25.3%, .849 31.5%, .937 38.1%, .968 41.8%, .991 45.7%, 1.006 50.1%, 1.015 55%, 1.017 63.9%, 1.001 85.9%, 1);
   --n-settle: cubic-bezier(.4, 0, .2, 1);
+}
+
+/* A custom property can't fall back, so only browsers with linear() get it. */
+@supports (transition-timing-function: linear(0, 1)) {
+  :root { --n-spring: linear(0, .006, .025 2.8%, .101 6.1%, .539 18.9%, .721 25.3%, .849 31.5%, .937 38.1%, .968 41.8%, .991 45.7%, 1.006 50.1%, 1.015 55%, 1.017 63.9%, 1.001 85.9%, 1); }
 }
 
 html, body {

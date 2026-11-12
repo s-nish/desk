@@ -7,7 +7,7 @@ const base = process.env.DESK_TEST_URL || 'http://localhost:1420';
 const now = Date.now();
 const item = (over) => ({ kind: 'chat', where: 'local', account: null, accountColor: null, canReply: true, approval: null, since: now - 300000, activity: '', project: 'desk', ...over });
 const feed = (items, over = {}) => ({ enabled: true, peek: 'waiting', rings: true, otherScreens: true, reduceMotion: false, onScreen: null, usage: [{ account: 'a1', name: 'work', color: '#0297de', tool: 'claude', used: 62 }], preview: false, items, ...over });
-const asking = item({ id: 'c:1', tool: 'claude', title: 'Fix flaky auth test', state: 'waiting', approval: { requestId: 'r1', tool: 'Bash', summary: 'npm test -- --runInBand auth', plan: false } });
+const asking = item({ id: 'c:1', tool: 'claude', title: 'Fix flaky auth test', state: 'waiting', approval: { requestId: 'r1', tool: 'Bash', summary: 'npm test -- --runInBand auth', plan: false, allowOnce: true } });
 const working = item({ id: 'c:2', tool: 'codex', title: 'Migrate settings', state: 'working', activity: 'Edit store.ts' });
 const done = item({ id: 'c:3', tool: 'claude', title: 'Add CSV export', state: 'done', since: null });
 const notch = { hasNotch: true, notchWidth: 184, notchHeight: 32, top: 0 };
@@ -94,6 +94,16 @@ try {
   assert.deepEqual((await calls(page, 'notch_action')).at(-1), { action: { type: 'stop', id: 'c:2' } });
   await page.click('.notch-open');
   assert.deepEqual((await calls(page, 'notch_action')).at(-1), { action: { type: 'open', id: '' } });
+  // An agent that only offers "always allow" is answered in Desk, never from here.
+  await emit(page, 'notch-feed', feed([{ ...asking, approval: { ...asking.approval, requestId: 'r3', allowOnce: false } }]));
+  await emit(page, 'notch-hover', false);
+  await page.waitForTimeout(50);
+  await emit(page, 'notch-hover', true);
+  await page.waitForSelector('text=Allow in Desk…');
+  const before = (await calls(page, 'notch_action')).length;
+  await page.click('.feed-card');
+  await page.keyboard.press('Meta+Enter');
+  assert.equal((await calls(page, 'notch_action')).length, before, '⌘↵ does nothing');
   await page.close();
 
   // Peek: a newly waiting chat opens one card by itself; not when Desk shows it.
