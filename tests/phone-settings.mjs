@@ -28,6 +28,12 @@ await page.getByRole('button', { name: 'Try again' }).click();
 await page.getByRole('button', { name: 'Show code' }).click();
 await page.getByAltText('Pairing code').waitFor();
 
+// Desk opens again with the remote on: it starts by itself, once settings have loaded.
+await page.waitForTimeout(1200); // the state save
+await page.reload();
+await page.waitForFunction(() => window.testCalls.some((c) => c.cmd === 'remote_enable' && c.args.on === true));
+assert.ok(await page.evaluate(() => window.testCalls.some((c) => c.cmd === 'remote_serve' && c.args.on === true)), 'and publishes on the tailnet again');
+
 assert.deepEqual(errors, []);
 await browser.close();
-console.log('PASS phone-settings: remote stays on, Serve enable link, retry, pairing code');
+console.log('PASS phone-settings: remote stays on, Serve enable link, retry, pairing code, back on by itself when Desk opens');

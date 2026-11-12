@@ -28,7 +28,7 @@ const thread = { kind: 'chat', truncated: false, entries: [
   { kind: 'approval', id: 'r1', tool: 'Bash', summary: 'npm test -- auth', state: 'pending' },
 ] };
 
-function mock({ feed, thread, paired }) {
+function mock({ feed, thread, paired, down }) {
   window.posts = [];
   const realFetch = window.fetch.bind(window);
   let source = null;
@@ -45,7 +45,8 @@ function mock({ feed, thread, paired }) {
     }
     return realFetch(url, init);
   };
-  window.EventSource = class { constructor() { source = this; setTimeout(emit, 50); } close() {} };
+  // down: the Mac is away until the page asks again after window.macBack is set.
+  window.EventSource = class { constructor() { source = this; setTimeout(() => (down && !window.macBack ? this.onerror?.() : emit()), 50); } close() {} };
 }
 
 const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
@@ -97,7 +98,18 @@ try {
   await unpaired.addInitScript(mock, { feed, thread, paired: false });
   await unpaired.goto(`${base}/remote.html`);
   await unpaired.getByText('Not paired').waitFor();
-  console.log('PASS remote: every session by project, open a thread (watch), allow once, reply shows at once, back, unpaired phone told to pair');
+
+  // Mac away: the page says so, and Try again reconnects without waiting.
+  const away = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await away.addInitScript(mock, { feed, thread, paired: true, down: true });
+  await away.goto(`${base}/remote.html`);
+  await away.getByText("Can't reach your Mac").waitFor();
+  await away.evaluate(() => { window.macBack = true; });
+  await away.getByRole('button', { name: 'Try again' }).click();
+  await away.getByText('Fix flaky auth test').waitFor();
+  await away.getByText('Live').waitFor();
+  assert.equal(await away.getByText("Can't reach your Mac").count(), 0);
+  console.log('PASS remote: every session by project, open a thread (watch), allow once, reply shows at once, back, unpaired phone told to pair, Mac away with Try again');
 } finally {
   await browser.close();
 }

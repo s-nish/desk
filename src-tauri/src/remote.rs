@@ -310,7 +310,7 @@ fn handle<R: Runtime>(app: &AppHandle<R>, mut request: tiny_http::Request) {
         (tiny_http::Method::Get, _) => {
             // The page and its scripts, from the app's own bundle.
             let file = if path == "/" { "remote.html" } else { path.trim_start_matches('/') };
-            if file.contains("..") || !(file == "remote.html" || file.starts_with("assets/")) {
+            if file.contains("..") || !(file == "remote.html" || file == "remote-sw.js" || file.starts_with("assets/")) {
                 let _ = request.respond(text(404, "Not found."));
                 return;
             }

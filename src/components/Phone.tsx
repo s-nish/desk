@@ -11,10 +11,14 @@ type Tailscale = Awaited<ReturnType<typeof ipc.remoteTailscale>>;
 
 /** Starts the local server at launch when the phone remote was left on. */
 export function watchRemote() {
-  if (useDesk.getState().preferences.remote) void ipc.remoteEnable(true).catch(() => {});
+  // Back on when Desk opens, once your settings have loaded (before that "remote" reads as off).
+  const start = () => { if (useDesk.getState().preferences.remote) void ipc.remoteEnable(true).then(() => ipc.remoteServe(true)).catch(() => {}); };
+  let unloaded = () => {};
+  if (useDesk.getState().loaded) start();
+  else unloaded = useDesk.subscribe((s) => { if (s.loaded) { unloaded(); start(); } });
   // Turned off from the menu bar icon.
   const off = listen("remote-off", () => useDesk.getState().setPreferences({ remote: false }));
-  return () => { void off.then((f) => f()); };
+  return () => { unloaded(); void off.then((f) => f()); };
 }
 
 function ago(secs: number) {

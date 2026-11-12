@@ -39,6 +39,7 @@ function elapsed(since: number, now: number) {
 function useFeed() {
   const [feed, setFeed] = useState<PhonePayload>({ sessions: [], usage: [], threads: {} });
   const [link, setLink] = useState<Link>("connecting");
+  const again = useRef<() => void>(() => {});
   useEffect(() => {
     let source: EventSource | null = null;
     let retry: ReturnType<typeof setTimeout> | null = null;
@@ -68,12 +69,15 @@ function useFeed() {
       };
     };
     void connect();
-    const wake = () => { if (document.visibilityState === "visible") { if (retry) clearTimeout(retry); wait = 1000; void connect(); } };
+    const now = () => { if (retry) clearTimeout(retry); wait = 1000; setLink((l) => (l === "live" ? l : "connecting")); void connect(); };
+    again.current = now;
+    const wake = () => { if (document.visibilityState === "visible") now(); };
     document.addEventListener("visibilitychange", wake);
     window.addEventListener("online", wake);
     return () => { stopped = true; source?.close(); if (retry) clearTimeout(retry); document.removeEventListener("visibilitychange", wake); window.removeEventListener("online", wake); };
   }, []);
-  return { feed, link };
+  const retry = useCallback(() => again.current(), []);
+  return { feed, link, retry };
 }
 
 function useNow(every = 1000) {
@@ -83,7 +87,7 @@ function useNow(every = 1000) {
 }
 
 export function Remote() {
-  const { feed, link } = useFeed();
+  const { feed, link, retry } = useFeed();
   const [openId, setOpenId] = useState<string | null>(() => new URLSearchParams(location.hash.slice(1)).get("s"));
   const [leaving, setLeaving] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -108,6 +112,7 @@ export function Remote() {
         <div className="ph-empty-mark"><CircleAlert size={28} /></div>
         <h1>Not paired</h1>
         <p>On your Mac, open Desk ▸ Settings ▸ Phone, turn on the phone remote and scan the code with this phone.</p>
+        <button className="ph-again" onClick={retry}>Try again</button>
       </main>
     );
   }
@@ -116,7 +121,7 @@ export function Remote() {
   const session = feed.sessions.find((s) => s.id === shownId) ?? null;
   return (
     <div className={"ph-stack" + (openId ? " is-deep" : "")}>
-      <ListScreen feed={feed} link={link} onOpen={open} act={act} />
+      <ListScreen feed={feed} link={link} onOpen={open} act={act} retry={retry} />
       {shownId && (
         <ThreadScreen
           key={shownId}
@@ -125,6 +130,7 @@ export function Remote() {
           thread={feed.threads[shownId] ?? null}
           leaving={!openId}
           link={link}
+          retry={retry}
           onBack={back}
           act={act}
         />
@@ -136,9 +142,20 @@ export function Remote() {
 
 // The list
 
-function LinkPill({ link }: { link: Link }) {
+function LinkPill({ link, retry }: { link: Link; retry: () => void }) {
   if (link === "live") return <span className="ph-link is-live"><i />Live</span>;
-  return <span className={"ph-link is-" + link}><i />{link === "connecting" ? "Connecting" : "Mac offline"}</span>;
+  return <button className={"ph-link is-" + link} onClick={retry} aria-label="Reconnect to your Mac"><i />{link === "connecting" ? "Connecting" : "Mac offline"}</button>;
+}
+
+/** While the Mac can't be reached: why, and a way to try now instead of waiting. */
+function Offline({ link, retry }: { link: Link; retry: () => void }) {
+  if (link !== "offline") return null;
+  return (
+    <div className="ph-offline" role="status">
+      <div><strong>Can't reach your Mac</strong><span>Open Desk on your Mac with the phone remote on. This reconnects by itself.</span></div>
+      <button className="ph-again" onClick={retry}>Try again</button>
+    </div>
+  );
 }
 
 function StateMark({ s, now }: { s: PhoneSession; now: number }) {
@@ -190,7 +207,7 @@ function SessionRow({ s, now, onOpen, act }: { s: PhoneSession; now: number; onO
   );
 }
 
-function ListScreen({ feed, link, onOpen, act }: { feed: PhonePayload; link: Link; onOpen: (id: string) => void; act: (a: PhoneAction) => Promise<void> }) {
+function ListScreen({ feed, link, onOpen, act, retry }: { feed: PhonePayload; link: Link; onOpen: (id: string) => void; act: (a: PhoneAction) => Promise<void>; retry: () => void }) {
   const now = useNow(5000);
   const [query, setQuery] = useState("");
   const [scrolled, setScrolled] = useState(false);
@@ -212,7 +229,7 @@ function ListScreen({ feed, link, onOpen, act }: { feed: PhonePayload; link: Lin
     <section className="ph-screen ph-list" onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 28)}>
       <header className={"ph-bar" + (scrolled ? " is-scrolled" : "")}>
         <span className="ph-bar-title">Desk</span>
-        <LinkPill link={link} />
+        <LinkPill link={link} retry={retry} />
       </header>
       <div className="ph-hero">
         <h1>Desk</h1>
@@ -220,6 +237,7 @@ function ListScreen({ feed, link, onOpen, act }: { feed: PhonePayload; link: Lin
         {feed.usage.length > 0 && (
           <div className="ph-usage">{feed.usage.map((u) => <span key={u.account}><UsageRing used={u.used} color={u.color} size={16} />{u.name}<b>{Math.round(u.used)}%</b></span>)}</div>
         )}
+        <Offline link={link} retry={retry} />
         <label className="ph-search"><Search size={15} /><input type="search" placeholder="Search chats and tabs" value={query} onChange={(e) => setQuery(e.target.value)} enterKeyHint="search" /></label>
       </div>
       {needs.length > 0 && (
@@ -361,12 +379,13 @@ function Pinned({ s, act }: { s: PhoneSession; act: (a: PhoneAction) => Promise<
   );
 }
 
-function ThreadScreen({ id, session, thread, leaving, link, onBack, act }: {
+function ThreadScreen({ id, session, thread, leaving, link, retry, onBack, act }: {
   id: string;
   session: PhoneSession | null;
   thread: PhoneThread | null;
   leaving: boolean;
   link: Link;
+  retry: () => void;
   onBack: () => void;
   act: (a: PhoneAction) => Promise<void>;
 }) {
@@ -455,7 +474,7 @@ function ThreadScreen({ id, session, thread, leaving, link, onBack, act }: {
         </div>
         <span className="ph-bar-right">{s && <StateMark s={s} now={now} />}</span>
       </header>
-      {link !== "live" && <div className="ph-banner">{link === "offline" ? "Mac offline. Reconnecting…" : "Connecting…"}</div>}
+      {link !== "live" && <div className="ph-banner">{link === "offline" ? <>Mac offline. Reconnecting… <button className="ph-banner-btn" onClick={retry}>Try again</button></> : "Connecting…"}</div>}
       <div className="ph-scroll" ref={scroller} onScroll={onScroll}>
         {!s && <div className="ph-none">This was closed in Desk.</div>}
         {s && !thread && <div className="ph-loading"><LoaderCircle size={18} className="ph-spin" />Loading the conversation…</div>}
