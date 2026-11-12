@@ -23,7 +23,8 @@
     "test:crossreview": "node tests/crossreview.mjs",
     "test:config": "node tests/config.mjs",
     "test:agent-setup": "node tests/agent-setup.mjs",
-    "test:sidebar": "node tests/sidebar.mjs"
+    "test:sidebar": "node tests/sidebar.mjs",
+    "test:browser-ui": "node tests/browser-ui.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",
