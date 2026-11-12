@@ -94,6 +94,7 @@ export function PhoneSettings() {
           </div>
         )}
       </div>
+      {status && !status.page && <p className="settings-note phone-warn">This is a development build (npm run dev:app), which has no phone page to serve. Use npm run build:dev-app to try the phone remote.</p>}
       {(status?.devices.length ?? 0) > 0 && (
         <div className="settings-card">
           {status!.devices.map((d) => (

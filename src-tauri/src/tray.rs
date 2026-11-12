@@ -128,7 +128,20 @@ pub fn create<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     Ok(())
 }
 
+/// The last items the main window sent, so the menu can be rebuilt on its own
+/// (the phone remote turning on or off adds or removes its switch).
+static LAST: std::sync::Mutex<Vec<TrayItem>> = std::sync::Mutex::new(Vec::new());
+
+/// Rebuilds the menu with the items it already shows.
+pub fn refresh<R: Runtime>(app: &AppHandle<R>) {
+    let items = LAST.lock().map(|l| l.clone()).unwrap_or_default();
+    let _ = update(app, &items);
+}
+
 pub fn update<R: Runtime>(app: &AppHandle<R>, items: &[TrayItem]) -> tauri::Result<()> {
+    if let Ok(mut last) = LAST.lock() {
+        *last = items.to_vec();
+    }
     let Some(tray) = app.tray_by_id(TRAY_ID) else { return Ok(()) };
     tray.set_menu(Some(build(app, items)?))?;
     tray.set_icon(Some(icon(!items.is_empty())))?;

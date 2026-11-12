@@ -2817,3 +2817,4 @@ body.is-resizing-rows, body.is-resizing-rows * { cursor: row-resize !important; 
 .phone-log summary { font-size: 12px; cursor: pointer; color: var(--text); }
 .phone-log ol { margin: 10px 0 0; padding: 0; list-style: none; display: grid; gap: 4px; font: 11px var(--font-mono, monospace); color: var(--muted); }
 .phone-log time { color: var(--text-2); }
+.phone-warn { color: var(--ui-warn, #f0a54a); }

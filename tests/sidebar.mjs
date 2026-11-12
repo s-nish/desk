@@ -25,8 +25,9 @@ if (process.env.DESK_SCREENSHOT) await p.screenshot({ path: process.env.DESK_SCR
 await p.getByRole('radio', { name: 'Chat view' }).click().catch(async () => p.locator('.view-switch button').nth(1).click());
 await p.locator('.agent-sidebar').waitFor();
 await p.locator('.agent-row', { hasText: 'Codex' }).click();
-await p.waitForFunction(() => document.querySelector('.view-switch button[aria-checked="true"], .view-switch .is-on')?.textContent !== null);
-assert.equal(await p.locator('.workspace, .tabs-bar').count() > 0, true, 'back in the terminal view');
+await p.locator('.chat-main').waitFor({ state: 'detached' });
+await p.locator('.workspace').waitFor();
+assert.equal(await p.getByRole('radio', { name: 'Terminal view' }).getAttribute('aria-checked'), 'true', 'back in the terminal view');
 assert.deepEqual(errors, []);
 await b.close();
 console.log('PASS sidebar: one sidebar in both views, terminal agents as rows, rows open where they live');

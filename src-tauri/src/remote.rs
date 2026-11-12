@@ -141,6 +141,7 @@ pub fn stop<R: Runtime>(app: &AppHandle<R>) {
     }
     state.streams.lock().unwrap().clear();
     *state.pairing.lock().unwrap() = None;
+    crate::tray::refresh(app);
 }
 
 pub fn start<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
@@ -151,6 +152,7 @@ pub fn start<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     let server = Arc::new(tiny_http::Server::http(("127.0.0.1", PORT)).map_err(|e| format!("Couldn't listen on 127.0.0.1:{PORT}: {e}"))?);
     *state.stop.lock().unwrap() = Some(server.clone());
     state.running.store(true, Ordering::SeqCst);
+    crate::tray::refresh(app);
     let app = app.clone();
     std::thread::spawn(move || {
         for request in server.incoming_requests() {
@@ -247,14 +249,19 @@ fn handle<R: Runtime>(app: &AppHandle<R>, mut request: tiny_http::Request) {
         }
         log(&format!("paired\t{name}\t{login}"));
         let _ = app.emit_to("main", "remote-changed", ());
+        // The token rides in the start URL too: a Home Screen app has its own
+        // cookie jar, and "Add to Home Screen" keeps this address.
         let response = text(303, "Paired.")
-            .with_header(h("Location", "/"))
+            .with_header(h("Location", &format!("/?device={token}")))
             .with_header(h("Set-Cookie", &format!("{COOKIE}={token}; Path=/; Max-Age=31536000; HttpOnly; Secure; SameSite=Strict")));
         let _ = request.respond(response);
         return;
     }
 
-    let Some(index) = authorize(cookie(&request).as_deref(), login.as_deref(), &list) else {
+    // The page itself may carry the token in its address (see /pair); nothing else may.
+    let from_url = if path == "/" { query.split('&').find_map(|p| p.strip_prefix("device=")).filter(|t| t.len() == 64 && t.bytes().all(|b| b.is_ascii_hexdigit())).map(str::to_string) } else { None };
+    let token = cookie(&request).or_else(|| from_url.clone());
+    let Some(index) = authorize(token.as_deref(), login.as_deref(), &list) else {
         let _ = request.respond(text(401, "This phone isn't paired with Desk. Scan the code in Desk ▸ Settings ▸ Phone."));
         return;
     };
@@ -270,9 +277,7 @@ fn handle<R: Runtime>(app: &AppHandle<R>, mut request: tiny_http::Request) {
             let first = state.feed.lock().unwrap().to_string();
             let _ = tx.send(first);
             state.streams.lock().unwrap().push(tx);
-            let body = Sse { rx, buf: Vec::new(), pos: 0 };
-            let response = tiny_http::Response::new(200.into(), vec![h("Content-Type", "text/event-stream"), h("Cache-Control", "no-store"), h("X-Accel-Buffering", "no")], body, None, None);
-            let _ = request.respond(response);
+            stream_events(request, rx);
         }
         (tiny_http::Method::Post, "/action") => {
             let mut body = String::new();
@@ -302,10 +307,14 @@ fn handle<R: Runtime>(app: &AppHandle<R>, mut request: tiny_http::Request) {
                 let _ = request.respond(text(404, "Not found."));
                 return;
             }
+            let set_cookie = from_url.filter(|t| cookie(&request).as_deref() != Some(t.as_str())).map(|t| format!("{COOKIE}={t}; Path=/; Max-Age=31536000; HttpOnly; Secure; SameSite=Strict"));
             match asset(app, file) {
                 Some((bytes, mime)) => {
-                    let _ = request.respond(tiny_http::Response::from_data(bytes).with_header(h("Content-Type", &mime)).with_header(h("Cache-Control", "no-cache")).with_header(h("X-Content-Type-Options", "nosniff")).with_header(h("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'")));
+                    let mut response = tiny_http::Response::from_data(bytes);
+                    if let Some(c) = &set_cookie { response.add_header(h("Set-Cookie", c)); }
+                    let _ = request.respond(response.with_header(h("Content-Type", &mime)).with_header(h("Cache-Control", "no-cache")).with_header(h("X-Content-Type-Options", "nosniff")).with_header(h("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'")).with_header(h("Referrer-Policy", "no-referrer")));
                 }
+                None if file == "remote.html" => { let _ = request.respond(text(503, "This Desk is a development build without the phone page. Build it (npm run build:dev-app) to use the phone remote.")); }
                 None => { let _ = request.respond(text(404, "Not found.")); }
             }
         }
@@ -313,28 +322,24 @@ fn handle<R: Runtime>(app: &AppHandle<R>, mut request: tiny_http::Request) {
     }
 }
 
-/// An event stream: each feed is one `data:` event; a comment every 15 s keeps
-/// proxies from closing it. Ends when the stream list drops its sender.
-struct Sse {
-    rx: Receiver<String>,
-    buf: Vec<u8>,
-    pos: usize,
-}
-
-impl Read for Sse {
-    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
-        if self.pos >= self.buf.len() {
-            self.buf = match self.rx.recv_timeout(Duration::from_secs(15)) {
-                Ok(data) => format!("data: {data}\n\n").into_bytes(),
-                Err(RecvTimeoutError::Timeout) => b": ping\n\n".to_vec(),
-                Err(RecvTimeoutError::Disconnected) => return Ok(0),
-            };
-            self.pos = 0;
+/// An event stream: each feed is one `data:` event, flushed at once (tiny_http's
+/// own chunked writer would hold small events back), and a comment every 15 s
+/// so proxies keep it open. Ends when the phone goes away or Desk drops the sender.
+fn stream_events(request: tiny_http::Request, rx: Receiver<String>) {
+    let mut w = request.into_writer();
+    let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\nX-Accel-Buffering: no\r\nConnection: close\r\n\r\n";
+    if w.write_all(head.as_bytes()).and_then(|_| w.flush()).is_err() {
+        return;
+    }
+    loop {
+        let chunk = match rx.recv_timeout(Duration::from_secs(15)) {
+            Ok(data) => format!("data: {data}\n\n"),
+            Err(RecvTimeoutError::Timeout) => ": ping\n\n".to_string(),
+            Err(RecvTimeoutError::Disconnected) => return,
+        };
+        if w.write_all(chunk.as_bytes()).and_then(|_| w.flush()).is_err() {
+            return;
         }
-        let n = out.len().min(self.buf.len() - self.pos);
-        out[..n].copy_from_slice(&self.buf[self.pos..self.pos + n]);
-        self.pos += n;
-        Ok(n)
     }
 }
 
@@ -395,7 +400,8 @@ pub fn qr_svg(text: &str) -> Result<String, String> {
 
 pub fn status_json<R: Runtime>(app: &AppHandle<R>) -> Value {
     let devices: Vec<Value> = devices().into_iter().map(|d| json!({ "hash": d.hash, "name": d.name, "login": d.login, "added": d.added, "lastSeen": d.last_seen })).collect();
-    json!({ "running": running(app), "port": PORT, "devices": devices })
+    // `tauri dev` serves the pages from Vite and embeds none, so there's no phone page to serve.
+    json!({ "running": running(app), "port": PORT, "devices": devices, "page": asset(app, "remote.html").is_some() })
 }
 
 #[cfg(test)]
@@ -435,6 +441,29 @@ mod tests {
         assert!(allowed_action(&json!({"type": "reply", "id": "c:1", "text": "  "})).is_none());
         assert!(allowed_action(&json!({"type": "answer", "id": "c:1", "requestId": "r"})).is_none(), "allow is required");
         assert_eq!(allowed_action(&json!({"type": "stop", "id": "t:2"})), Some(json!({"type": "stop", "id": "t:2"})));
+    }
+
+    #[test]
+    fn events_arrive_at_once() {
+        use std::io::{BufRead, BufReader};
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let port = server.server_addr().to_ip().unwrap().port();
+        let (tx, rx) = channel::<String>();
+        std::thread::spawn(move || stream_events(server.recv().unwrap(), rx));
+        let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream.write_all(b"GET /events HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
+        tx.send("{\"items\":[]}".into()).unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let mut reader = BufReader::new(stream);
+        let (mut seen, mut line) = (String::new(), String::new());
+        while reader.read_line(&mut line).unwrap_or(0) > 0 {
+            seen.push_str(&line);
+            if line.starts_with("data: ") { break; }
+            line.clear();
+        }
+        assert!(seen.starts_with("HTTP/1.1 200 OK"), "{seen:?}");
+        assert!(seen.contains("text/event-stream"));
+        assert!(seen.contains("data: {\"items\":[]}"), "event not delivered promptly: {seen:?}");
     }
 
     #[test]
