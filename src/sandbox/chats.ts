@@ -5,6 +5,7 @@ import { addWorktreeProject, branchSlug, rootProject } from "../actions";
 import { reattachChat, restoreChat, updateItems, useChats, type Chat } from "../chat";
 import { ipc } from "../ipc";
 import { useDesk } from "../store";
+import { windowKey } from "../windows";
 import { TOKEN_VAR, ensureRunning, provider, runStartScripts, startScripts, tokenKey } from "./index";
 import { readyBridge, type Bridge } from "./bridge";
 import { pullOut, syncIn, type RemoteWork } from "./sync";
@@ -135,7 +136,8 @@ export async function pullChanges(chatId: string) {
 // Sandbox chats outlive Desk: the agent keeps going there, so Desk remembers the
 // chat (its messages and the last line it read) and follows it again on start.
 
-const SAVED_KEY = "desk.sandboxChats";
+/** This window's own (see windows.ts). */
+const SAVED_KEY = windowKey("desk.sandboxChats");
 const KEEP_ITEMS = 400;
 
 interface SavedChat { chat: Chat; line: number }

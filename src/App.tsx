@@ -1,17 +1,20 @@
 import { useEffect } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { emitTo, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { X } from "lucide-react";
 import { useDesk, focusedTabId, waitingTabs } from "./store";
 import { ipc, errorText } from "./ipc";
-import { flushWorkspace, persistWorkspace } from "./persistence";
+import { RECOVERY_KEY, flushWorkspace, persistWorkspace } from "./persistence";
+import { WINDOW, WINDOW_KEYS, collectFeeds, isMain, otherFeeds, syncShared, useWindowFeeds, windowKey } from "./windows";
+import { reportFeed } from "./windowFeed";
 import {
   activeProject,
   activeTab,
   addProjectPaths,
   addProjectsFromDialog,
   closeTab,
+  disposeTab,
   handleFsChange,
   openFile,
   openTerminal,
@@ -43,7 +46,7 @@ import { watchSandboxes } from "./sandbox";
 import { AgentSidebar } from "./components/AgentSidebar";
 import { watchRemote } from "./components/Phone";
 import { watchSandboxChats } from "./sandbox/chats";
-import { watchPorts } from "./sandbox/ports";
+import { unforward, usePorts, watchPorts } from "./sandbox/ports";
 import { attach, closeChat, closeStripTab, markUnread, newChat, showStripTab, useChats } from "./chat";
 import { Workspace } from "./components/Workspace";
 import { BrowserPane } from "./components/Browser";
@@ -54,14 +57,37 @@ import { QuickOpen } from "./components/QuickOpen";
 import { CommandPalette } from "./components/CommandPalette";
 import { MenuLayer } from "./components/Menu";
 
-async function boot() {
-  const [diskSaved, detected] = await Promise.all([ipc.stateLoad().catch(() => null), ipc.accountsDetect().catch(() => [])]);
-  let saved = diskSaved;
+type Saved = Record<string, unknown> & { savedAt?: number; preferences?: Record<string, unknown>; uiMode?: string };
+
+/** The disk copy, or the browser-storage copy when that one is newer (a save that didn't reach the disk). */
+function newest(disk: unknown, key: string): Saved | null {
+  const fromDisk = disk && typeof disk === "object" ? (disk as Saved) : null;
   try {
-    const local = JSON.parse(localStorage.getItem("desk-recovery-v2") ?? "null");
-    if (local && local.savedAt > ((diskSaved as { savedAt?: number } | null)?.savedAt ?? 0)) saved = local;
+    const local = JSON.parse(localStorage.getItem(key) ?? "null") as Saved | null;
+    if (local && (local.savedAt ?? 0) > (fromDisk?.savedAt ?? 0)) return local;
   } catch { /* Native state is the fallback if web storage is unavailable. */ }
-  useDesk.getState().init(saved && typeof saved === "object" ? (saved as never) : null, detected);
+  return fromDisk;
+}
+
+/**
+ * What this window starts with. The main window: everything it saved. An extra
+ * window: its own projects, tabs, layout and view, and what every window shares
+ * from the main window's save (a new window starts with no projects).
+ */
+async function loadSaved(): Promise<Saved | null> {
+  if (isMain) return newest(await ipc.stateLoad().catch(() => null), RECOVERY_KEY);
+  const [own, main] = await Promise.all([ipc.stateLoad().catch(() => null), ipc.stateLoadMain().catch(() => null)]);
+  const mine = newest(own, RECOVERY_KEY);
+  const shared = newest(main, "desk-recovery-v2") ?? {};
+  const out: Saved = { ...shared, projects: [], tabs: [], activeProjectId: null, activeTabId: null, secondaryTabId: null, focusedPane: "primary" };
+  for (const key of WINDOW_KEYS) if (mine && key in mine) out[key] = mine[key];
+  out.preferences = { ...(shared.preferences ?? {}), ...(mine?.uiMode ? { uiMode: mine.uiMode } : {}) };
+  return out;
+}
+
+async function boot() {
+  const [saved, detected] = await Promise.all([loadSaved(), ipc.accountsDetect().catch(() => [])]);
+  useDesk.getState().init(saved as never, detected);
   await restoreWorkspace();
   await refreshIdentities();
   void syncConnectionPasswords();
@@ -141,7 +167,9 @@ function onKeyDown(e: KeyboardEvent) {
   else if (e.key === "d" && !e.shiftKey && !e.altKey && project && !inEditor(e)) openTerminal(project.id, "claude");
   else if (e.key === "e" && !e.shiftKey && !e.altKey && project) openTerminal(project.id, "codex");
   else if (e.key === "j" && !e.shiftKey && !e.altKey && project) openTerminal(project.id, "shell");
-  else if (e.key.toLowerCase() === "n" && e.shiftKey) s.setModal({ kind: "ssh", id: null });
+  // ⇧⌘N: a new window (the menu has it too). ⌥⌘N: a new SSH connection; ⌥ changes the typed character.
+  else if (e.code === "KeyN" && e.shiftKey && !e.altKey) void ipc.windowNew().catch((err) => s.toast(errorText(err), "error"));
+  else if (e.code === "KeyN" && e.altKey && !e.shiftKey) s.setModal({ kind: "ssh", id: null });
   else if (e.key === "w" && !e.shiftKey) tab && closeTab(tab.id);
   else if (e.key === "s" && !e.shiftKey) tab && void saveTab(tab.id);
   else if (e.key === "p" && !e.shiftKey) project && s.setQuickOpen(!s.quickOpen);
@@ -167,14 +195,54 @@ function onKeyDown(e: KeyboardEvent) {
 /** Keeps the Dock badge in step with waiting agents, and bounces once for a new one in the background. */
 function watchAttention() {
   let last = 0;
-  return useDesk.subscribe((s) => {
-    const count = waitingTabs(s).length;
+  const update = () => {
+    const s = useDesk.getState();
+    // Every window's: the others send theirs (see windows.ts).
+    const count = waitingTabs(s).length + otherFeeds().reduce((n, f) => n + f.waiting, 0);
     if (count === last) return;
     const grew = count > last;
     last = count;
     const { alertBadge, alertBounce } = s.preferences;
     void ipc.attention(alertBadge ? count : 0, grew && alertBounce && !document.hasFocus()).catch(() => {});
-  });
+  };
+  const offDesk = useDesk.subscribe(update);
+  const offWindows = useWindowFeeds.subscribe(update);
+  return () => { offDesk(); offWindows(); };
+}
+
+/** Before quitting: the other windows save too (they answer, or Desk stops waiting after a moment). */
+async function flushOtherWindows() {
+  const labels = await ipc.windowLabels().catch(() => [] as string[]);
+  if (!labels.length) return;
+  const waiting = new Set(labels);
+  let done: () => void = () => {};
+  const all = new Promise<void>((resolve) => { done = resolve; });
+  const off = await listen<string>("window-flushed", ({ payload }) => { waiting.delete(payload); if (!waiting.size) done(); });
+  for (const label of labels) void emitTo(label, "window-flush", null).catch(() => {});
+  await Promise.race([all, new Promise((r) => setTimeout(r, 1_500))]);
+  off();
+}
+
+/** Closes an extra window for good, asking first if agents are running or files are unsaved. */
+function closeThisWindow() {
+  const s = useDesk.getState();
+  const chats = Object.values(useChats.getState().chats);
+  const working = chats.filter((c) => c.status !== "idle").length
+    + s.tabs.filter((t) => t.type === "terminal" && t.tool !== "shell" && t.status === "running").length;
+  const unsaved = s.tabs.filter((t) => t.type === "file" && t.dirty).length;
+  const close = () => {
+    for (const chat of chats) closeChat(chat.id);
+    for (const tab of s.tabs) disposeTab(tab.id);
+    for (const f of Object.values(usePorts.getState().forwards)) unforward(f);
+    try {
+      localStorage.removeItem(RECOVERY_KEY);
+      localStorage.removeItem(windowKey("desk.sandboxChats"));
+    } catch { /* Only copies. */ }
+    void ipc.windowForget().catch((e) => s.toast(errorText(e), "error"));
+  };
+  if (!working && !unsaved) { close(); return; }
+  const what = [working ? `${working} agent${working === 1 ? " is" : "s are"} still working` : "", unsaved ? `${unsaved} file${unsaved === 1 ? " has" : "s have"} unsaved changes` : ""].filter(Boolean).join(", and ");
+  s.setModal({ kind: "confirm", title: "Close this window?", body: `In this window, ${what}. Closing it stops them and forgets its projects and tabs.`, confirm: "Close window", onConfirm: close });
 }
 
 /** Coming back to Desk clears the alert on whatever tabs are on screen. */
@@ -246,25 +314,26 @@ export function App() {
     const quit = async () => {
       if (quitting) return;
       quitting = true;
-      try { await flushWorkspace(); await ipc.exit(); }
+      try { await flushWorkspace(); await flushOtherWindows(); await ipc.exit(); }
       catch (e) { useDesk.getState().toast(`Couldn't save workspace before quitting: ${errorText(e)}`, "error"); quitting = false; }
     };
     window.addEventListener("keydown", onKeyDown, true);
-    const unwatch = watchAttention();
-    const untray = watchTray();
-    const unnotch = watchNotch();
-    const unphone = watchPhone();
-    const unsandboxes = watchSandboxes();
+    const unshared = syncShared(useDesk);
     const unsandboxChats = watchSandboxChats();
     const unports = watchPorts();
-    const unremote = watchRemote();
+    // One of each for all of Desk, in the main window; the other windows report to it.
+    const singles = isMain
+      ? [collectFeeds(), watchAttention(), watchTray(), watchNotch(), watchPhone(), watchSandboxes(), watchRemote()]
+      : [reportFeed()];
     // Limits move slowly and are only re-read while Desk is on screen.
     const limits = setInterval(() => { if (!document.hidden) void refreshLimits(); }, 60_000);
     // Live numbers from Claude and Codex themselves, so they move even when nothing runs.
     const live = setInterval(() => { if (!document.hidden) void refreshLiveLimits(); }, LIVE_LIMITS_MS);
     const unlisten = [
-      listen("desk-quit", () => void quit()),
-      getCurrentWindow().onCloseRequested((e) => { e.preventDefault(); void quit(); }),
+      // ⌘Q (from any window), or closing the main window, quits Desk; the main window does it.
+      listen("desk-quit", () => { if (isMain) void quit(); else void flushWorkspace().catch(() => {}); }),
+      listen("window-flush", () => { void flushWorkspace().catch(() => {}).then(() => emitTo("main", "window-flushed", WINDOW)); }),
+      getCurrentWindow().onCloseRequested((e) => { e.preventDefault(); if (isMain) void quit(); else closeThisWindow(); }),
       listen<{ root: string; paths: string[] }>("fs-change", ({ payload }) => handleFsChange(payload.root, payload.paths)),
       getCurrentWindow().onFocusChanged(({ payload: focused }) => {
         if (!focused) return;
@@ -290,12 +359,10 @@ export function App() {
     window.addEventListener("contextmenu", noContextMenu);
     return () => {
       unsubscribe();
-      unwatch();
-      untray();
-      unnotch();
-      unphone();
-      unsandboxes(); unsandboxChats();
-      unports(); unremote();
+      unshared();
+      singles.forEach((f) => f());
+      unsandboxChats();
+      unports();
       clearInterval(limits);
       clearInterval(live);
       window.removeEventListener("keydown", onKeyDown, true);

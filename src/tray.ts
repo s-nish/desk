@@ -7,6 +7,8 @@ import { ipc } from "./ipc";
 import { TOOL_LABEL, useDesk } from "./store";
 import { useChats } from "./chat";
 import { buildFeed, openFeedItem } from "./feed";
+import { sortFeed } from "./feedCore";
+import { otherFeeds, useWindowFeeds } from "./windows";
 
 export interface TrayItem { id: string; label: string; detail: string; waiting: boolean }
 
@@ -19,9 +21,9 @@ function since(ms: number | null | undefined) {
   return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
 }
 
-/** The menu shows what is working or waiting; finished chats stay off it. */
+/** The menu shows what is working or waiting, in every Desk window; finished chats stay off it. */
 export function activeAgents(): TrayItem[] {
-  return buildFeed()
+  return sortFeed([...buildFeed(), ...otherFeeds().flatMap((f) => f.items)])
     .filter((item) => item.state !== "done")
     .map((item) => {
       const waiting = item.state === "waiting";
@@ -49,6 +51,7 @@ export function watchTray() {
   const schedule = () => { if (!timer) timer = setTimeout(push, 250); };
   const offChats = useChats.subscribe(schedule);
   const offDesk = useDesk.subscribe(schedule);
+  const offWindows = useWindowFeeds.subscribe(schedule);
   // Timers in the menu move once a minute.
   const tick = setInterval(push, 30_000);
   const unlisten = listen<string>("tray-open", ({ payload }) => openTrayItem(payload));
@@ -56,6 +59,7 @@ export function watchTray() {
   return () => {
     offChats();
     offDesk();
+    offWindows();
     clearInterval(tick);
     if (timer) clearTimeout(timer);
     void unlisten.then((f) => f()).catch(() => {});

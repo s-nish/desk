@@ -5,6 +5,8 @@ import { ipc } from "./ipc";
 import { focusedTabId, limitKey, useDesk } from "./store";
 import { useChats } from "./chat";
 import { applyFeedAction, buildFeed } from "./feed";
+import { sortFeed } from "./feedCore";
+import { otherFeeds, useWindowFeeds } from "./windows";
 import { sampleFeed, type FeedAction, type NotchPayload, type NotchUsage } from "./notch/protocol";
 
 const PREVIEW_MS = 60_000;
@@ -18,8 +20,8 @@ export function previewNotch() {
   setTimeout(() => schedule?.(), PREVIEW_MS + 50);
 }
 
-/** The feed row Desk shows right now, if Desk is in front. */
-function onScreen(): string | null {
+/** The feed row this window shows right now, if it's in front. */
+export function onScreen(): string | null {
   if (typeof document === "undefined" || !document.hasFocus()) return null;
   const desk = useDesk.getState();
   if (desk.preferences.uiMode === "chat") {
@@ -34,7 +36,9 @@ export function notchPayload(now = Date.now()): NotchPayload {
   const desk = useDesk.getState();
   const prefs = desk.preferences;
   const preview = now < previewUntil;
-  const items = preview ? sampleFeed(now) : buildFeed();
+  // This window's rows, and those of Desk's other windows (see windows.ts).
+  const others = otherFeeds();
+  const items = preview ? sampleFeed(now) : sortFeed([...buildFeed(), ...others.flatMap((f) => f.items)]);
   const usage: NotchUsage[] = [];
   for (const id of new Set(items.map((i) => i.account).filter((a): a is string => !!a))) {
     const account = desk.accounts.find((a) => a.id === id);
@@ -50,7 +54,7 @@ export function notchPayload(now = Date.now()): NotchPayload {
     rings: prefs.notchRings !== false,
     otherScreens: prefs.notchOnOtherScreens !== false || preview,
     reduceMotion: !!prefs.reduceMotion,
-    onScreen: onScreen(),
+    onScreen: onScreen() ?? others.find((f) => f.onScreen)?.onScreen ?? null,
     items,
     usage,
     preview,
@@ -73,6 +77,7 @@ export function watchNotch() {
   schedule = () => { if (!timer) timer = setTimeout(push, 80); };
   const offChats = useChats.subscribe(() => schedule?.());
   const offDesk = useDesk.subscribe(() => schedule?.());
+  const offWindows = useWindowFeeds.subscribe(() => schedule?.());
   const onFocus = () => schedule?.();
   window.addEventListener("focus", onFocus);
   window.addEventListener("blur", onFocus);
@@ -86,6 +91,7 @@ export function watchNotch() {
   return () => {
     offChats();
     offDesk();
+    offWindows();
     window.removeEventListener("focus", onFocus);
     window.removeEventListener("blur", onFocus);
     clearInterval(tick);

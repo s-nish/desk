@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { ArrowLeft, ArrowRight, Clock, ExternalLink, Globe, House, LoaderCircle, Lock, MousePointerClick, RotateCw, X } from "lucide-react";
+import { WINDOW } from "../windows";
 import { useDesk } from "../store";
 import { errorText, ipc } from "../ipc";
 import { activeProject } from "../actions";
@@ -119,6 +120,8 @@ export function BrowserPane() {
   useEffect(() => () => { void ipc.browserClose().catch(() => {}); }, []);
 
   useEffect(() => {
+    // Each window has its own browser: only its events (a listener for "any" target hears every window's).
+    const mine = { target: { kind: "WebviewWindow" as const, label: WINDOW } };
     const off = [
       listen<{ url: string; loading: boolean }>("browser-state", ({ payload }) => {
         setLoading(payload.loading);
@@ -128,15 +131,15 @@ export function BrowserPane() {
           remember(payload.url);
           if (useDesk.getState().layout.browserUrl !== payload.url) useDesk.getState().setLayout({ browserUrl: payload.url });
         }
-      }),
-      listen<string>("browser-title", ({ payload }) => setTitle(payload)),
+      }, mine),
+      listen<string>("browser-title", ({ payload }) => setTitle(payload), mine),
       listen<Picked | null>("browser-pick", ({ payload }) => {
         if (!pickingRef.current) return;
         setPick(false);
         const project = activeProject();
         if (!payload || !project) return;
         handToAgent(project.path, pickedMessage(payload));
-      }),
+      }, mine),
     ];
     return () => { off.forEach((p) => void p.then((f) => f())); };
   }, []);

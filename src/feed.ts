@@ -2,6 +2,7 @@
 // open, mark seen. The tray menu, the notch and the phone page all go through here.
 
 import { TOOL_LABEL, chatView, useDesk } from "./store";
+import { ipc } from "./ipc";
 import { answer, canAllowOnce, enqueue, markUnread, send, showChat, showStripTab, stop, useChats } from "./chat";
 import { cleanTitle } from "./components/Workspace";
 import { provider } from "./sandbox/providers";
@@ -28,14 +29,16 @@ export function buildFeed(): FeedItem[] {
 }
 
 /** Shows what a feed row points at: a chat, or a terminal tab in whichever view is on. */
+/** Shows a chat or tab, if it's in this window, and brings the window forward. */
 export function openFeedItem(id: string) {
   const desk = useDesk.getState();
   if (id.startsWith("c:")) {
-    if (useChats.getState().chats[id.slice(2)]) showChat(id.slice(2));
+    if (useChats.getState().chats[id.slice(2)]) { showChat(id.slice(2)); void ipc.windowFocus().catch(() => {}); }
     return;
   }
   const tab = desk.tabs.find((t) => t.id === id.slice(2));
   if (!tab) return;
+  void ipc.windowFocus().catch(() => {});
   if (desk.preferences.uiMode === "chat") {
     chatView.showTerminal?.(tab.id);
     showStripTab(`t:${tab.id}`);

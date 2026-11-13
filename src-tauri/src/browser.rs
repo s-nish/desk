@@ -7,7 +7,10 @@ use serde_json::{json, Value};
 use tauri::webview::{PageLoadEvent, WebviewBuilder};
 use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Rect, Url, WebviewUrl};
 
-const LABEL: &str = "browser";
+/// One browser per Desk window, named after it ("browser" for the main window).
+fn label(window: &str) -> String {
+    if window == crate::windows::MAIN { "browser".into() } else { format!("browser-{window}") }
+}
 
 /// Injected into every page: highlights the element under the pointer while
 /// picking, and on click sends a description of it.
@@ -64,20 +67,24 @@ fn parse(url: &str) -> Result<Url, String> {
     Ok(parsed)
 }
 
-fn state(app: &AppHandle, url: &Url, loading: bool) {
-    let _ = app.emit_to("main", "browser-state", json!({ "url": url.as_str(), "loading": loading }));
+fn state(app: &AppHandle, window: &str, url: &Url, loading: bool) {
+    let _ = app.emit_to(window, "browser-state", json!({ "url": url.as_str(), "loading": loading }));
 }
 
 /// Opens (or navigates) the browser over the given rectangle, in CSS pixels.
-pub fn open(app: &AppHandle, url: &str, x: f64, y: f64, width: f64, height: f64) -> Result<(), String> {
+pub fn open(app: &AppHandle, window: &str, url: &str, x: f64, y: f64, width: f64, height: f64) -> Result<(), String> {
     let url = parse(url)?;
-    if let Some(view) = app.get_webview(LABEL) {
-        view.navigate(url).map_err(|e| e.to_string())?;
-        return bounds(app, x, y, width, height, true);
+    if !crate::windows::is_desk(window) {
+        return Err("Not one of Desk's windows.".into());
     }
-    let window = app.get_window("main").ok_or("Desk's window isn't open.")?;
+    if let Some(view) = app.get_webview(&label(window)) {
+        view.navigate(url).map_err(|e| e.to_string())?;
+        return bounds(app, window, x, y, width, height, true);
+    }
+    let host = app.get_window(window).ok_or("Desk's window isn't open.")?;
     let (nav, load, title) = (app.clone(), app.clone(), app.clone());
-    let builder = WebviewBuilder::new(LABEL, WebviewUrl::External(url))
+    let (w1, w2, w3) = (window.to_string(), window.to_string(), window.to_string());
+    let builder = WebviewBuilder::new(label(window), WebviewUrl::External(url))
         .initialization_script(PICKER)
         .on_navigation(move |url| {
             if url.scheme() != "desk-pick" {
@@ -88,29 +95,29 @@ pub fn open(app: &AppHandle, url: &str, x: f64, y: f64, width: f64, height: f64)
                 .find(|(k, _)| k == "d")
                 .and_then(|(_, v)| serde_json::from_str(&v).ok())
                 .unwrap_or(Value::Null);
-            let _ = nav.emit_to("main", "browser-pick", picked);
+            let _ = nav.emit_to(w1.as_str(), "browser-pick", picked);
             false
         })
-        .on_page_load(move |_, payload| state(&load, payload.url(), payload.event() == PageLoadEvent::Started))
+        .on_page_load(move |_, payload| state(&load, &w2, payload.url(), payload.event() == PageLoadEvent::Started))
         .on_document_title_changed(move |_, t| {
-            let _ = title.emit_to("main", "browser-title", t);
+            let _ = title.emit_to(w3.as_str(), "browser-title", t);
         });
-    window
+    host
         .add_child(builder, LogicalPosition::new(x, y), LogicalSize::new(width.max(1.0), height.max(1.0)))
         .map_err(|e| e.to_string())?;
     Ok(())
 }
 
-pub fn bounds(app: &AppHandle, x: f64, y: f64, width: f64, height: f64, visible: bool) -> Result<(), String> {
-    let Some(view) = app.get_webview(LABEL) else { return Ok(()) };
+pub fn bounds(app: &AppHandle, window: &str, x: f64, y: f64, width: f64, height: f64, visible: bool) -> Result<(), String> {
+    let Some(view) = app.get_webview(&label(window)) else { return Ok(()) };
     view.set_bounds(Rect { position: LogicalPosition::new(x, y).into(), size: LogicalSize::new(width.max(1.0), height.max(1.0)).into() })
         .map_err(|e| e.to_string())?;
     if visible && width > 1.0 && height > 1.0 { view.show() } else { view.hide() }.map_err(|e| e.to_string())
 }
 
 /// Back, forward, reload, or design mode on and off.
-pub fn command(app: &AppHandle, action: &str) -> Result<(), String> {
-    let Some(view) = app.get_webview(LABEL) else { return Ok(()) };
+pub fn command(app: &AppHandle, window: &str, action: &str) -> Result<(), String> {
+    let Some(view) = app.get_webview(&label(window)) else { return Ok(()) };
     let js = match action {
         "back" => "history.back()",
         "forward" => "history.forward()",
@@ -123,8 +130,8 @@ pub fn command(app: &AppHandle, action: &str) -> Result<(), String> {
 }
 
 /// Destroys the page and its web process.
-pub fn close(app: &AppHandle) -> Result<(), String> {
-    match app.get_webview(LABEL) {
+pub fn close(app: &AppHandle, window: &str) -> Result<(), String> {
+    match app.get_webview(&label(window)) {
         Some(view) => view.close().map_err(|e| e.to_string()),
         None => Ok(()),
     }

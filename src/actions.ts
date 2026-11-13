@@ -665,7 +665,7 @@ export async function saveTab(tabId: string, overwrite = false) {
   }
 }
 
-function disposeTab(tabId: string) {
+export function disposeTab(tabId: string) {
   disposeTerminal(tabId);
   disposeEditor(tabId);
   desk().removeTab(tabId);

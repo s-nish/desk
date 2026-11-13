@@ -130,16 +130,10 @@ pub fn snapshot<R: Runtime>(app: &AppHandle<R>) -> Snapshot {
     Snapshot { payload, geometry }
 }
 
-/// A click in the notch, applied by the main window. "Open" brings Desk forward first.
+/// A click in the notch, applied by whichever Desk window has that chat or tab
+/// (which comes forward for "open").
 pub fn action<R: Runtime>(app: &AppHandle<R>, action: Value) {
-    if action.get("type").and_then(Value::as_str) == Some("open") {
-        if let Some(main) = app.get_webview_window("main") {
-            let _ = main.unminimize();
-            let _ = main.show();
-            let _ = main.set_focus();
-        }
-    }
-    let _ = app.emit_to("main", "notch-action", action);
+    crate::windows::emit_to_desk(app, "notch-action", action);
 }
 
 /// Sizes the window (points), centred under the notch. Zero hides it.

@@ -304,7 +304,8 @@ fn handle<R: Runtime>(app: &AppHandle<R>, mut request: tiny_http::Request) {
             if kind != "watch" {
                 log(&format!("{kind}\t{}\t{device}\t{}\t{detail}", action["id"].as_str().unwrap_or(""), login.as_deref().unwrap_or("")));
             }
-            let _ = app.emit_to("main", "remote-action", action);
+            // Whichever window has that chat or tab applies it.
+            crate::windows::emit_to_desk(app, "remote-action", action);
             let _ = request.respond(text(204, ""));
         }
         (tiny_http::Method::Get, _) => {

@@ -118,9 +118,9 @@ pub fn create<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
             // The usual quit: Desk saves the workspace first, as with ⌘Q.
             "quit" => app.exit(0),
             id => {
+                // Whichever window has it shows it and comes forward.
                 if let Some(target) = id.strip_prefix("go:") {
-                    show(app);
-                    let _ = app.emit("tray-open", target.to_string());
+                    crate::windows::emit_to_desk(app, "tray-open", target.to_string());
                 }
             }
         })
