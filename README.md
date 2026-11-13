@@ -43,7 +43,7 @@ Projects, terminals, files, git and chat in one window, and the right account fo
   </tr>
 </table>
 
-Desk runs the command-line tools you already have installed and signed in. It never stores or sends your tokens.
+Desk runs the command-line tools you already have installed and signed in. It never stores or sends your tokens, unless you paste one into Settings ▸ Sandboxes so an agent can sign in inside a sandbox; that token is kept in a file only you can read and goes only to that sandbox.
 
 ## Highlights
 

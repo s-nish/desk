@@ -11,7 +11,21 @@
     "test:appearance": "node tests/appearance.mjs",
     "test:backend": "cargo test --manifest-path src-tauri/Cargo.toml",
     "test:home": "node tests/home.mjs",
-    "test:acp": "node tests/acp.mjs"
+    "test:acp": "node tests/acp.mjs",
+    "test:feed": "node tests/feed.mjs",
+    "dev:app": "DESK_VARIANT=dev tauri dev --config src-tauri/tauri.dev-app.conf.json",
+    "build:dev-app": "DESK_VARIANT=dev tauri build --config src-tauri/tauri.dev-app.conf.json",
+    "test:notch": "node tests/notch.mjs",
+    "test:runner": "node tests/runner.mjs",
+    "test:transport": "node tests/transport.mjs",
+    "test:sync": "node tests/sync.mjs",
+    "test:sandbox-ui": "node tests/sandbox-ui.mjs",
+    "test:crossreview": "node tests/crossreview.mjs",
+    "test:config": "node tests/config.mjs",
+    "test:agent-setup": "node tests/agent-setup.mjs",
+    "test:sidebar": "node tests/sidebar.mjs",
+    "test:browser-ui": "node tests/browser-ui.mjs",
+    "test:remote": "node tests/remote.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",

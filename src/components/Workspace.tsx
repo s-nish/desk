@@ -9,6 +9,8 @@ import { FileViewer, OpenDefaultButton, TableView } from "./FileViewer";
 import { isBinaryPreview, onDiskChange, previewKind } from "../preview";
 import { Home } from "./Home";
 import { openMenu } from "./Menu";
+import { SandboxTabBar, SandboxTabButton, SandboxTerminalProgress, sandboxTabItems, useSandboxTerminalPicker } from "./Sandboxes";
+import { SandboxLogo } from "./SandboxLogo";
 import type { Account, Agent, FileTab, MenuItem, Project, Tab, TerminalTab } from "../types";
 
 export function Workspace() {
@@ -20,6 +22,7 @@ export function Workspace() {
     <main className="workspace">
       {project && <TabBar project={project} />}
       <div className="stage">
+        {project && <SandboxTerminalProgress projectId={project.id} />}
         <Panes />
         {(!hasProjects || !showing) && <Home mode="terminal" />}
       </div>
@@ -69,6 +72,7 @@ function TabBar({ project }: { project: Project }) {
   const multi = new Set(tabs.map((t) => t.projectId)).size > 1;
   const scroller = useRef<HTMLDivElement>(null);
   const reorder = useTabReorder(scroller);
+  const picker = useSandboxTerminalPicker();
 
   useEffect(() => {
     scroller.current?.querySelector(".tab.is-active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -96,6 +100,7 @@ function TabBar({ project }: { project: Project }) {
       </div>
       <div className="tabbar-actions">
         <button className="icon-btn" aria-label="Toggle split panes" title="Split workspace (⌘\\)" onClick={splitWorkspace}><Columns2 size={15} /></button>
+        <SandboxTabButton projectId={project.id} picker={picker} />
         <button
           className="new-tab"
           aria-label={`New Claude Code tab in ${project.name}`}
@@ -105,10 +110,11 @@ function TabBar({ project }: { project: Project }) {
           <Plus size={14} />
           <span>{project.name}</span>
         </button>
-        <button className="icon-btn" aria-label="More tab types" title="New tab with another tool or account" onClick={(e) => openMenu(e.currentTarget, newTabMenu(project))}>
+        <button className="icon-btn" aria-label="More tab types" title="New tab with another tool or account" onClick={(e) => { const at = e.currentTarget; openMenu(at, [...newTabMenu(project), { separator: true }, ...sandboxTabItems(at, project.id, picker)]); }}>
           <ChevronDown size={14} />
         </button>
       </div>
+      {picker.element}
     </div>
   );
 }
@@ -119,6 +125,7 @@ function TabButton({ tab, project, active, showProject, dragging, dropBefore, on
 }) {
   const accounts = useDesk((s) => s.accounts);
   const connection = useDesk((s) => (tab.type === "terminal" && tab.sshId ? s.connections.find((c) => c.id === tab.sshId) : undefined));
+  const sandbox = useDesk((s) => { const id = tab.type === "terminal" ? tab.sandboxId ?? tab.codeSandbox : undefined; return id ? s.sandboxes.find((x) => x.id === id) : undefined; });
   const select = () => useDesk.getState().selectTab(tab.id);
   let color = "transparent";
   let label: string;
@@ -174,9 +181,9 @@ function TabButton({ tab, project, active, showProject, dragging, dropBefore, on
           else if (e.key === "ArrowRight" && at < tabs.length - 1) moveTab(tab.id, tabs[at + 2]?.id ?? null);
         } else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(); }
       }}
-      title={(tab.type === "file" ? tab.path : tab.sshId ? `${connection?.command ?? "Deleted connection"}\nOpened in ${project.name}` : `${TOOL_LABEL[tab.tool]} in ${project.name}${sub ? `, as ${sub}` : ""}\n${tab.cwd}`) + (waiting ? `\n${(tab as TerminalTab).attention}` : busy ? "\nWorking…" : "") + "\nDrag to reorder, or onto the workspace to split"}
+      title={(tab.type === "file" ? tab.path : sandbox ? `${TOOL_LABEL[tab.tool]} in ${sandbox.name} (${tab.remote?.branch ?? ""})` : tab.sshId ? `${connection?.command ?? "Deleted connection"}\nOpened in ${project.name}` : `${TOOL_LABEL[tab.tool]} in ${project.name}${sub ? `, as ${sub}` : ""}\n${tab.cwd}`) + (waiting ? `\n${(tab as TerminalTab).attention}` : busy ? "\nWorking…" : "") + "\nDrag to reorder, or onto the workspace to split"}
     >
-      {busy ? <span className="tab-spinner" aria-label="Working" /> : tab.type === "terminal" ? (tab.sshId ? <Server size={13} className="tab-icon" /> : <SquareTerminal size={13} className="tab-icon" />) : <FileText size={13} className="tab-icon" />}
+      {busy ? <span className="tab-spinner" aria-label="Working" /> : sandbox ? <span className="tab-icon tab-sandbox" aria-label={`In ${sandbox.name}`}><SandboxLogo provider={sandbox.provider} size={13} /></span> : tab.type === "terminal" ? (tab.sshId ? <Server size={13} className="tab-icon" /> : <SquareTerminal size={13} className="tab-icon" />) : <FileText size={13} className="tab-icon" />}
       {where && <span className="tab-project">{where}</span>}
       <span className="tab-label">{label}</span>
       {sub && <span className="tab-sub">{sub}</span>}
@@ -342,6 +349,7 @@ export function TerminalPane({ tab, visible, focused }: { tab: TerminalTab; visi
   return (
     <div className={"pane terminal-pane" + (visible ? " is-visible" : "")} style={{ "--acct": account?.color ?? "var(--line-strong)" } as React.CSSProperties}>
       <div className="pane-rule" />
+      {(tab.sandboxId || tab.codeSandbox) && <SandboxTabBar tab={tab} />}
       {tab.restored ? <RestoredSession tab={tab} /> : <div className="terminal-mount" ref={ref} />}
     </div>
   );
@@ -351,6 +359,7 @@ function RestoredSession({ tab }: { tab: TerminalTab }) {
   const connection = useDesk((s) => s.connections.find((c) => c.id === tab.sshId));
   const restart = () => useDesk.getState().patchTab(tab.id, { restored: false, status: "starting" });
   if (tab.sshId) return <div className="pane-message restored-session"><Server size={28} /><h2>{connection?.name ?? "Deleted connection"}</h2><p>{connection ? connectionLabel(connection) : "This saved connection was deleted from Desk."}</p><p>The connection closed when Desk quit.</p>{connection && <button className="btn is-primary" onClick={restart}><Play size={14} />Reconnect</button>}</div>;
+  if (tab.sandboxId) return <div className="pane-message restored-session"><History size={28} /><h2>Still running in the sandbox</h2><p>{TOOL_LABEL[tab.tool]} on {tab.remote?.branch}</p><p>Desk quit, but the agent kept going there. Reconnect to see it.</p><button className="btn is-primary" onClick={restart}><Play size={14} />Reconnect</button></div>;
   if ((tab.tool === "claude" && tab.sessionId) || (tab.tool === "codex" && tab.resume)) return <div className="pane-message restored-session"><History size={28} /><h2>Pick up where you left off</h2><p>{TOOL_LABEL[tab.tool]} in {tab.cwd}</p><p>{TOOL_LABEL[tab.tool]} stopped when Desk quit. Resume reopens the same conversation, with its history.</p><div className="restored-actions"><button className="btn is-primary" onClick={restart}><Play size={14} />Resume conversation</button><button className="btn" onClick={() => startFresh(tab.id)}><RotateCcw size={14} />Start a new one</button></div></div>;
   return <div className="pane-message restored-session"><SquareTerminal size={28} /><h2>Session restored</h2><p>{TOOL_LABEL[tab.tool]} in {tab.cwd}</p><p>The previous process ended when Desk closed. Restart to begin a new session.</p><button className="btn is-primary" onClick={restart}><Play size={14} />Restart {TOOL_LABEL[tab.tool]}</button></div>;
 }

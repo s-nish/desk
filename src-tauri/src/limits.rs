@@ -77,7 +77,7 @@ fn home() -> PathBuf {
 }
 
 fn limits_dir() -> PathBuf {
-    dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")).join("Desk").join("limits")
+    dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")).join(crate::variant::app_dir()).join("limits")
 }
 
 fn claude_dir(dir: &Option<String>) -> PathBuf {

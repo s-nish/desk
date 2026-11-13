@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "notch",
+  "description": "The notch window: listens for the feed, calls only its own commands",
+  "windows": ["notch"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+}

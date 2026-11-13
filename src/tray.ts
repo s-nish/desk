@@ -4,9 +4,9 @@
 
 import { listen } from "@tauri-apps/api/event";
 import { ipc } from "./ipc";
-import { TOOL_LABEL, chatView, useDesk } from "./store";
-import { chatBusy, showChat, showStripTab, useChats } from "./chat";
-import { cleanTitle } from "./components/Workspace";
+import { TOOL_LABEL, useDesk } from "./store";
+import { useChats } from "./chat";
+import { buildFeed, openFeedItem } from "./feed";
 
 export interface TrayItem { id: string; label: string; detail: string; waiting: boolean }
 
@@ -19,51 +19,20 @@ function since(ms: number | null | undefined) {
   return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
 }
 
+/** The menu shows what is working or waiting; finished chats stay off it. */
 export function activeAgents(): TrayItem[] {
-  const desk = useDesk.getState();
-  const projectName = (id: string) => desk.projects.find((p) => p.id === id)?.name ?? "Desk";
-  const items: TrayItem[] = [];
-  for (const chat of Object.values(useChats.getState().chats)) {
-    const busy = chatBusy(chat);
-    if (!busy) continue;
-    const waiting = busy === "waiting";
-    items.push({
-      id: `c:${chat.id}`,
-      label: chat.title || "New chat",
-      detail: [TOOL_LABEL[chat.tool], projectName(chat.projectId), waiting ? "" : since(chat.startedAt)].filter(Boolean).join(" · "),
-      waiting,
+  return buildFeed()
+    .filter((item) => item.state !== "done")
+    .map((item) => {
+      const waiting = item.state === "waiting";
+      const detail = item.kind === "chat"
+        ? [TOOL_LABEL[item.tool], item.project, waiting ? "" : since(item.since)]
+        : [`${TOOL_LABEL[item.tool]} (terminal)`, item.project];
+      return { id: item.id, label: item.title, detail: detail.filter(Boolean).join(" · "), waiting };
     });
-  }
-  for (const tab of desk.tabs) {
-    if (tab.type !== "terminal" || tab.tool === "shell" || tab.sshId) continue;
-    const waiting = !!tab.attention;
-    if (!waiting && !(tab.busy && tab.status === "running")) continue;
-    items.push({
-      id: `t:${tab.id}`,
-      label: cleanTitle(tab.title) || TOOL_LABEL[tab.tool],
-      detail: [`${TOOL_LABEL[tab.tool]} (terminal)`, projectName(tab.projectId)].join(" · "),
-      waiting,
-    });
-  }
-  return items.sort((a, b) => Number(b.waiting) - Number(a.waiting));
 }
 
-/** Shows what a menu row points at: a chat, or a terminal tab in whichever view is on. */
-export function openTrayItem(id: string) {
-  const desk = useDesk.getState();
-  if (id.startsWith("c:")) {
-    if (useChats.getState().chats[id.slice(2)]) showChat(id.slice(2));
-    return;
-  }
-  const tab = desk.tabs.find((t) => t.id === id.slice(2));
-  if (!tab) return;
-  if (desk.preferences.uiMode === "chat") {
-    chatView.showTerminal?.(tab.id);
-    showStripTab(`t:${tab.id}`);
-  } else {
-    desk.selectTab(tab.id);
-  }
-}
+export const openTrayItem = openFeedItem;
 
 /** Keeps the menu up to date. Returns a function that stops it. */
 export function watchTray() {

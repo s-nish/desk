@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { ArrowLeft, ArrowRight, ExternalLink, Globe, LoaderCircle, MousePointerClick, RotateCw, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Clock, ExternalLink, Globe, House, LoaderCircle, Lock, MousePointerClick, RotateCw, X } from "lucide-react";
 import { useDesk } from "../store";
 import { errorText, ipc } from "../ipc";
 import { activeProject } from "../actions";
@@ -30,6 +30,27 @@ function pickedMessage(p: Picked) {
   ].join("\n");
 }
 
+const RECENT_KEY = "desk-browser-recent";
+
+function readRecent(): string[] {
+  try { const v = JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]"); return Array.isArray(v) ? v.filter((x) => typeof x === "string").slice(0, 8) : []; } catch { return []; }
+}
+
+function remember(url: string) {
+  const short = url.replace(/^https?:\/\//, "").replace(/\/$/, "");
+  if (!short || short.startsWith("about:")) return;
+  try { localStorage.setItem(RECENT_KEY, JSON.stringify([short, ...readRecent().filter((u) => u !== short)].slice(0, 8))); } catch { /* per-viewer convenience */ }
+}
+
+/** What to load for what was typed: an address as is, anything else as a search. */
+export function addressFor(text: string) {
+  const t = text.trim();
+  if (/^[a-z][\w+.-]*:\/\//i.test(t) || /^(localhost|127\.|\[?::1)/i.test(t)) return t;
+  if (!/\s/.test(t) && /^[^\s/]+\.[a-z]{2,}(:\d+)?(\/.*)?$/i.test(t)) return t;
+  if (!/\s/.test(t) && /^[\w.-]+:\d+(\/.*)?$/.test(t)) return t;
+  return `https://duckduckgo.com/?q=${encodeURIComponent(t)}`;
+}
+
 export function openBrowser(url?: string) {
   const s = useDesk.getState();
   s.setLayout({ browserOpen: true, ...(url ? { browserUrl: url } : {}) });
@@ -47,7 +68,9 @@ export function BrowserPane() {
   const setPick = (on: boolean) => { pickingRef.current = on; setPicking(on); };
   const [error, setError] = useState("");
   const [created, setCreated] = useState(false);
+  const [recent, setRecent] = useState(readRecent);
   const host = useRef<HTMLDivElement>(null);
+  const addressBox = useRef<HTMLInputElement>(null);
 
   // The page follows the placeholder: its place, its size, and whether anything is drawn
   // over it. Only layout changes and overlays coming and going are watched (not every
@@ -102,6 +125,7 @@ export function BrowserPane() {
         if (payload.loading) setPick(false); // a new page starts without the picker
         if (!payload.loading) {
           setAddress(payload.url);
+          remember(payload.url);
           if (useDesk.getState().layout.browserUrl !== payload.url) useDesk.getState().setLayout({ browserUrl: payload.url });
         }
       }),
@@ -125,7 +149,7 @@ export function BrowserPane() {
     setError("");
     setLoading(true);
     try {
-      await ipc.browserOpen(to, r.left, r.top, r.width, r.height);
+      await ipc.browserOpen(addressFor(to), r.left, r.top, r.width, r.height);
       setCreated(true);
     } catch (e) {
       setError(errorText(e));
@@ -141,6 +165,26 @@ export function BrowserPane() {
     void ipc.browserCommand(next ? "pick" : "unpick").catch(() => {});
   };
   const close = () => useDesk.getState().setLayout({ browserOpen: false });
+  // Home: the page goes away and the start page (recent and local addresses) comes back.
+  const home = () => {
+    setPick(false);
+    void ipc.browserClose().catch(() => {});
+    setCreated(false);
+    setLoading(false);
+    setAddress("");
+    setTitle("");
+    setRecent(readRecent());
+    useDesk.getState().setLayout({ browserUrl: undefined });
+    requestAnimationFrame(() => addressBox.current?.focus());
+  };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey && !e.shiftKey && e.key.toLowerCase() === "l") { e.preventDefault(); addressBox.current?.focus(); addressBox.current?.select(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  const secure = created && /^https:\/\//.test(address);
 
   return (
     <section className="browser-pane" aria-label="Browser">
@@ -148,9 +192,10 @@ export function BrowserPane() {
         <button className="icon-btn" aria-label="Back" disabled={!created} onClick={() => void ipc.browserCommand("back")}><ArrowLeft size={14} /></button>
         <button className="icon-btn" aria-label="Forward" disabled={!created} onClick={() => void ipc.browserCommand("forward")}><ArrowRight size={14} /></button>
         <button className="icon-btn" aria-label="Reload" disabled={!created} onClick={() => void ipc.browserCommand("reload")}>{loading ? <LoaderCircle size={13} className="is-spinning" /> : <RotateCw size={13} />}</button>
-        <form className="browser-address" onSubmit={(e) => { e.preventDefault(); void go(address); }}>
-          <Globe size={12} />
-          <input value={address} spellCheck={false} placeholder="localhost:3000 or a web address" aria-label="Address" title={title} onChange={(e) => setAddress(e.target.value)} onFocus={(e) => e.currentTarget.select()} />
+        <button className="icon-btn" aria-label="Home" title="Start page" disabled={!created} onClick={home}><House size={14} /></button>
+        <form className={"browser-address" + (loading ? " is-loading" : "")} onSubmit={(e) => { e.preventDefault(); void go(address); }}>
+          {secure ? <Lock size={11} aria-label="Secure connection" /> : <Globe size={12} />}
+          <input ref={addressBox} value={address} spellCheck={false} placeholder="Search, or type localhost:3000 or an address (⌘L)" aria-label="Address" title={title} onChange={(e) => setAddress(e.target.value)} onFocus={(e) => e.currentTarget.select()} />
         </form>
         <button className={"icon-btn" + (picking ? " is-on" : "")} aria-pressed={picking} aria-label="Pick an element for the agent" title="Design mode: click an element on the page to send its HTML and styles to the agent (Esc to stop)" disabled={!created} onClick={pick}><MousePointerClick size={14} /></button>
         <button className="icon-btn" aria-label="Open in your browser" title="Open in your browser" disabled={!address} onClick={() => void ipc.openExternal(/^\w+:\/\//.test(address) ? address : `http://${address}`)}><ExternalLink size={13} /></button>
@@ -163,7 +208,8 @@ export function BrowserPane() {
             <Globe size={20} />
             <strong>Preview your app</strong>
             <span>Type an address above, or pick a local server. Pages open in a native web view that closes with this panel.</span>
-            <div className="browser-suggest">{SUGGESTED.map((u) => <button key={u} className="mini-btn" onClick={() => { setAddress(u); void go(u); }}>{u}</button>)}</div>
+            {recent.length > 0 && <div className="browser-recent" aria-label="Recent">{recent.map((u) => <button key={u} className="browser-recent-item" onClick={() => { setAddress(u); void go(u); }}><Clock size={12} /><span>{u}</span></button>)}</div>}
+            <div className="browser-suggest">{SUGGESTED.filter((u) => !recent.includes(u)).map((u) => <button key={u} className="mini-btn" onClick={() => { setAddress(u); void go(u); }}>{u}</button>)}</div>
             {error && <p className="form-error">{error}</p>}
           </div>
         )}

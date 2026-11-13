@@ -9,9 +9,14 @@ mod chat;
 mod pty;
 mod search;
 mod sessions;
+mod notch;
+mod ports;
+mod remote;
+mod sandbox;
 mod tray;
 mod ssh;
 mod usage_live;
+mod variant;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -42,7 +47,7 @@ struct FsChange {
 fn state_file() -> PathBuf {
     dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("Desk")
+        .join(variant::app_dir())
         .join("state.json")
 }
 
@@ -582,6 +587,130 @@ fn tray_update(app: AppHandle, items: Vec<tray::TrayItem>) -> Result<(), String>
     tray::update(&app, &items).map_err(|e| e.to_string())
 }
 
+/// One provider command (docker, sbx, boat, the Modal helper), with its output.
+#[tauri::command]
+async fn sandbox_run(opts: sandbox::RunOpts) -> Result<sandbox::RunOutput, String> {
+    tauri::async_runtime::spawn_blocking(move || sandbox::run(opts)).await.map_err(|e| e.to_string())?
+}
+
+/// A script Desk uploads into sandboxes (the runner) or builds them from (the Dockerfile).
+#[tauri::command]
+fn sandbox_resource(name: String) -> Result<String, String> {
+    sandbox::resource(&name).map(str::to_string)
+}
+
+#[tauri::command]
+fn sandbox_helper(name: String) -> Result<String, String> {
+    sandbox::helper_path(&name).map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Forwards localhost to a server in a sandbox; returns the local port. See ports.rs.
+#[tauri::command]
+async fn port_forward_start(app: AppHandle, key: String, args: Vec<String>, ports: Vec<u16>) -> Result<u16, String> {
+    tauri::async_runtime::spawn_blocking(move || ports::start(&app.state::<ports::PortState>(), &key, args, &ports))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn port_forward_stop(state: State<ports::PortState>, key: String) {
+    ports::stop(&state, &key);
+}
+
+#[tauri::command]
+fn sandbox_bridge(key: String, conf: String) -> Result<sandbox::Bridge, String> {
+    sandbox::bridge(&key, &conf)
+}
+
+#[tauri::command]
+async fn sandbox_secret_set(key: String, value: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || sandbox::secret_set(&key, &value)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn sandbox_secret_has(key: String) -> bool {
+    sandbox::secret_has(&key)
+}
+
+#[tauri::command]
+fn sandbox_secret_delete(key: String) -> Result<(), String> {
+    sandbox::secret_delete(&key)
+}
+
+/// The feed for the notch, from the main window.
+#[tauri::command]
+fn notch_update(app: AppHandle, payload: Value) {
+    notch::update(&app, payload);
+}
+
+/// What the phone page shows (phoneBridge.ts): sessions, usage, open conversations.
+#[tauri::command]
+fn remote_update(app: AppHandle, payload: Value) {
+    remote::publish(&app, &payload);
+}
+
+// Phone remote (see remote.rs). Only the main window may call these.
+
+#[tauri::command]
+fn remote_status(app: AppHandle) -> Value {
+    remote::status_json(&app)
+}
+
+#[tauri::command]
+fn remote_enable(app: AppHandle, on: bool) -> Result<(), String> {
+    if on { remote::start(&app) } else { remote::stop(&app); Ok(()) }
+}
+
+#[tauri::command]
+fn remote_pair(app: AppHandle) -> Result<String, String> {
+    remote::pair_start(&app)
+}
+
+#[tauri::command]
+fn remote_revoke(hash: String) -> Result<(), String> {
+    remote::revoke(&hash)
+}
+
+#[tauri::command]
+fn remote_log() -> Vec<String> {
+    remote::read_log(50)
+}
+
+#[tauri::command]
+async fn remote_tailscale() -> remote::TailscaleInfo {
+    tauri::async_runtime::spawn_blocking(remote::tailscale_info).await.unwrap_or_else(|_| remote::tailscale_info())
+}
+
+#[tauri::command]
+async fn remote_serve(on: bool) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || remote::tailscale_serve(on)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn remote_qr(text: String) -> Result<String, String> {
+    remote::qr_svg(&text)
+}
+
+#[tauri::command]
+fn notch_snapshot(app: AppHandle) -> notch::Snapshot {
+    notch::snapshot(&app)
+}
+
+#[tauri::command]
+fn notch_action(app: AppHandle, action: Value) {
+    notch::action(&app, action);
+}
+
+#[tauri::command]
+fn notch_resize(app: AppHandle, width: f64, height: f64) {
+    notch::resize(&app, width, height);
+}
+
+#[tauri::command]
+fn notch_focus(app: AppHandle, focus: bool) {
+    notch::focus(&app, focus);
+}
+
 pub fn run() {
     let ptys = Arc::new(PtyManager::default());
     bridge::start(Arc::clone(&ptys));
@@ -592,11 +721,17 @@ pub fn run() {
         .manage(Arc::new(chat::ChatManager::default()))
         .manage(files::Watchers::default())
         .manage(QuitState::default())
+        .manage(remote::RemoteState::default())
+        .manage(ports::PortState::default())
         .menu(build_menu)
         .setup(|app| {
             // The menu bar icon is a nicety: Desk runs without it.
             if let Err(e) = tray::create(app.handle()) {
                 eprintln!("Couldn't add the menu bar icon: {e}");
+            }
+            // So is the notch.
+            if let Err(e) = notch::create(app.handle()) {
+                eprintln!("Couldn't add the notch: {e}");
             }
             Ok(())
         })
@@ -675,9 +810,34 @@ pub fn run() {
             ssh_forget_password,
             ssh_has_password,
             tray_update,
+            notch_update,
+            remote_status,
+            remote_enable,
+            remote_update,
+            remote_pair,
+            remote_revoke,
+            remote_log,
+            remote_tailscale,
+            remote_serve,
+            remote_qr,
+            notch_snapshot,
+            notch_action,
+            notch_resize,
+            notch_focus,
+            sandbox_run,
+            sandbox_resource,
+            sandbox_helper,
+            sandbox_bridge,
+            port_forward_start,
+            port_forward_stop,
+            sandbox_secret_set,
+            sandbox_secret_has,
+            sandbox_secret_delete,
             ]);
             move |invoke: tauri::ipc::Invoke| {
-                if invoke.message.webview().label() != "main" {
+                let label = invoke.message.webview().label().to_string();
+                let allowed = label == "main" || (label == notch::LABEL && notch::COMMANDS.contains(&invoke.message.command()));
+                if !allowed {
                     invoke.resolver.reject("Not allowed from this page");
                     return true;
                 }
@@ -697,6 +857,7 @@ pub fn run() {
         RunEvent::Exit => {
             handle.state::<Arc<PtyManager>>().kill_all();
             handle.state::<Arc<chat::ChatManager>>().kill_all();
+            ports::stop_all(&handle.state::<ports::PortState>());
         }
         _ => {}
     });

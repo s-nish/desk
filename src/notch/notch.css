@@ -1,0 +1,292 @@
+/* The notch. Always dark: the shell is pure black so it merges with the camera
+   housing. Electric tokens: blue for working, cantaloupe for waiting. */
+
+:root {
+  --n-text: #eaf4f8;
+  --n-text-2: #c6d6de;
+  --n-muted: #9db4c0;
+  --n-line: #ffffff14;
+  --n-raised: #0c1820;
+  --n-hover: #ffffff0d;
+  --n-blue: #0297de;
+  --n-blue-hi: #3db8f5;
+  --n-wait: #fc734d;
+  --n-danger: #ff6b6b;
+  --n-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  --n-mono: "SF Mono", "JetBrains Mono", Menlo, monospace;
+  --n-ear: 12px;
+  --n-open: 380ms;
+  --n-close: 260ms;
+  /* A spring with a touch of overshoot; browsers without linear() use the curve. */
+  --n-spring: cubic-bezier(.2, 1.2, .3, 1);
+  --n-settle: cubic-bezier(.4, 0, .2, 1);
+}
+
+/* A custom property can't fall back, so only browsers with linear() get it. */
+@supports (transition-timing-function: linear(0, 1)) {
+  :root { --n-spring: linear(0, .006, .025 2.8%, .101 6.1%, .539 18.9%, .721 25.3%, .849 31.5%, .937 38.1%, .968 41.8%, .991 45.7%, 1.006 50.1%, 1.015 55%, 1.017 63.9%, 1.001 85.9%, 1); }
+}
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+#notch { height: 100%; }
+
+.notch {
+  position: relative;
+  height: 100%;
+  font: 12px/1.35 var(--n-font);
+  color: var(--n-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+.notch-shell {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #000;
+  border-radius: 0 0 12px 12px;
+  transition: width var(--n-close) var(--n-settle), height var(--n-close) var(--n-settle), border-radius var(--n-close) var(--n-settle);
+  will-change: width, height;
+}
+.notch.is-expanded .notch-shell,
+.notch.is-peek .notch-shell {
+  border-radius: 0 0 22px 22px;
+  transition: width var(--n-open) var(--n-spring), height var(--n-open) var(--n-spring), border-radius var(--n-open) var(--n-spring);
+}
+.notch.is-hidden .notch-shell { opacity: 0; }
+
+/* Concave top corners, so the shape flows out of the hardware notch. */
+.notch.has-notch .notch-shell::before,
+.notch.has-notch .notch-shell::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: var(--n-ear);
+  height: var(--n-ear);
+  pointer-events: none;
+}
+.notch.has-notch .notch-shell::before { left: calc(-1 * var(--n-ear)); background: radial-gradient(circle at 0 100%, transparent calc(var(--n-ear) - .5px), #000 var(--n-ear)); }
+.notch.has-notch .notch-shell::after { right: calc(-1 * var(--n-ear)); background: radial-gradient(circle at 100% 100%, transparent calc(var(--n-ear) - .5px), #000 var(--n-ear)); }
+
+/* The pill, on screens without a notch. */
+.notch.is-pill .notch-shell { top: 4px; border-radius: 15px; }
+.notch.is-pill.is-expanded .notch-shell,
+.notch.is-pill.is-peek .notch-shell { border-radius: 22px; }
+
+/* Collapsed: wings either side of the camera. */
+.notch-wings {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px;
+  animation: notch-fade 120ms ease-out both;
+}
+.notch.is-pill .notch-wings { padding: 0 14px; }
+.notch-wing { display: flex; align-items: center; gap: 7px; }
+.notch-wing.is-left { justify-content: flex-start; padding-left: 12px; }
+.notch-wing.is-right { justify-content: flex-end; padding-right: 12px; }
+.notch.is-pill .notch-wing { padding: 0; }
+.notch-d { fill: var(--n-text); }
+.notch-count { font: 600 11.5px var(--n-font); font-variant-numeric: tabular-nums; color: var(--n-text-2); }
+.notch-done { color: var(--n-blue-hi); font-size: 11px; }
+
+.notch-wait {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--n-wait);
+  animation: notch-pulse 900ms ease-out 1;
+}
+@keyframes notch-pulse {
+  0% { box-shadow: 0 0 0 0 #fc734daa; }
+  100% { box-shadow: 0 0 0 7px #fc734d00; }
+}
+
+/* A five-bar pixel wave, in steps like the Home backdrop. */
+.notch-wave { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; }
+.notch-wave i {
+  width: 2px;
+  height: 4px;
+  background: var(--n-blue-hi);
+  animation: notch-wave 700ms steps(4, jump-none) infinite alternate;
+}
+@keyframes notch-wave {
+  from { height: 2px; opacity: .55; }
+  to { height: 12px; opacity: 1; }
+}
+
+/* Open: content fades in after the shell starts moving, rows staggered. */
+.notch-content {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 0 12px 10px;
+  box-sizing: border-box;
+  animation: notch-fade 180ms ease-out 120ms both;
+}
+.notch-content > * { animation: notch-rise 220ms ease-out both; }
+.notch-content > *:nth-child(2) { animation-delay: 144ms; }
+.notch-content > *:nth-child(3) { animation-delay: 168ms; }
+@keyframes notch-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes notch-rise { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+.notch-list { max-height: 320px; overflow-y: auto; scrollbar-width: none; }
+.notch-list::-webkit-scrollbar { display: none; }
+.notch-group {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 8px 4px 4px;
+  font: 600 10.5px var(--n-font);
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--n-muted);
+}
+.notch-mark { width: 6px; height: 6px; border-radius: 2px; }
+.notch-mark.is-waiting { background: var(--n-wait); }
+.notch-mark.is-working { background: var(--n-blue); }
+.notch-mark.is-done { width: auto; height: auto; color: var(--n-blue-hi); }
+
+/* Rows */
+.feed-row {
+  display: grid;
+  grid-template-columns: 6px 14px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 10px;
+}
+.feed-row:hover, .feed-row.is-selected { background: var(--n-hover); }
+.feed-row-mark { width: 6px; height: 6px; border-radius: 2px; background: var(--n-blue); }
+.feed-row.is-waiting .feed-row-mark { background: var(--n-wait); }
+.feed-row.is-done .feed-row-mark { background: transparent; box-shadow: inset 0 0 0 1.5px var(--n-blue-hi); }
+.feed-row-main { display: flex; flex-direction: column; min-width: 0; }
+.feed-row-title, .feed-card-title { font-weight: 600; color: var(--n-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.feed-row-activity { color: var(--n-muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.feed-row-meta { display: flex; align-items: center; gap: 6px; color: var(--n-muted); font-size: 11px; white-space: nowrap; }
+.feed-time { font-variant-numeric: tabular-nums; }
+.feed-account { width: 6px; height: 6px; border-radius: 50%; }
+.feed-cloud { color: var(--n-blue-hi); }
+.feed-row-actions { display: flex; gap: 2px; opacity: 0; transition: opacity 120ms; }
+.feed-row:hover .feed-row-actions, .feed-row.is-selected .feed-row-actions { opacity: 1; }
+.feed-icon {
+  border: 0;
+  background: none;
+  color: var(--n-muted);
+  font: 11px var(--n-font);
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  cursor: default;
+}
+.feed-icon:hover { background: #ffffff14; color: var(--n-text); }
+
+/* Approval card */
+.feed-card {
+  margin: 2px 0 6px;
+  padding: 10px 10px 9px;
+  border-radius: 14px;
+  background: var(--n-raised);
+  box-shadow: inset 0 0 0 1px #fc734d33;
+}
+.feed-card.is-selected { box-shadow: inset 0 0 0 1px #fc734d77; }
+.feed-card.is-answered { box-shadow: inset 0 0 0 1px var(--n-line); }
+.feed-card-head { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.feed-card-ask { margin: 6px 0 6px 22px; color: var(--n-text-2); }
+.feed-card-ask b { color: var(--n-text); font-weight: 600; }
+.feed-code {
+  margin: 0 0 8px 22px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: #000;
+  border-left: 2px solid var(--n-wait);
+  font: 11px/1.5 var(--n-mono);
+  color: var(--n-text);
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.feed-code.is-clipped { -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
+.feed-card-actions { display: flex; align-items: center; gap: 6px; margin-left: 22px; }
+.feed-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 999px;
+  padding: 5px 12px;
+  background: #ffffff14;
+  color: var(--n-text);
+  font: 600 11.5px var(--n-font);
+  cursor: default;
+}
+.feed-btn:hover { background: #ffffff22; }
+.feed-btn.is-primary { background: var(--n-blue); color: #02070a; }
+.feed-btn.is-primary:hover { background: var(--n-blue-hi); }
+.feed-btn kbd { font: 10px var(--n-font); opacity: .65; }
+.feed-link {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  color: var(--n-muted);
+  font: 11.5px var(--n-font);
+  cursor: default;
+}
+.feed-link:hover { color: var(--n-text); }
+.feed-answered { font: 600 11.5px var(--n-font); padding: 5px 0; }
+.feed-answered.is-allowed { color: var(--n-blue-hi); }
+.feed-answered.is-declined { color: var(--n-muted); }
+
+/* Reply */
+.feed-reply {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding: 0 12px;
+  height: 32px;
+  border-radius: 999px;
+  background: var(--n-raised);
+  box-shadow: inset 0 0 0 1px var(--n-line);
+}
+.feed-reply:focus-within { box-shadow: inset 0 0 0 1px #0297de99; }
+.feed-reply input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: none;
+  color: var(--n-text);
+  font: 12px var(--n-font);
+}
+.feed-reply input::placeholder { color: var(--n-muted); }
+.feed-reply-hint { color: var(--n-muted); font-size: 11px; }
+
+/* Footer: usage rings and Open Desk */
+.notch-foot { display: flex; align-items: center; gap: 12px; margin: 10px 4px 0; color: var(--n-muted); font-size: 11px; }
+.notch-ring { display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
+.notch-preview { padding: 1px 7px; border-radius: 999px; background: #ffffff14; color: var(--n-text-2); }
+.notch-open { margin-left: auto; }
+
+/* Reduce motion: cross-fades only, a still wave. */
+.notch.is-reduced .notch-shell { transition: none !important; }
+.notch.is-reduced .notch-content, .notch.is-reduced .notch-content > * { animation: notch-fade 120ms linear both; }
+.notch.is-reduced .notch-wave i { animation: none; height: 8px; }
+.notch.is-reduced .notch-wave i:nth-child(2n) { height: 4px; }
+.notch.is-reduced .notch-wait { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  .notch-shell { transition: none !important; }
+  .notch-content, .notch-content > * { animation: notch-fade 120ms linear both; }
+  .notch-wave i { animation: none; height: 8px; }
+}

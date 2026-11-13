@@ -81,7 +81,12 @@ fn build<R: Runtime>(app: &AppHandle<R>, items: &[TrayItem]) -> tauri::Result<Me
             menu = menu.item(&MenuItemBuilder::with_id(format!("go:{}", item.id), text).build(app)?);
         }
     }
-    menu.separator()
+    menu = menu.separator();
+    // One click turns the phone off, whatever Desk's window is doing.
+    if crate::remote::running(app) {
+        menu = menu.item(&MenuItemBuilder::with_id("remote-off", "Turn Off Phone Remote").build(app)?);
+    }
+    menu
         .item(&MenuItemBuilder::with_id("open", "Open Desk").build(app)?)
         .item(&MenuItemBuilder::with_id("quit", "Quit Desk").build(app)?)
         .build()
@@ -100,11 +105,16 @@ pub fn create<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon(false))
         .icon_as_template(true)
-        .tooltip("Desk")
+        .tooltip(crate::variant::name())
         .menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open" => show(app),
+            "remote-off" => {
+                crate::remote::stop(app);
+                let _ = std::thread::spawn(|| crate::remote::tailscale_serve(false));
+                let _ = app.emit_to("main", "remote-off", ());
+            }
             // The usual quit: Desk saves the workspace first, as with ⌘Q.
             "quit" => app.exit(0),
             id => {
@@ -118,16 +128,29 @@ pub fn create<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     Ok(())
 }
 
+/// The last items the main window sent, so the menu can be rebuilt on its own
+/// (the phone remote turning on or off adds or removes its switch).
+static LAST: std::sync::Mutex<Vec<TrayItem>> = std::sync::Mutex::new(Vec::new());
+
+/// Rebuilds the menu with the items it already shows.
+pub fn refresh<R: Runtime>(app: &AppHandle<R>) {
+    let items = LAST.lock().map(|l| l.clone()).unwrap_or_default();
+    let _ = update(app, &items);
+}
+
 pub fn update<R: Runtime>(app: &AppHandle<R>, items: &[TrayItem]) -> tauri::Result<()> {
+    if let Ok(mut last) = LAST.lock() {
+        *last = items.to_vec();
+    }
     let Some(tray) = app.tray_by_id(TRAY_ID) else { return Ok(()) };
     tray.set_menu(Some(build(app, items)?))?;
     tray.set_icon(Some(icon(!items.is_empty())))?;
     tray.set_icon_as_template(true)?;
     let waiting = items.iter().filter(|i| i.waiting).count();
     let tip = match (items.len(), waiting) {
-        (0, _) => "Desk".to_string(),
-        (n, 0) => format!("Desk · {n} working"),
-        (n, w) => format!("Desk · {} working, {w} waiting for you", n - w),
+        (0, _) => crate::variant::name().to_string(),
+        (n, 0) => format!("{} · {n} working", crate::variant::name()),
+        (n, w) => format!("{} · {} working, {w} waiting for you", crate::variant::name(), n - w),
     };
     tray.set_tooltip(Some(tip))?;
     Ok(())

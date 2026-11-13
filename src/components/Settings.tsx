@@ -1,5 +1,5 @@
-import { Fragment, useState } from "react";
-import { Bell, Check, Code2, Gauge, Keyboard, MessagesSquare, Monitor, Palette, PanelsTopLeft, Plus, RotateCcw, Server, SquareTerminal, Users } from "lucide-react";
+import { Fragment, useEffect, useRef, useState } from "react";
+import { X, Bell, Check, Code2, Gauge, Keyboard, Cloud, MessagesSquare, Monitor, Palette, PanelTop, PanelsTopLeft, Plug, Plus, RotateCcw, Server, Smartphone, SquareTerminal, Users } from "lucide-react";
 import { THEMES } from "../appearance";
 import { ACCOUNT_KINDS, DEFAULT_PREFERENCES, TOOL_LABEL, useDesk } from "../store";
 import { UsageSettings } from "./Usage";
@@ -10,6 +10,11 @@ import { ANSI_KEYS, BASE_KEYS, COLOR_LABEL, TERMINAL_PRESETS, opaque, presetThem
 import { EditorSettings } from "./EditorSettings";
 import { AccountRow, ConnectionRow } from "./Sidebar";
 import { AccountDefaults } from "./AccountDefaults";
+import { previewNotch } from "../notchBridge";
+import { SandboxSettings } from "./Sandboxes";
+import { AgentSetupSettings } from "./AgentSetup";
+import { PhoneSettings } from "./Phone";
+import type { ProviderId } from "../sandbox/types";
 
 const sections = [
   { id: "appearance", label: "Appearance", icon: Palette, group: "Personalize" },
@@ -18,9 +23,13 @@ const sections = [
   { id: "editor", label: "Editor", icon: Code2, group: "Personalize" },
   { id: "workspace", label: "Layout", icon: PanelsTopLeft, group: "Workspace" },
   { id: "alerts", label: "Alerts", icon: Bell, group: "Workspace" },
+  { id: "notch", label: "Notch", icon: PanelTop, group: "Workspace" },
   { id: "accounts", label: "Accounts", icon: Users, group: "Connections" },
   { id: "usage", label: "Usage", icon: Gauge, group: "Connections" },
+  { id: "agents", label: "Agent setup", icon: Plug, group: "Connections" },
+  { id: "sandboxes", label: "Sandboxes", icon: Cloud, group: "Connections" },
   { id: "ssh", label: "SSH", icon: Server, group: "Connections" },
+  { id: "phone", label: "Phone", icon: Smartphone, group: "Connections" },
   { id: "shortcuts", label: "Shortcuts", icon: Keyboard, group: "Help" },
 ] as const;
 
@@ -31,8 +40,12 @@ const INTRO: Record<string, string> = {
   editor: "Distinct syntax colors for every file. Choose a palette that suits your work.",
   workspace: "Keep what you need. Give your work room to breathe.",
   alerts: "Know when Claude Code or Codex finishes, or needs an answer, while you're looking at something else.",
+  notch: "Your agents beside the camera. See what's working, answer a permission question, or reply, without leaving the app you're in.",
   accounts: "Claude Code, Codex, Gemini CLI, Cursor Agent, Grok and OpenCode accounts, used across your projects.",
   usage: "How much of each plan's limits you've used, or have left, and when they reset.",
+  phone: "Your agents on your phone, over your own tailnet.",
+  agents: "Write the rules and add MCP servers once; every agent gets them.",
+  sandboxes: "Run your code, or the agent too, somewhere other than this Mac: Docker here, or a cloud sandbox you sign in to. Your accounts, your bill; Desk has no server.",
   ssh: "Saved commands that open in their own tab, with the password filled in.",
   shortcuts: "Stay in the flow, with your hands on the keyboard.",
 };
@@ -63,7 +76,35 @@ function Toggle({ label, description, checked, onChange }: { label: string; desc
 
 type Section = typeof sections[number]["id"];
 
-export function Settings({ initial }: { initial?: string }) {
+/**
+ * Settings as a page over the whole window below the title bar, so wide sections
+ * (Sandboxes, Agent setup) get the room. Esc or ✕ goes back to where you were.
+ */
+export function SettingsPage({ section, provider }: { section?: string; provider?: ProviderId }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    ref.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      const t = e.target as HTMLElement | null;
+      // Esc in a field leaves the field first.
+      if (t && t !== ref.current && t.matches("input, textarea, select")) { t.blur(); return; }
+      e.preventDefault();
+      useDesk.getState().setModal(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => { window.removeEventListener("keydown", onKey); if (previous?.isConnected) previous.focus(); };
+  }, []);
+  return (
+    <div className="settings-page" ref={ref} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Settings">
+      <Settings key={`${section ?? ""}:${provider ?? ""}`} initial={section} provider={provider} />
+      <button className="settings-page-close" aria-label="Close" title="Close settings (Esc)" onClick={() => useDesk.getState().setModal(null)}><X size={15} strokeWidth={2.2} /><span>Close</span><kbd>Esc</kbd></button>
+    </div>
+  );
+}
+
+export function Settings({ initial, provider }: { initial?: string; provider?: ProviderId }) {
   const [section, setSection] = useState<Section>(sections.some((s) => s.id === initial) ? (initial as Section) : "appearance");
   const preferences = useDesk((s) => s.preferences);
   const setPreferences = useDesk((s) => s.setPreferences);
@@ -72,13 +113,14 @@ export function Settings({ initial }: { initial?: string }) {
   const accounts = useDesk((s) => s.accounts);
   return <div className="settings-layout">
     <nav className="settings-nav" aria-label="Settings sections">
+      <span className="settings-nav-title">Settings</span>
       {sections.map(({ id, label, icon: Icon, group }, i) => <Fragment key={id}>
         {group !== sections[i - 1]?.group && <span className="settings-nav-group">{group}</span>}
         <button aria-label={label} aria-current={section === id ? "page" : undefined} className={section === id ? "is-active" : ""} onClick={() => setSection(id)}><span className="settings-nav-icon"><Icon size={14} strokeWidth={1.8} /></span><span>{label}</span></button>
       </Fragment>)}
-      <span className="settings-local">Saved on this Mac.</span>
+      <span className="settings-local">Saved on this Mac. Esc to go back.</span>
     </nav>
-    <div className="settings-content" key={section}>
+    <div className={"settings-content is-" + section} key={section}>
       <div className="settings-intro"><h2>{sections.find((s) => s.id === section)?.label}</h2><p>{INTRO[section]}</p></div>
       {section === "appearance" && <>
         <h3 className="settings-label">Theme</h3>
@@ -137,8 +179,21 @@ export function Settings({ initial }: { initial?: string }) {
         </div>
         <p className="settings-note">Desk watches the terminal: an agent that was printing and goes quiet for a few seconds has finished. A terminal bell or a notification from the agent also counts. Press ⌘⇧A to jump to the next waiting tab.</p>
       </>}
+      {section === "notch" && <>
+        <div className="settings-card">
+          <Toggle label="Show agents in the notch" description="While an agent works, the notch grows a small wing either side. Hover or click it to see every agent, allow or deny, and reply." checked={preferences.notch !== false} onChange={() => setPreferences({ notch: preferences.notch === false })} />
+          <Row label="Open by itself" description="A single card that opens for six seconds and never takes your keyboard."><Choice label="Open by itself" value={preferences.notchPeek ?? "waiting"} options={[["waiting", "When it needs you"], ["all", "Also when it finishes"], ["never", "Never"]]} onChange={(notchPeek) => setPreferences({ notchPeek })} /></Row>
+          <Toggle label="Usage rings" description="Show the 5-hour limit of the accounts in use at the bottom of the open notch." checked={preferences.notchRings !== false} onChange={() => setPreferences({ notchRings: preferences.notchRings === false })} />
+          <Toggle label="On screens without a notch" description="A small pill under the menu bar, when there's no notch (an external display, or an older Mac)." checked={preferences.notchOnOtherScreens !== false} onChange={() => setPreferences({ notchOnOtherScreens: preferences.notchOnOtherScreens === false })} />
+          <Row label="Preview" description="Shows a sample for a minute, so you can see it without a running agent. Its buttons do nothing."><button className="text-button" onClick={previewNotch}>Show preview</button></Row>
+        </div>
+        <p className="settings-note">Allowing from the notch shows the full command first. It never offers Full access. Keys work once you click the notch: ⌘↵ allow, ⌘⌫ deny, ↑ ↓ move, ⌘O open in Desk, Esc close.</p>
+      </>}
       {section === "accounts" && <>{ACCOUNT_KINDS.map((kind) => { const list = accounts.filter((a) => a.kind === kind); const canAdd = multiAccount(kind) || list.length === 0; return <details className="settings-account-group" key={kind} open={list.length > 0 || kind === "claude" || kind === "codex"}><summary><ToolLogo tool={kind} size={14} />{TOOL_LABEL[kind]}<span className="section-count">{list.length}</span></summary><div>{list.map((account) => <div className="settings-account" key={account.id}><AccountRow account={account} /><AccountDefaults account={account} /></div>)}{canAdd ? <button className="text-button" onClick={() => useDesk.getState().setModal({ kind: "addAccount", tool: kind })}><Plus size={14} />Add {TOOL_LABEL[kind]} account</button> : <p className="settings-note">{TOOL_LABEL[kind]} keeps one sign-in per Mac.</p>}</div></details>; })}<p className="settings-note">Choose a project's accounts from its ⋯ menu. Existing sessions keep the account they started with. Every agent chats in the chat view and runs in terminal tabs. Default model and effort apply to new chats; each chat can change them. A GitHub account is what gh, pull requests and issues use in that project, including gh run by agents.</p></>}
       {section === "usage" && <UsageSettings />}
+      {section === "sandboxes" && <SandboxSettings provider={provider} />}
+      {section === "agents" && <AgentSetupSettings />}
+      {section === "phone" && <PhoneSettings />}
       {section === "shortcuts" && <div className="shortcut-list">{[["New Claude Code tab in selected project", "⌘ D  /  ⌘ T"], ["New Codex tab in selected project", "⌘ E"], ["New shell tab in selected project", "⌘ J"], ["New SSH connection", "⌘ ⇧ N"], ["New worktree for selected project", "⌘ ⇧ T"], ["Jump to next waiting agent", "⌘ ⇧ A"], ["Move focused tab left / right", "⌥ ⇧ ← / →"], ["Command palette", "⌘ ⇧ P"], ["Search project", "⌘ ⇧ F"], ["Split panes", "⌘ \\"], ["Side by side / stacked", "⌘ ⌥ \\"], ["Focus left / right pane", "⌘ ⌥ ← / →"], ["Add project folder", "⌘ O"], ["Open file", "⌘ P"], ["Save file", "⌘ S"], ["Close tab", "⌘ W"], ["Toggle projects", "⌘ B"], ["Toggle files", "⌘ ⇧ B"], ["Switch tabs", "⌃ Tab"], ["Switch projects", "⌥ ⌘ ↑ / ↓"], ["Clear terminal", "⌘ K"], ["Open settings", "⌘ ,"]].map(([label, key]) => <div key={label}><span>{label}</span><kbd>{key}</kbd></div>)}</div>}
     </div>
   </div>;

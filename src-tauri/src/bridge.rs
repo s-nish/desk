@@ -22,7 +22,7 @@ use crate::pty::PtyManager;
 pub fn socket_path() -> Option<PathBuf> {
     let dir = match std::env::var_os("DESK_HOME") {
         Some(d) => PathBuf::from(d),
-        None => dirs::home_dir()?.join(".desk"),
+        None => dirs::home_dir()?.join(crate::variant::home_dir()),
     };
     Some(dir.join("bridge.sock"))
 }

@@ -1,0 +1,70 @@
+// The parts of port forwarding with no Desk state: reading which ports listen in
+// a sandbox, and the relay each forwarded connection runs there. See ports.ts.
+
+/** Prints the kernel's TCP tables; Linux has them in every sandbox, no tools needed. */
+export const PORTS_SCRIPT = "cat /proc/net/tcp /proc/net/tcp6 2>/dev/null";
+
+/** Never forwarded: ssh. */
+const IGNORED = new Set([22]);
+
+/**
+ * Ports dev servers use (Vite, Next, Rails, Django, Flask, Phoenix, Angular,
+ * Storybook, Jupyter, Streamlit, Gradio, Wrangler…). Only these are forwarded by
+ * themselves, and only to one of these here, so code in a sandbox can't take a
+ * port a Mac service (a database, a debugger, a proxy) would use and catch what's
+ * sent to it. Others can be forwarded from the Ports menu.
+ */
+const DEV_RANGES: [number, number][] = [[3000, 3010], [4000, 4010], [4200, 4210], [5000, 5010], [5173, 5183], [5500, 5510], [6006, 6010], [7860, 7870], [8000, 8010], [8080, 8090], [8501, 8510], [8787, 8790], [8888, 8890]];
+
+export function autoForwardable(port: number) {
+  return DEV_RANGES.some(([a, b]) => port >= a && port <= b);
+}
+
+/** The local ports a forward may take, in order: the same port first, then the next few. */
+export function localCandidates(remote: number, auto: boolean) {
+  const all = Array.from({ length: 10 }, (_, i) => remote + i).filter((p) => p >= 1024 && p <= 65535);
+  return auto ? all.filter(autoForwardable) : all;
+}
+
+/** Whether a /proc/net/tcp local address (hex) is one "localhost" in the sandbox reaches. */
+function reachable(hex: string) {
+  if (hex.length === 8) return hex === "00000000" || hex.endsWith("7F"); // 0.0.0.0, 127.x (little-endian)
+  if (hex.length === 32) {
+    const h = hex.toUpperCase();
+    if (/^0+$/.test(h) || h === "00000000000000000000000001000000") return true; // ::, ::1
+    // ::ffff:0.0.0.0 and ::ffff:127.x
+    return h.startsWith("0000000000000000FFFF0000") && (h.endsWith("00000000") || h.endsWith("7F"));
+  }
+  return false;
+}
+
+/** The ports listening on all addresses or loopback, from PORTS_SCRIPT's output. */
+export function parseListening(text: string): number[] {
+  const ports = new Set<number>();
+  for (const line of text.split("\n")) {
+    const f = line.trim().split(/\s+/);
+    if (f.length < 4 || f[3] !== "0A") continue; // 0A: LISTEN
+    const [addr, portHex] = f[1].split(":");
+    if (!addr || !portHex || !reachable(addr)) continue;
+    const port = parseInt(portHex, 16);
+    if (port > 0 && !IGNORED.has(port)) ports.add(port);
+  }
+  return [...ports].sort((a, b) => a - b);
+}
+
+/**
+ * Runs in the sandbox for each connection: connects to the server there and
+ * passes bytes through stdin and stdout. Node (in Desk's images), else Python,
+ * else bash's /dev/tcp.
+ */
+export function relayScript(port: number) {
+  const p = Math.trunc(port);
+  // Loopback by address: with "localhost", Node may drop an end that comes before it has connected.
+  const node = `const n=require("net");function go(h){const s=n.connect(${p},h[0]);let ok=false;s.on("connect",()=>{ok=true;process.stdin.pipe(s);s.pipe(process.stdout)});s.on("error",()=>{if(!ok&&h.length>1)go(h.slice(1));else process.exit(1)});s.on("close",()=>{if(ok)process.exit(0)})}go(["127.0.0.1","::1"])`;
+  const python = `import socket,sys,threading\ns=socket.create_connection(("localhost",${p}))\ndef up():\n  while True:\n    d=sys.stdin.buffer.read1(65536)\n    if not d: break\n    s.sendall(d)\n  s.shutdown(socket.SHUT_WR)\nthreading.Thread(target=up,daemon=True).start()\nwhile True:\n  d=s.recv(65536)\n  if not d: break\n  sys.stdout.buffer.write(d); sys.stdout.buffer.flush()`;
+  return [
+    `if command -v node >/dev/null 2>&1; then exec node -e '${node}'`,
+    `elif command -v python3 >/dev/null 2>&1; then exec python3 -c '${python}'`,
+    `else exec bash -c '{ exec 3<>/dev/tcp/127.0.0.1/${p}; } 2>/dev/null || exec 3<>/dev/tcp/::1/${p}; cat <&3 & cat >&3; wait'; fi`,
+  ].join("\n");
+}

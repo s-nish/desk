@@ -1,0 +1,2 @@
+{"type":"result","subtype":"success","is_error":false,"result":"[{\"file\": \"/repo/src/auth.ts\", \"line\": 2, \"severity\": \"URGENT\", \"title\": \"Missing await\", \"body\": \"check() returns a promise.\"}]"}
+{"type":"desk_exit","code":0,"stderr":""}

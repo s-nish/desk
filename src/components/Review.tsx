@@ -1,12 +1,15 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronUp, FileText, MessageSquarePlus, Minus, Plus, Send, Trash2, Undo2 } from "lucide-react";
+import { ChevronDown, ChevronUp, FileText, LoaderCircle, MessageSquarePlus, Minus, Plus, ScanSearch, Send, Trash2, Undo2 } from "lucide-react";
 import { TOOL_LABEL, useDesk } from "../store";
-import { addComment, removeComment, reviewTargets, sendReview, useReview, type ReviewComment } from "../review";
+import { addComment, removeComment, reviewTargets, sendReview, toggleComment, useReview, type ReviewComment } from "../review";
+import { REVIEWERS, cancelReview, crossReview, useCrossReview } from "../crossReview";
+import { ToolLogo } from "./ToolLogo";
 import { newChat, useChats } from "../chat";
 import { openMenu } from "./Menu";
 import { errorText, ipc } from "../ipc";
 import { openFile, projectForPath } from "../actions";
 import type { GitChange, GitStatus } from "../types";
+import { parseDiff, type DiffRow } from "../diff";
 
 // Shared Git helpers
 
@@ -46,48 +49,7 @@ export function LineCounts({ lines, untracked }: { lines: [number, number] | nul
   );
 }
 
-// Unified diff parsing
-
-export interface DiffRow {
-  kind: "hunk" | "ctx" | "add" | "del" | "meta";
-  old: number | null;
-  new: number | null;
-  text: string;
-}
-
-/** Turns `git diff` output into rows with old and new line numbers. */
-export function parseDiff(text: string): DiffRow[] {
-  const rows: DiffRow[] = [];
-  const lines = text.replace(/\n$/, "").split("\n");
-  let oldLine = 0;
-  let newLine = 0;
-  let inHunk = false;
-  // A new untracked file comes back as bare "+" lines without a hunk header.
-  if (!text.includes("\n@@") && !text.startsWith("@@") && lines.every((l) => l.startsWith("+") || l === "")) {
-    lines.forEach((l, i) => rows.push({ kind: "add", old: null, new: i + 1, text: l.slice(1) }));
-    return rows;
-  }
-  for (const line of lines) {
-    const hunk = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@ ?(.*)$/);
-    if (hunk) {
-      oldLine = Number(hunk[1]);
-      newLine = Number(hunk[2]);
-      inHunk = true;
-      rows.push({ kind: "hunk", old: null, new: null, text: hunk[3] ?? "" });
-      continue;
-    }
-    if (!inHunk) {
-      if (/^(new file|deleted file|old mode|new mode|similarity|rename from|rename to|Binary files)/.test(line)) rows.push({ kind: "meta", old: null, new: null, text: line });
-      continue;
-    }
-    if (line.startsWith("+")) rows.push({ kind: "add", old: null, new: newLine++, text: line.slice(1) });
-    else if (line.startsWith("-")) rows.push({ kind: "del", old: oldLine++, new: null, text: line.slice(1) });
-    else if (line.startsWith("\\")) rows.push({ kind: "meta", old: null, new: null, text: line.slice(2) });
-    else if (line.startsWith("diff --git")) inHunk = false;
-    else rows.push({ kind: "ctx", old: oldLine++, new: newLine++, text: line.slice(1) });
-  }
-  return rows;
-}
+export { parseDiff, type DiffRow } from "../diff";
 
 /** Side-by-side pairs: removed lines sit next to the added lines that replaced them. */
 export function pairRows(rows: DiffRow[]) {
@@ -125,6 +87,7 @@ export function Review({ root, path, staged }: { root: string; path: string; sta
   const body = useRef<HTMLDivElement>(null);
   const comments = useReview((s) => s.comments[root]) ?? NO_COMMENTS;
   const [editing, setEditing] = useState<Spot | null>(null);
+  const reviewing = useCrossReview((s) => s.running[root]);
 
   const refresh = async () => {
     try { setStatus(await ipc.gitStatus(root)); } catch (e) { setError(errorText(e)); }
@@ -211,7 +174,19 @@ export function Review({ root, path, staged }: { root: string; path: string; sta
     edit: setEditing,
     save: (text) => { if (editing && text.trim()) addComment(root, { ...editing, path: selected.path, text }); setEditing(null); },
     remove: (id) => removeComment(root, id),
+    toggle: (id) => toggleComment(root, id),
   };
+  const reviewWith = (at: Element) => {
+    const accounts = useDesk.getState().accounts;
+    openMenu(at, REVIEWERS.map((tool) => ({
+      label: TOOL_LABEL[tool],
+      hint: accounts.some((a) => a.kind === tool) ? "Reads the changes, changes nothing" : "No account yet",
+      disabled: !accounts.some((a) => a.kind === tool),
+      onSelect: () => void crossReview(root, tool),
+    })));
+  };
+  const fileWide = here.filter((c) => !c.line);
+  const sending = comments.filter((c) => !c.skip).length;
   const sendTo = (at: Element) => {
     const { chats, tabs } = reviewTargets(root);
     const project = projectForPath(root);
@@ -270,20 +245,30 @@ export function Review({ root, path, staged }: { root: string; path: string; sta
             <button className="icon-btn" aria-label="Previous file" title="Previous file (↑)" disabled={entries.length < 2} onClick={() => step(-1)}><ChevronUp size={15} /></button>
             <button className="icon-btn" aria-label="Next file" title="Next file (↓)" disabled={entries.length < 2} onClick={() => step(1)}><ChevronDown size={15} /></button>
             <span className="review-sep" />
+            <button className="mini-btn" disabled={!!reviewing || !entries.length} onClick={(e) => reviewWith(e.currentTarget)} title="Have another agent review these changes"><ScanSearch size={12} />Review with<ChevronDown size={11} /></button>
             <button className="mini-btn" disabled={code === "D"} onClick={open}><FileText size={12} />Open</button>
             {current && !current.staged && <button className="mini-btn" disabled={busy} onClick={discard}><Undo2 size={12} />Discard</button>}
             {current && <button className="mini-btn is-primary" disabled={busy} onClick={() => void stage()}>{current.staged ? <><Minus size={12} />Unstage</> : <><Plus size={12} />Stage</>}</button>}
           </div>
         </header>
         <div className="review-body" ref={body}>
+          {fileWide.length > 0 && <div className="diff-thread is-file">{fileWide.map((c) => <CommentCard key={c.id} c={c} notes={notes} />)}</div>}
           {error ? <p className="tool-error">{error}</p> : diff === null ? <p className="tree-note">Loading the diff…</p> : !rows.length ? <p className="tree-note">No text changes to show. The file may be binary, or only its permissions changed.</p> : mode === "unified" ? <Unified rows={rows} notes={notes} /> : <Split rows={rows} notes={notes} />}
         </div>
+        {reviewing && (
+          <footer className="review-comments-bar is-reviewing" role="status">
+            <LoaderCircle size={14} className="is-spinning" />
+            <span>{TOOL_LABEL[reviewing.tool]} is reviewing the changes…</span>
+            <span className="review-comments-gap" />
+            <button className="mini-btn" onClick={() => cancelReview(root)}>Cancel</button>
+          </footer>
+        )}
         {comments.length > 0 && (
           <footer className="review-comments-bar">
             <MessageSquarePlus size={14} />
-            <span>{comments.length} comment{comments.length === 1 ? "" : "s"}{comments.length > here.length ? ` in ${new Set(comments.map((c) => c.path)).size} files` : ""}</span>
+            <span>{sending} of {comments.length} comment{comments.length === 1 ? "" : "s"}{comments.length > here.length ? ` in ${new Set(comments.map((c) => c.path)).size} files` : ""}</span>
             <span className="review-comments-gap" />
-            <button className="mini-btn is-primary" onClick={(e) => sendTo(e.currentTarget)}><Send size={12} />Send to agent</button>
+            <button className="mini-btn is-primary" disabled={!sending} onClick={(e) => sendTo(e.currentTarget)}><Send size={12} />Send to agent</button>
           </footer>
         )}
       </div>
@@ -301,6 +286,7 @@ interface Notes {
   edit(spot: Spot | null): void;
   save(text: string): void;
   remove(id: string): void;
+  toggle(id: string): void;
 }
 
 const spotOf = (r: DiffRow): Spot | null => (r.kind === "del" ? (r.old ? { line: r.old, side: "old", code: r.text } : null) : r.new ? { line: r.new, side: "new", code: r.text } : null);
@@ -318,13 +304,26 @@ function Thread({ spots, notes }: { spots: (Spot | null)[]; notes: Notes }) {
   if (!list.length && !open) return null;
   return (
     <div className="diff-thread">
-      {list.map((c) => (
-        <div key={c.id} className="diff-comment">
-          <p>{c.text}</p>
-          <button className="icon-btn" aria-label="Delete comment" title="Delete comment" onClick={() => notes.remove(c.id)}><Trash2 size={12} /></button>
-        </div>
-      ))}
+      {list.map((c) => <CommentCard key={c.id} c={c} notes={notes} />)}
       {open && <CommentEditor notes={notes} />}
+    </div>
+  );
+}
+
+function CommentCard({ c, notes }: { c: ReviewComment; notes: Notes }) {
+  const [title, ...rest] = c.text.split("\n");
+  return (
+    <div className={"diff-comment" + (c.author ? " is-agent" : "") + (c.skip ? " is-skipped" : "")}>
+      {c.author && (
+        <label className="diff-comment-who" title={c.skip ? "Left out when sending" : "Sent with the others"}>
+          <input type="checkbox" checked={!c.skip} onChange={() => notes.toggle(c.id)} aria-label={`Send ${TOOL_LABEL[c.author]}'s comment`} />
+          <ToolLogo tool={c.author} size={13} />
+        </label>
+      )}
+      <div className="diff-comment-text">
+        {c.author ? <><p><strong>{title}</strong>{c.severity && <span className={"diff-severity is-" + c.severity}>{c.severity}</span>}</p>{rest.length > 0 && <p>{rest.join("\n")}</p>}</> : <p>{c.text}</p>}
+      </div>
+      <button className="icon-btn" aria-label="Delete comment" title="Delete comment" onClick={() => notes.remove(c.id)}><Trash2 size={12} /></button>
     </div>
   );
 }

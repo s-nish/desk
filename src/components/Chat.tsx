@@ -1,159 +1,30 @@
+import { Markdown as SharedMarkdown } from "../markdown";
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { ArrowUp, GitBranch, Pencil, Trash2, FileText, Image as ImageIcon, Paperclip, Check, ChevronDown, ChevronRight, Ellipsis, Gauge, LoaderCircle, MessageSquarePlus, Plus, Search, Server, Slash, Square, SquareTerminal, UserRound, X } from "lucide-react";
-import { AGENTS, TOOL_LABEL, TOOL_SHORT, projectTree, useDesk } from "../store";
-import { addProjectsFromDialog, closeTab, openTerminal } from "../actions";
+import { ArrowUp, GitBranch, Pencil, Trash2, FileText, Image as ImageIcon, Paperclip, Check, ChevronDown, ChevronRight, Ellipsis, Gauge, LoaderCircle, Plus, Server, Slash, Square, SquareTerminal, UserRound, X } from "lucide-react";
+import { AGENTS, TOOL_LABEL, TOOL_SHORT, useDesk } from "../store";
+import { closeTab, openTerminal } from "../actions";
 import { TerminalPane, cleanTitle } from "./Workspace";
 import { Home } from "./Home";
-import { SidebarFooter } from "./SidebarFooter";
 import { useTabReorder } from "./useTabReorder";
 import { openBrowser } from "./Browser";
 import { ipc } from "../ipc";
 import { openMenu } from "./Menu";
-import { Accounts, Connections } from "./Sidebar";
-import { relativeTime } from "./Sessions";
 import {
-  CLAUDE_EFFORTS, CLAUDE_MODELS, CLAUDE_MODES, CODEX_MODES, LOCAL_COMMANDS, acpOptions, answer, releaseAcp, chatBusy, closeChat, codexModelList, commandList, loadAllSessions, loadClaudeCommands,
-  attach, attachBlob, detach, closeStripTab, markUnread, setWorktree, moveStripTab, loadCodexModels, loadSessions, newChat, showStripTab, openSession, send, sendNext, enqueue, unqueue, setAccount, setEffort, setMode, setModel, setTool, stop, useChats, type Attachment, type Chat, type ChatItem, type SlashCommand,
+  CLAUDE_EFFORTS, CLAUDE_MODELS, CLAUDE_MODES, CODEX_MODES, LOCAL_COMMANDS, acpOptions, answer, releaseAcp, chatBusy, closeChat, codexModelList, commandList, loadClaudeCommands,
+  attach, attachBlob, detach, closeStripTab, markUnread, setWorktree, moveStripTab, loadCodexModels, newChat, showStripTab, openSession, send, sendNext, enqueue, unqueue, setAccount, setEffort, setMode, setModel, setTool, stop, useChats, type Attachment, type Chat, type ChatItem, type SlashCommand,
 } from "../chat";
 import type { Agent, AgentSession, MenuItem, Project, TerminalTab } from "../types";
 import { isAcpAgent } from "../acp";
 import { ToolLogo } from "./ToolLogo";
+import { Radial, useRadial, type RadialItem } from "./Radial";
 import { deleteConversation, renameConversation } from "../sessionActions";
+import { RunInChip, SandboxHint, SandboxStrip } from "./Sandboxes";
 
 export function ToolGlyph({ tool, size = 13 }: { tool: Agent; size?: number }) {
   return <span className="tool-glyph" role="img" aria-label={TOOL_LABEL[tool]}><ToolLogo tool={tool} size={size} /></span>;
 }
 
-// Sidebar
-
-const SHOWN = 6;
-
-export function ChatSidebar() {
-  const projects = useDesk((s) => s.projects);
-  const query = useChats((s) => s.query);
-  const setQuery = useChats((s) => s.setQuery);
-  const activeProjectId = useDesk((s) => s.activeProjectId);
-  const accountCount = useDesk((s) => s.accounts.length);
-  const searchRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    loadAllSessions();
-    const onFocus = () => loadAllSessions();
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, [projects.length, accountCount]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.metaKey && !e.shiftKey && e.key.toLowerCase() === "f" && !(e.target as HTMLElement)?.closest?.(".cm-editor")) {
-        e.preventDefault();
-        searchRef.current?.focus();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
-  const roots = projectTree(projects).map((t) => t.root);
-  const startNew = () => {
-    const id = activeProjectId ?? roots[0]?.id;
-    if (id) newChat(id);
-    else void addProjectsFromDialog();
-  };
-
-  return (
-    <aside className="sidebar chat-sidebar">
-      <div className="chat-side-top">
-        <button className="chat-side-action" onClick={startNew}><MessageSquarePlus size={15} /><span>New chat</span><kbd>⌘N</kbd></button>
-        <label className="chat-side-search">
-          <Search size={14} />
-          <input ref={searchRef} aria-label="Search chats" placeholder="Search chats" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setQuery("")} />
-          {query && <button className="icon-btn" aria-label="Clear search" onClick={() => setQuery("")}><X size={12} /></button>}
-        </label>
-      </div>
-      <header className="side-header chat-side-header">
-        <h2>Projects</h2>
-        <button className="icon-btn" aria-label="Add project folder" title="Add project folder (⌘O)" onClick={() => void addProjectsFromDialog()}><Plus size={14} /></button>
-      </header>
-      <div className="side-scroll chat-side-scroll">
-        {roots.map((p) => <ProjectChats key={p.id} project={p} query={query.trim().toLowerCase()} />)}
-        {roots.length === 0 && <button className="side-empty" onClick={() => void addProjectsFromDialog()}>Add a project folder to start chatting</button>}
-      </div>
-      <Connections />
-      <Accounts />
-      <SidebarFooter />
-    </aside>
-  );
-}
-
-interface Row { key: string; title: string; tool: Agent; updated: number; session?: AgentSession; chat?: Chat }
-
-function ProjectChats({ project, query }: { project: Project; query: string }) {
-  const sessions = useChats((s) => s.sessions[project.path]);
-  const chats = useChats((s) => s.chats);
-  const activeId = useChats((s) => s.activeId);
-  const termId = useChats((s) => s.termId);
-  const [expanded, setOpen] = useExpanded(project.id);
-  const open = expanded || !!query;
-  const [all, setAll] = useState(false);
-
-  const rows = useMemo(() => {
-    const live = Object.values(chats).filter((c) => c.projectId === project.id);
-    const out: Row[] = [];
-    // Chats started here that the CLI hasn't listed yet go first.
-    for (const c of live) {
-      if (!c.items.length) continue;
-      if (!sessions?.some((s) => s.tool === c.tool && s.id === c.sessionId)) out.push({ key: c.id, title: c.title, tool: c.tool, updated: Date.now(), chat: c });
-    }
-    for (const s of sessions ?? []) out.push({ key: s.tool + s.id, title: s.title, tool: s.tool, updated: s.updated, session: s, chat: live.find((c) => c.tool === s.tool && c.sessionId === s.id) });
-    return query ? out.filter((r) => `${r.title} ${r.session?.prompt ?? ""}`.toLowerCase().includes(query)) : out;
-  }, [sessions, chats, project.id, query]);
-
-  if (query && !rows.length && !project.name.toLowerCase().includes(query)) return null;
-  const shown = all || query ? rows : rows.slice(0, SHOWN);
-  const menu = (at: Element | { x: number; y: number }) => openMenu(at, [
-    ...chatAgents().map((tool) => ({ label: `New ${TOOL_LABEL[tool]} chat`, icon: <ToolLogo tool={tool} size={14} />, onSelect: () => newChat(project.id, tool) })),
-    { separator: true },
-    { label: "Refresh", onSelect: () => void loadSessions(project) },
-    { label: "Reveal in Finder", onSelect: () => void ipc.reveal(project.path) },
-  ]);
-  return (
-    <section className="chat-project">
-      <div className="chat-project-head" onContextMenu={(e) => { e.preventDefault(); menu({ x: e.clientX, y: e.clientY }); }}>
-        <button className="chat-project-name" aria-expanded={open} onClick={() => setOpen(!expanded)} title={project.path}>
-          <ChevronRight size={12} className={"chat-project-caret" + (open ? " is-open" : "")} />
-          <span>{project.name}</span>
-          {!open && rows.length > 0 && <span className="chat-project-count">{rows.length}</span>}
-          {rows.some((r) => chatBusy(r.chat)) && !open && <span className="chat-dot is-running" />}
-        </button>
-        <button className="icon-btn row-more" aria-label={`New chat in ${project.name}`} title="New chat" onClick={() => newChat(project.id)}><Plus size={13} /></button>
-        <button className="icon-btn row-more" aria-label={`Actions for ${project.name}`} onClick={(e) => menu(e.currentTarget)}><Ellipsis size={13} /></button>
-      </div>
-      {open && <>
-        {shown.map((r) => {
-          const busy = chatBusy(r.chat) ?? (r.chat?.unread ? "unread" : null);
-          return (
-            <button
-              key={r.key}
-              className={"chat-row" + (r.chat && r.chat.id === activeId && !termId ? " is-active" : "")}
-              title={`${r.title}${r.session ? `\n${TOOL_LABEL[r.tool]}, ${relativeTime(r.updated)}` : ""}`}
-              onClick={() => (r.chat ? (useChats.getState().select(r.chat.id), useDesk.getState().selectProject(project.id)) : r.session && openSession(r.session, project))}
-              onContextMenu={(e) => { e.preventDefault(); chatMenu(r.chat, { x: e.clientX, y: e.clientY }, r.session, project); }}
-            >
-              <ToolGlyph tool={r.tool} />
-              <span className="chat-row-title">{r.title}</span>
-              {busy ? <span className={"chat-dot is-" + busy} aria-label={busy === "waiting" ? "Waiting for you" : "Working"} /> : <span className="chat-row-time">{shortTime(r.updated)}</span>}
-            </button>
-          );
-        })}
-        {!query && rows.length > SHOWN && <button className="chat-more" onClick={() => setAll(!all)}>{all ? "Show less" : `Show ${rows.length - SHOWN} more`}</button>}
-        {!rows.length && !query && <p className="chat-none">No chats yet</p>}
-      </>}
-    </section>
-  );
-}
 
 /** Claude Code and Codex, plus the other agents once they have an account. */
 export function chatAgents(): Agent[] {
@@ -602,6 +473,8 @@ function Composer({ chat }: { chat: Chat }) {
 
   return (
     <div className="chat-composer-wrap">
+      {chat.where && <SandboxStrip chat={chat} />}
+      <SandboxHint chat={chat} />
       <div
         className="chat-composer"
         onDragOver={(e) => { if (e.dataTransfer.types.includes("desk/path")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; } }}
@@ -684,23 +557,24 @@ function Composer({ chat }: { chat: Chat }) {
             ? <AgentPicker chat={chat} />
             : <span className="chat-chip is-static chat-agent-static" title={TOOL_LABEL[chat.tool]}><ToolGlyph tool={chat.tool} size={14} /><span className="chat-agent-name">{TOOL_SHORT[chat.tool]}</span></span>}
           <button className="chat-chip" disabled={!fresh} title={fresh ? "Account" : `Account: ${account?.name}. A conversation stays with the account it started on.`} onClick={(e) => pick(e.currentTarget, accounts.filter((a) => a.kind === chat.tool).map((a) => ({ label: a.name, checked: a.id === chat.accountId, onSelect: () => setAccount(chat.id, a.id) })))}>
-            <UserRound size={12} />{account?.name ?? "Default"}{fresh && <ChevronDown size={11} />}
+            <UserRound size={12} /><span className="chip-label">{account?.name ?? "Default"}</span>{fresh && <ChevronDown size={11} />}
           </button>
           {showModes && <button className="chat-chip" title={mode.hint} disabled={acp && !modes.length} onClick={(e) => pick(e.currentTarget, modes.map((m) => ({ label: m.label, hint: m.hint, checked: acp ? m.id === (chat.mode || acpMode?.current) : m.id === chat.mode, onSelect: () => setMode(chat.id, m.id) })))}>
             {mode.label}<ChevronDown size={11} />
           </button>}
-          {fresh && repo && !project?.worktreeOf
+          <RunInChip chat={chat} fresh={fresh} repo={repo} />
+          {fresh && repo && !project?.worktreeOf && !chat.where
             ? <button className="chat-chip" role="switch" aria-checked={!!chat.worktree} title={chat.worktree ? "Your first message creates a branch and worktree for this task, from the latest main. Click to work in the project folder instead." : "Click to give this task its own branch and worktree, so it doesn't touch your project folder."} onClick={() => setWorktree(chat.id, !chat.worktree)}>
-                <GitBranch size={12} />{chat.worktree ? "New worktree" : "Project folder"}
+                <GitBranch size={12} /><span className="chip-label">{chat.worktree ? "New worktree" : "Project folder"}</span>
               </button>
-            : project?.worktreeOf && <span className="chat-chip is-static" title={`Worktree: ${project.path}`}><GitBranch size={12} />{project.branch ?? project.name}</span>}
+            : project?.worktreeOf && <span className="chat-chip is-static" title={`Worktree: ${project.path}`}><GitBranch size={12} /><span className="chip-label">{project.branch ?? project.name}</span></span>}
           <button className="chat-chip is-icon" aria-label="Attach files" title="Attach files or images (or paste, or drop them here)" onClick={() => void browse()}><Paperclip size={13} /></button>
           <span className="chat-composer-gap" />
           <button className="chat-chip" disabled={busy} title="Model" onClick={(e) => pick(e.currentTarget, models.map((m) => ({ label: m.label, hint: m.description, checked: m.id === chat.model, onSelect: () => setModel(chat.id, m.id) })))}>
             {model?.label ?? chat.model}<ChevronDown size={11} />
           </button>
           {showEffort && <button className="chat-chip" disabled={busy} title="Effort: how hard the model thinks" onClick={(e) => pick(e.currentTarget, [{ label: "Default effort", checked: !chat.effort, onSelect: () => setEffort(chat.id, "") }, ...efforts.map((x) => ({ label: effortName(x), checked: x === chat.effort, onSelect: () => setEffort(chat.id, x) }))])}>
-            <Gauge size={12} />{chat.effort ? effortName(chat.effort) : "Effort"}<ChevronDown size={11} />
+            <Gauge size={12} /><span className="chip-label">{chat.effort ? effortName(chat.effort) : "Effort"}</span><ChevronDown size={11} />
           </button>}
           {busy && <button className="chat-send is-stop" aria-label="Stop" title="Stop this turn (queued messages wait)" onClick={() => stop(chat.id)}><Square size={11} fill="currentColor" /></button>}
           {(!busy || text.trim() || pending.length > 0) && <button className={"chat-send" + (busy ? " is-queue" : "")} aria-label={busy ? "Queue" : "Send"} title={busy ? "Queue (Enter): sends when this turn finishes" : "Send (Enter)"} disabled={!text.trim() && !pending.length} onClick={submit}><ArrowUp size={15} /></button>}
@@ -716,98 +590,27 @@ function Composer({ chat }: { chat: Chat }) {
  * Every agent chats here.
  */
 function AgentPicker({ chat }: { chat: Chat }) {
-  const [open, setOpen] = useState(false);
-  const [shown, setShown] = useState(false);
-  const [hover, setHover] = useState<Agent | null>(null);
-  const [at, setAt] = useState({ x: 0, y: 0 });
-  const btn = useRef<HTMLButtonElement>(null);
-  const items = useRef<(HTMLButtonElement | null)[]>([]);
-
-  const close = (focus = true) => {
-    setShown(false);
-    setTimeout(() => setOpen(false), 180);
-    if (focus) btn.current?.focus();
-  };
-  const toggle = () => {
-    if (open) return close();
-    const r = btn.current!.getBoundingClientRect();
-    setAt({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
-    setHover(chat.tool);
-    setOpen(true);
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      setShown(true);
-      items.current[AGENTS.indexOf(chat.tool)]?.focus();
-    }));
-  };
-  const choose = (agent: Agent) => {
-    setTool(chat.id, agent);
-    close();
-  };
-
-  // An arc opening up and to the right of the button, so it never leaves the window.
-  const radius = 118;
-  const from = 180, to = 0, lift = 48;
-  const spot = (i: number) => {
-    const a = ((from + ((to - from) * i) / (AGENTS.length - 1)) * Math.PI) / 180;
-    return { x: Math.cos(a) * radius + radius * 0.82, y: -Math.sin(a) * radius - lift };
-  };
-  const label = hover ? TOOL_LABEL[hover] : "";
-  const installed = useDesk((s) => (hover ? hover === "claude" || hover === "codex" || s.accounts.some((a) => a.kind === hover) : true));
-
+  const radial = useRadial();
+  const accounts = useDesk((s) => s.accounts);
+  const items: RadialItem[] = AGENTS.map((agent) => {
+    const set = agent === "claude" || agent === "codex" || accounts.some((a) => a.kind === agent);
+    return { key: agent, icon: <ToolLogo tool={agent} size={20} />, label: TOOL_LABEL[agent], sub: set ? "Chat here" : "Not set up yet", on: agent === chat.tool, onSelect: () => setTool(chat.id, agent) };
+  });
   return (
     <>
       <button
-        ref={btn}
-        className={"chat-agent" + (open ? " is-open" : "")}
+        className={"chat-agent" + (radial.opened ? " is-open" : "")}
         aria-haspopup="menu"
-        aria-expanded={open}
+        aria-expanded={radial.opened}
         aria-label={`Agent: ${TOOL_LABEL[chat.tool]}. Choose another`}
         title={`${TOOL_LABEL[chat.tool]} · choose an agent`}
-        onClick={toggle}
+        onClick={(e) => (radial.opened ? radial.close() : radial.open(e.currentTarget))}
       >
         <span className="chat-agent-icon"><ToolLogo tool={chat.tool} size={15} /></span>
         <span className="chat-agent-plus" aria-hidden="true"><Plus size={10} strokeWidth={3} /></span>
       </button>
       <span className="chat-agent-name">{TOOL_LABEL[chat.tool]}</span>
-      {open && createPortal(
-        <div className={"radial" + (shown ? " is-shown" : "")} onMouseDown={(e) => { if (e.target === e.currentTarget) close(false); }} onKeyDown={(e) => {
-          if (e.key === "Escape") { e.preventDefault(); close(); return; }
-          const i = items.current.findIndex((el) => el === document.activeElement);
-          const d = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
-          if (d) { e.preventDefault(); const n = (Math.max(i, 0) + d + AGENTS.length) % AGENTS.length; items.current[n]?.focus(); setHover(AGENTS[n]); }
-        }}>
-          <div className="radial-hub" style={{ left: at.x, top: at.y }} role="menu" aria-label="Choose an agent">
-            <svg className="radial-arc" width={radius * 2 + 80} height={radius + 70} style={{ left: -40 - radius * 0.18, top: -radius - lift - 40 }} aria-hidden="true">
-              <path d={`M ${40 + radius * 0.18 + spot(0).x} ${radius + lift + 40 + spot(0).y} A ${radius} ${radius} 0 0 1 ${40 + radius * 0.18 + spot(AGENTS.length - 1).x} ${radius + lift + 40 + spot(AGENTS.length - 1).y}`} />
-            </svg>
-            {AGENTS.map((agent, i) => {
-              const p = spot(i);
-              const on = agent === chat.tool;
-              return (
-                <button
-                  key={agent}
-                  ref={(el) => { items.current[i] = el; }}
-                  role="menuitemradio"
-                  aria-checked={on}
-                  aria-label={TOOL_LABEL[agent]}
-                  className={"radial-item" + (on ? " is-on" : "")}
-                  style={{ "--x": `${p.x}px`, "--y": `${p.y}px`, "--i": i } as React.CSSProperties}
-                  onMouseEnter={() => setHover(agent)}
-                  onFocus={() => setHover(agent)}
-                  onClick={() => choose(agent)}
-                >
-                  <ToolLogo tool={agent} size={20} />
-                </button>
-              );
-            })}
-            <div className="radial-label" aria-live="polite" style={{ left: radius * 0.82, top: -lift - 34 }}>
-              <strong>{label}</strong>
-              <span>{installed ? "Chat here" : "Not set up yet"}</span>
-            </div>
-          </div>
-        </div>,
-        document.body,
-      )}
+      {radial.state && <Radial state={radial.state} items={items} label="Choose an agent" onClosed={radial.close} />}
     </>
   );
 }
@@ -840,117 +643,9 @@ function AttachmentChip({ attachment, onRemove }: { attachment: Attachment; onRe
   );
 }
 
-// Markdown: enough for agent replies (headings, lists, code, quotes, tables, emphasis, links).
-// Built as React elements, so nothing in a reply is ever run as HTML.
-
+// Markdown lives in ../markdown (the phone page uses it too); links open Desk's way here.
 function Markdown({ text }: { text: string }) {
-  const blocks = useMemo(() => parseBlocks(text), [text]);
-  return <div className="md">{blocks}</div>;
-}
-
-function parseBlocks(text: string): React.ReactNode[] {
-  const lines = text.replace(/\r\n/g, "\n").split("\n");
-  const out: React.ReactNode[] = [];
-  let i = 0;
-  let key = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-    const fence = /^\s*(```|~~~)\s*([\w+-]*)/.exec(line);
-    if (fence) {
-      const body: string[] = [];
-      i++;
-      while (i < lines.length && !lines[i].trim().startsWith(fence[1])) body.push(lines[i++]);
-      i++;
-      out.push(<CodeBlock key={key++} lang={fence[2]} code={body.join("\n")} />);
-      continue;
-    }
-    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
-    if (heading) {
-      const level = Math.min(heading[1].length + 2, 6);
-      const Tag = `h${level}` as "h3";
-      out.push(<Tag key={key++}>{inline(heading[2])}</Tag>);
-      i++;
-      continue;
-    }
-    if (/^\s*([-*_])\s*\1\s*\1[\s\-*_]*$/.test(line)) {
-      out.push(<hr key={key++} />);
-      i++;
-      continue;
-    }
-    if (/^\s*>/.test(line)) {
-      const body: string[] = [];
-      while (i < lines.length && /^\s*>/.test(lines[i])) body.push(lines[i++].replace(/^\s*>\s?/, ""));
-      out.push(<blockquote key={key++}>{parseBlocks(body.join("\n"))}</blockquote>);
-      continue;
-    }
-    if (/^\s*\|.*\|\s*$/.test(line) && i + 1 < lines.length && /^\s*\|?\s*:?-{2,}/.test(lines[i + 1])) {
-      const cells = (l: string) => l.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
-      const head = cells(line);
-      i += 2;
-      const rows: string[][] = [];
-      while (i < lines.length && /^\s*\|/.test(lines[i])) rows.push(cells(lines[i++]));
-      out.push(
-        <div className="md-table" key={key++}><table><thead><tr>{head.map((c, j) => <th key={j}>{inline(c)}</th>)}</tr></thead><tbody>{rows.map((r, j) => <tr key={j}>{r.map((c, k) => <td key={k}>{inline(c)}</td>)}</tr>)}</tbody></table></div>,
-      );
-      continue;
-    }
-    const list = /^(\s*)([-*+]|\d+[.)])\s+/.exec(line);
-    if (list) {
-      const ordered = /\d/.test(list[2]);
-      const items: string[][] = [];
-      const indent = list[1].length;
-      while (i < lines.length) {
-        const m = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(lines[i]);
-        if (m && m[1].length <= indent) items.push([m[3]]);
-        else if (lines[i].trim() && (/^\s{2,}/.test(lines[i]) || m) && items.length) items[items.length - 1].push(lines[i].replace(new RegExp(`^\\s{0,${indent + 3}}`), ""));
-        else if (!lines[i].trim() && i + 1 < lines.length && /^(\s+)([-*+]|\d+[.)])\s+|^\s{2,}\S/.test(lines[i + 1]) && items.length) items[items.length - 1].push("");
-        else break;
-        i++;
-      }
-      const Tag = ordered ? "ol" : "ul";
-      out.push(<Tag key={key++}>{items.map((body, j) => <li key={j}>{body.length === 1 ? inline(body[0]) : parseBlocks(body.join("\n"))}</li>)}</Tag>);
-      continue;
-    }
-    if (!line.trim()) {
-      i++;
-      continue;
-    }
-    const para: string[] = [];
-    while (i < lines.length && lines[i].trim() && !/^\s*(```|~~~|#{1,6}\s|>|([-*+]|\d+[.)])\s)/.test(lines[i])) para.push(lines[i++]);
-    if (!para.length) para.push(lines[i++]);
-    out.push(<p key={key++}>{para.map((l, j) => <Fragment key={j}>{j > 0 && <br />}{inline(l)}</Fragment>)}</p>);
-  }
-  return out;
-}
-
-function CodeBlock({ lang, code }: { lang: string; code: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <div className="md-code">
-      <div className="md-code-head"><span>{lang || "text"}</span><button onClick={() => { void navigator.clipboard.writeText(code); setCopied(true); setTimeout(() => setCopied(false), 1200); }}>{copied ? "Copied" : "Copy"}</button></div>
-      <pre><code>{code}</code></pre>
-    </div>
-  );
-}
-
-const INLINE = /(`+)([\s\S]*?)\1|\*\*([^*]+)\*\*|__([^_]+)__|\*([^*\s][^*]*)\*|_([^_\s][^_]*)_|~~([^~]+)~~|\[([^\]]+)\]\(([^)\s]+)\)|(https?:\/\/[^\s<>)]+)/g;
-
-function inline(text: string): React.ReactNode[] {
-  const out: React.ReactNode[] = [];
-  let last = 0;
-  let key = 0;
-  for (const m of text.matchAll(INLINE)) {
-    if (m.index! > last) out.push(text.slice(last, m.index));
-    if (m[1]) out.push(<code key={key++}>{m[2]}</code>);
-    else if (m[3] || m[4]) out.push(<strong key={key++}>{inline(m[3] ?? m[4])}</strong>);
-    else if (m[5] || m[6]) out.push(<em key={key++}>{inline(m[5] ?? m[6])}</em>);
-    else if (m[7]) out.push(<del key={key++}>{m[7]}</del>);
-    else if (m[8]) out.push(<Link key={key++} href={m[9]}>{inline(m[8])}</Link>);
-    else if (m[10]) out.push(<Link key={key++} href={m[10]}>{m[10]}</Link>);
-    last = m.index! + m[0].length;
-  }
-  if (last < text.length) out.push(text.slice(last));
-  return out;
+  return <SharedMarkdown text={text} link={Link} />;
 }
 
 function Link({ href, children }: { href: string; children: React.ReactNode }) {

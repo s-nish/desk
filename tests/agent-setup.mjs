@@ -1,0 +1,30 @@
+// Settings ▸ Agent setup: add an MCP server with a key; nothing saved in settings but the name.
+import { chromium } from 'playwright-core';
+import assert from 'node:assert/strict';
+import { mockDesktop } from './desktop-mock.mjs';
+
+const base = process.env.DESK_TEST_URL || 'http://localhost:1420';
+const b = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
+const p = await b.newPage({ viewport: { width: 1200, height: 800 } });
+const errors = []; p.on('pageerror', (e) => errors.push(e.message));
+await p.addInitScript(mockDesktop);
+await p.goto(base); await p.waitForTimeout(1200);
+await p.keyboard.press('Meta+Comma');
+await p.getByRole('button', { name: /Agent setup/ }).first().click();
+await p.getByText('Open a project to see which agents read its rules.').waitFor();
+await p.getByRole('button', { name: /Add server/ }).click();
+await p.getByPlaceholder('github', { exact: true }).fill('bad name');
+assert.ok(await p.getByRole('button', { name: 'Save', exact: true }).isDisabled());
+await p.getByPlaceholder('github', { exact: true }).fill('github');
+await p.getByPlaceholder('npx -y @modelcontextprotocol/server-github').fill('npx -y @modelcontextprotocol/server-github');
+await p.getByPlaceholder('GITHUB_TOKEN').fill('GITHUB_TOKEN');
+if (process.env.DESK_SCREENSHOT) await p.screenshot({ path: process.env.DESK_SCREENSHOT.replace('.png', '-form.png') });
+await p.getByRole('button', { name: 'Save', exact: true }).click();
+await p.getByText(/server-github · every project/).waitFor();
+await p.getByLabel('Value for GITHUB_TOKEN').waitFor();
+if (process.env.DESK_SCREENSHOT) await p.screenshot({ path: process.env.DESK_SCREENSHOT.replace('.png', '-list.png') });
+await p.getByRole('switch', { name: 'Use github' }).click();
+assert.equal(await p.getByRole('switch', { name: 'Use github' }).getAttribute('aria-checked'), 'false');
+assert.deepEqual(errors, []);
+await b.close();
+console.log('PASS agent-setup: add, validate, key field, switch off');

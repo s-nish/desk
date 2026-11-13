@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { KNOWN_PROVIDERS, type Sandbox } from "./sandbox/types";
 import { EDITOR_THEMES, type EditorThemeId } from "./editorThemes";
 import { THEMES, type ThemeId } from "./themeCatalog";
 import type { AcpSessionEntry, Account, AccountKind, Agent, DetectedAccount, FileTab, Identity, Layout, Project, SshConnection, Tab, TabTool, TerminalTab, Tool, UsageLimits } from "./types";
@@ -26,6 +27,8 @@ export const ACCOUNT_KINDS: AccountKind[] = [...AGENTS, "github"];
 /** The variable that points each CLI at an account's folder. Cursor Agent and Grok
  *  have no documented one, so Desk gives them a single (default) account. */
 export const ENV_VAR: Record<AccountKind, string | null> = { github: "GH_CONFIG_DIR", claude: "CLAUDE_CONFIG_DIR", codex: "CODEX_HOME", gemini: "GEMINI_CLI_HOME", cursor: null, grok: null, opencode: null };
+import type { McpServer } from "./mcp";
+
 export const isChatTool = (kind: AccountKind | TabTool): kind is Tool => kind === "claude" || kind === "codex";
 
 export const accountId = (kind: AccountKind, dir: string | null) => `${kind}:${dir ?? "default"}`;
@@ -81,12 +84,58 @@ export interface Preferences {
   chatToolsOpen: boolean;
   /** New chats start in their own Git worktree, made when the first message is sent. */
   chatWorktree: boolean;
+  /** Accounts you removed. Desk finds them on disk again at every launch, so it
+   *  remembers not to add them back. Adding the account again clears it. */
+  removedAccounts?: string[];
+  /** The notch: agents beside the camera, with Allow, Deny and reply. */
+  notch?: boolean;
+  /** When a notch card opens by itself. */
+  notchPeek?: "waiting" | "all" | "never";
+  /** 5-hour usage rings at the bottom of the open notch. */
+  notchRings?: boolean;
+  /** A pill under the menu bar on screens without a notch. */
+  notchOnOtherScreens?: boolean;
+  /**
+   * How sandbox chats work: "code" (default) runs the agent on this Mac and only
+   * the code in the sandbox; "agent" runs the agent there too.
+   */
+  sandboxMode?: "code" | "agent";
+  /** How long a sandbox run may go on without you, in hours; the provider stops it then. */
+  sandboxHours?: number;
+  /** Stop a sandbox that has had no running agent for 10 minutes (its disk is kept). */
+  sandboxAutoStop?: boolean;
+  /** Forward ports that open in a sandbox to localhost here (default on). */
+  forwardPorts?: boolean;
+  /** The one-line "run it in a sandbox" suggestion on long local tasks. */
+  sandboxHints?: boolean;
+  /** Projects where you said "Not now" to that suggestion. */
+  sandboxHintOff?: string[];
+  /** How sandboxes are made and prepared (Settings ▸ Sandboxes ▸ Startup). */
+  sandboxStartup?: SandboxStartup;
+  /** Phone remote over Tailscale (see remote.rs). Off by default. */
+  remote?: boolean;
+  /** MCP servers Desk hands every agent at launch (see src/mcp.ts). */
+  mcpServers?: McpServer[];
+}
+
+export interface SandboxStartup {
+  /** Runs in the sandbox's checkout after the code first arrives (e.g. npm install). */
+  script?: string;
+  /** Per project (by root project id), run after the shared script. */
+  projectScripts?: Record<string, string>;
+  /** Plain variables for agents and scripts in every sandbox. Not for secrets. */
+  env?: { key: string; value: string }[];
+  /** Extra Dockerfile lines for local Docker sandboxes, run as root. */
+  imageLines?: string;
+  /** Local Docker limits; Docker Cloud picks the nearest size. */
+  cpus?: number | null;
+  memoryGb?: number | null;
 }
 
 export const DEFAULT_PREFERENCES: Preferences = { theme: "electric", themeVersion: 2, animatedBackground: true, usageShow: "used", density: "comfortable", fontSize: 14, showProjectAccounts: false, accent: "neutral", showStatusBar: true, showPaths: false, showAccountEmails: false, accountColors: false, reduceMotion: false, terminalTheme: "desk", editorTheme: "desk", terminalColors: {}, cursorStyle: "bar", cursorBlink: true, smoothScroll: true, agentAlerts: true, usageLimits: true, alertBadge: true, alertBounce: true, systemNotifications: true, uiMode: "terminal", accentColor: "neutral", corners: "soft", chatFontSize: 14, chatWidth: "comfortable", chatToolsOpen: false, chatWorktree: false };
 
 export type Modal =
-  | { kind: "settings"; section?: string }
+  | { kind: "settings"; section?: string; provider?: import("./sandbox/types").ProviderId }
   | { kind: "ssh"; id: string | null; from?: "settings" }
   | { kind: "diff"; root: string; path: string; staged: boolean }
   | { kind: "worktree"; projectId: string }
@@ -125,6 +174,8 @@ export type DropZone = "left" | "right" | "top" | "bottom" | "center";
 
 interface Persisted {
   accounts: Account[];
+  /** Sandboxes you made, any number per project. */
+  sandboxes: Sandbox[];
   connections: SshConnection[];
   projects: Project[];
   activeProjectId: string | null;
@@ -165,6 +216,8 @@ interface DeskState extends Persisted {
   updateAccount(id: string, patch: Partial<Account>): void;
   removeAccount(id: string): void;
   saveConnection(connection: SshConnection): void;
+  saveSandbox(sandbox: Sandbox): void;
+  removeSandbox(id: string): void;
   removeConnection(id: string): void;
   setIdentity(id: string, identity: Identity): void;
   addTab(tab: Tab): void;
@@ -224,8 +277,9 @@ function identityOf(d: DetectedAccount): Identity {
   return { path: d.path, email: d.email, org: d.org, signedIn: d.signedIn };
 }
 
-/** Adds any detected config dirs we don't know yet, and always keeps a default account per tool. */
-function mergeAccounts(accounts: Account[], detected: DetectedAccount[]) {
+/** Adds any detected config dirs we don't know yet, and keeps a default account per tool,
+ *  except the ones you removed. */
+export function mergeAccounts(accounts: Account[], detected: DetectedAccount[], removed: string[] = []) {
   const out = accounts.map((a) => (LEGACY_COLORS[a.color] ? { ...a, color: LEGACY_COLORS[a.color] } : a));
   const identities: Record<string, Identity> = {};
   const wanted: { kind: AccountKind; dir: string | null }[] = [
@@ -235,7 +289,7 @@ function mergeAccounts(accounts: Account[], detected: DetectedAccount[]) {
   ];
   for (const w of wanted) {
     const id = accountId(w.kind, w.dir);
-    if (!out.some((a) => a.id === id)) {
+    if (!out.some((a) => a.id === id) && !removed.includes(id)) {
       out.push({ id, kind: w.kind, dir: w.dir, name: nameFromDir(w.kind, w.dir), color: nextColor(out) });
     }
   }
@@ -258,6 +312,7 @@ function showTabs(tab: Tab | undefined) {
 export const useDesk = create<DeskState>((set, get) => ({
   loaded: false,
   accounts: [],
+  sandboxes: [],
   connections: [],
   projects: [],
   activeProjectId: null,
@@ -278,7 +333,7 @@ export const useDesk = create<DeskState>((set, get) => ({
   limits: {},
 
   init(saved, detected) {
-    const { accounts, identities } = mergeAccounts(saved?.accounts ?? [], detected);
+    const { accounts, identities } = mergeAccounts(saved?.accounts ?? [], detected, saved?.preferences?.removedAccounts);
     const projects = saved?.projects ?? [];
     const activeProjectId = projects.some((p) => p.id === saved?.activeProjectId)
       ? saved!.activeProjectId!
@@ -297,6 +352,8 @@ export const useDesk = create<DeskState>((set, get) => ({
       accounts,
       identities,
       connections: saved?.connections ?? [],
+      // Sandboxes of a provider Desk no longer offers (Render) are dropped.
+      sandboxes: (saved?.sandboxes ?? []).filter((x) => projects.some((p) => p.id === x.projectId) && KNOWN_PROVIDERS.includes(x.provider)),
       projects,
       activeProjectId,
       layout: { ...DEFAULT_LAYOUT, ...saved?.layout },
@@ -305,7 +362,7 @@ export const useDesk = create<DeskState>((set, get) => ({
   },
 
   mergeDetected(detected) {
-    const { accounts, identities } = mergeAccounts(get().accounts, detected);
+    const { accounts, identities } = mergeAccounts(get().accounts, detected, get().preferences.removedAccounts);
     set((s) => ({ accounts, identities: { ...s.identities, ...identities } }));
   },
 
@@ -373,7 +430,10 @@ export const useDesk = create<DeskState>((set, get) => ({
   },
 
   addAccount(account) {
-    set((s) => ({ accounts: [...s.accounts.filter((a) => a.id !== account.id), account] }));
+    set((s) => ({
+      accounts: [...s.accounts.filter((a) => a.id !== account.id), account],
+      preferences: { ...s.preferences, removedAccounts: (s.preferences.removedAccounts ?? []).filter((id) => id !== account.id) },
+    }));
   },
 
   updateAccount(id, patch) {
@@ -383,12 +443,21 @@ export const useDesk = create<DeskState>((set, get) => ({
   removeAccount(id) {
     set((s) => ({
       accounts: s.accounts.filter((a) => a.id !== id),
+      preferences: { ...s.preferences, removedAccounts: [...(s.preferences.removedAccounts ?? []).filter((r) => r !== id), id] },
       projects: s.projects.map((p) => ({
         ...p,
         claudeAccountId: p.claudeAccountId === id ? null : p.claudeAccountId,
         codexAccountId: p.codexAccountId === id ? null : p.codexAccountId,
       })),
     }));
+  },
+
+  saveSandbox(sandbox) {
+    set((s) => ({ sandboxes: s.sandboxes.some((x) => x.id === sandbox.id) ? s.sandboxes.map((x) => (x.id === sandbox.id ? sandbox : x)) : [...s.sandboxes, sandbox] }));
+  },
+
+  removeSandbox(id) {
+    set((s) => ({ sandboxes: s.sandboxes.filter((x) => x.id !== id) }));
   },
 
   saveConnection(connection) {
@@ -572,7 +641,7 @@ export function sessionEnv(accounts: Account[], project: Project | undefined, ov
 }
 
 export function persistedSlice(s: DeskState): Persisted & { version: number } {
-  return { version: 4, tabs: s.tabs, activeTabId: s.activeTabId, secondaryTabId: s.secondaryTabId, focusedPane: s.focusedPane, accounts: s.accounts, connections: s.connections, projects: s.projects, activeProjectId: s.activeProjectId, layout: s.layout, preferences: s.preferences };
+  return { version: 4, tabs: s.tabs, activeTabId: s.activeTabId, secondaryTabId: s.secondaryTabId, focusedPane: s.focusedPane, accounts: s.accounts, sandboxes: s.sandboxes, connections: s.connections, projects: s.projects, activeProjectId: s.activeProjectId, layout: s.layout, preferences: s.preferences };
 }
 
 export function shortPath(path: string, home: string | null) {

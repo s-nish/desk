@@ -12,6 +12,7 @@ import { openSession } from "./chat";
 import type { Account, AccountKind, Agent, AgentSession, FileTab, Project, SshConnection, TabTool, TerminalTab, Tool, Worktree } from "./types";
 import type { DropZone } from "./store";
 import type { SessionSpec } from "./terminals";
+import { claudeMcpArgs, codexMcpArgs, secretEnv, serversFor } from "./mcp";
 
 /** Runs `script` in the user's shell; `env VAR=… cmd` only takes a single program. */
 const inShell = (script: string) => `"$SHELL" -c ${shellWord(script)}`;
@@ -79,7 +80,7 @@ export function activeTab() {
 
 // Terminals
 
-export function openTerminal(projectId: string, tool: TabTool, opts: { accountId?: string; cwd?: string; sshId?: string; sessionId?: string; resume?: string; command?: string } = {}) {
+export function openTerminal(projectId: string, tool: TabTool, opts: { accountId?: string; cwd?: string; sshId?: string; sessionId?: string; resume?: string; command?: string; sandboxId?: string; remote?: TerminalTab["remote"]; codeSandbox?: string } = {}) {
   const s = desk();
   const project = s.projects.find((p) => p.id === projectId);
   if (!project) return;
@@ -95,6 +96,8 @@ export function openTerminal(projectId: string, tool: TabTool, opts: { accountId
     ...(tool === "claude" ? { sessionId: opts.sessionId ?? uid() } : {}),
     ...(tool !== "claude" && tool !== "shell" && opts.resume ? { resume: opts.resume } : {}),
     ...(tool === "shell" && opts.command ? { command: opts.command } : {}),
+    ...(opts.sandboxId && opts.remote ? { sandboxId: opts.sandboxId, remote: opts.remote } : {}),
+    ...(opts.codeSandbox ? { codeSandbox: opts.codeSandbox } : {}),
     cwd: opts.cwd ?? project.path,
     title: "",
     status: "starting",
@@ -116,6 +119,7 @@ export async function terminalSpec(tabId: string): Promise<SessionSpec> {
   const tab = s.tabs.find((t) => t.id === tabId) as TerminalTab | undefined;
   const project = s.projects.find((p) => p.id === tab?.projectId);
   if (!tab) return { cwd: "/", command: null, env: {}, unset: [] };
+  if (tab.sandboxId) return (await import("./sandbox/terminal")).sandboxTerminalSpec(tab);
   // Resolved fresh at every spawn (a restart picks up a changed project account)
   // and recorded, so the tab keeps showing what this session really runs as.
   const resolve = (kind: Agent) =>
@@ -129,10 +133,31 @@ export async function terminalSpec(tabId: string): Promise<SessionSpec> {
   if (untrusted && tab.tool !== "claude" && tab.tool !== "codex" && tab.tool !== "shell") {
     return { cwd: tab.cwd, command: `printf '%s\\n' ${shellWord(`${TOOL_LABEL[tab.tool]} doesn't open in untrusted checkouts. Use Claude Code or Codex here; they start without this folder's own settings.`)}; exit 1`, keepShell: false, ...env };
   }
+  // Desk's MCP servers, passed on the command line; their keys go in the environment.
+  const mcp = !tab.sshId && (tab.tool === "claude" || tab.tool === "codex") ? serversFor(s.preferences.mcpServers, project?.worktreeOf ?? project?.id ?? null, tab.tool, untrusted) : [];
+  Object.assign(env.env, secretEnv(mcp));
+  const mcpWords = (args: string[]) => (args.length ? ` ${args.map(shellWord).join(" ")}` : "");
+  // Agent here, code in a sandbox: desk-sandbox on PATH, and the agent told to use it.
+  let bridgeWords = "";
+  let bridgePrefix = "";
+  if (tab.codeSandbox && !tab.sshId) {
+    const sandbox = s.sandboxes.find((x) => x.id === tab.codeSandbox);
+    if (!sandbox) return { cwd: tab.cwd, command: "printf '%s\\n' 'This tab'\\''s sandbox was removed. Open a new tab to pick another.'; exit 1", keepShell: false, ...env };
+    try {
+      const { readyBridge, codexBridgeArgs } = await import("./sandbox/bridge");
+      const root = project ? rootProject(project) : { id: tab.projectId, name: "project" };
+      const bridge = await readyBridge(sandbox, root, () => {});
+      Object.assign(env.env, { DESK_SANDBOX_CONF: bridge.env.DESK_SANDBOX_CONF });
+      bridgePrefix = `PATH=${shellWord(bridge.env.DESK_PATH_PREPEND)}:"$PATH"; export PATH; `;
+      bridgeWords = tab.tool === "claude" ? ` --append-system-prompt ${shellWord(bridge.instructions)}` : tab.tool === "codex" ? ` ${codexBridgeArgs(bridge, "workspace-write").map(shellWord).join(" ")}` : "";
+    } catch (e) {
+      return { cwd: tab.cwd, command: `printf '%s\\n' ${shellWord(`Couldn't start the sandbox: ${e instanceof Error ? e.message : String(e)}`)}; exit 1`, keepShell: false, ...env };
+    }
+  }
   const claude = tab.tool === "claude" && !tab.sshId
-    ? `${await claudeCommand(overrides.claude.dir, tab.cwd, env.env)}${untrusted ? ` ${UNTRUSTED_CLAUDE_ARGS.join(" ")} --permission-mode plan` : ""}`
+    ? `${bridgePrefix}${await claudeCommand(overrides.claude.dir, tab.cwd, env.env)}${untrusted ? ` ${UNTRUSTED_CLAUDE_ARGS.join(" ")} --permission-mode plan` : ""}${mcpWords(claudeMcpArgs(mcp))}${bridgeWords}`
     : "claude";
-  const codex = untrusted ? `codex ${UNTRUSTED_CODEX_ARGS.map(shellWord).join(" ")}` : "codex";
+  const codex = `${bridgePrefix}${untrusted ? `codex ${UNTRUSTED_CODEX_ARGS.map(shellWord).join(" ")}` : "codex"}${tab.tool === "codex" ? mcpWords(codexMcpArgs(mcp)) : ""}${bridgeWords}`;
   if (tab.sshId) {
     const connection = s.connections.find((c) => c.id === tab.sshId);
     // The session ends with the command, so Enter reconnects (and fills the password again).
@@ -664,6 +689,7 @@ export function closeTab(tabId: string) {
     });
     return;
   }
+  if (tab.type === "terminal" && tab.sandboxId) void import("./sandbox/terminal").then((m) => m.endSandboxTerminal(tab));
   disposeTab(tabId);
 }
 

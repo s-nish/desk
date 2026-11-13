@@ -34,10 +34,16 @@ import { isLightTheme, resolvedTheme } from "./appearance";
 import { PIXEL_THEMES } from "./themeCatalog";
 import { updateEditorAppearance } from "./editors";
 import { clearTerminal, pasteIntoTerminal, updateTerminalAppearance } from "./terminals";
-import { Sidebar } from "./components/Sidebar";
-import { ChatSidebar, ChatView } from "./components/Chat";
+import { ChatView } from "./components/Chat";
 import { takeNotified } from "./notify";
 import { watchTray } from "./tray";
+import { watchPhone } from "./phoneBridge";
+import { watchNotch } from "./notchBridge";
+import { watchSandboxes } from "./sandbox";
+import { AgentSidebar } from "./components/AgentSidebar";
+import { watchRemote } from "./components/Phone";
+import { watchSandboxChats } from "./sandbox/chats";
+import { watchPorts } from "./sandbox/ports";
 import { attach, closeChat, closeStripTab, markUnread, newChat, showStripTab, useChats } from "./chat";
 import { Workspace } from "./components/Workspace";
 import { BrowserPane } from "./components/Browser";
@@ -246,6 +252,12 @@ export function App() {
     window.addEventListener("keydown", onKeyDown, true);
     const unwatch = watchAttention();
     const untray = watchTray();
+    const unnotch = watchNotch();
+    const unphone = watchPhone();
+    const unsandboxes = watchSandboxes();
+    const unsandboxChats = watchSandboxChats();
+    const unports = watchPorts();
+    const unremote = watchRemote();
     // Limits move slowly and are only re-read while Desk is on screen.
     const limits = setInterval(() => { if (!document.hidden) void refreshLimits(); }, 60_000);
     // Live numbers from Claude and Codex themselves, so they move even when nothing runs.
@@ -280,6 +292,10 @@ export function App() {
       unsubscribe();
       unwatch();
       untray();
+      unnotch();
+      unphone();
+      unsandboxes(); unsandboxChats();
+      unports(); unremote();
       clearInterval(limits);
       clearInterval(live);
       window.removeEventListener("keydown", onKeyDown, true);
@@ -297,7 +313,7 @@ export function App() {
         {layout.sidebarOpen && (
           <>
             <div className="col" style={{ width: layout.sidebarWidth }}>
-              {preferences.uiMode === "chat" ? <ChatSidebar /> : <Sidebar />}
+              <AgentSidebar />
             </div>
             <Splitter value={layout.sidebarWidth} side="left" min={190} max={420} onChange={(v) => setLayout({ sidebarWidth: v })} />
           </>

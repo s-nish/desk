@@ -12,6 +12,11 @@
 
 import { create } from "zustand";
 import { ipc } from "./ipc";
+import { agentKill, agentSpawn, agentWrite } from "./sandbox/transport";
+import { acpMcpServers, claudeMcpArgs, codexMcpArgs, secretEnv, serversFor } from "./mcp";
+import { bridgeOf, prepareBridge, prepareRemote, remoteTarget } from "./sandbox/chats";
+import { chatSandboxMode, codexBridgeArgs, type SandboxMode } from "./sandbox/bridge";
+import { setBusySource } from "./sandbox/index";
 import { TOOL_LABEL, chatView, projectAccount, sessionEnv, uid, useDesk } from "./store";
 import { addWorktreeProject, branchSlug, refreshLimits, rootProject, UNTRUSTED_CLAUDE_ARGS, untrustedPath } from "./actions";
 import { notify } from "./notify";
@@ -107,6 +112,14 @@ export interface Chat {
   options?: AcpOption[];
   /** ACP agents: its slash commands. */
   acpCommands?: SlashCommand[];
+  /** The sandbox it runs in (its id in Desk), or nothing for this Mac. Chosen before the first message. */
+  where?: string | null;
+  /** With a sandbox: the agent runs there ("agent"), or here with only the code there ("code"). */
+  sandboxMode?: SandboxMode;
+  /** In a sandbox: the worktree there, its branch and what it started from. */
+  remote?: { cwd: string; branch: string; base: string } | null;
+  /** In a sandbox: the runner's id for the agent, while one runs. */
+  runId?: string | null;
 }
 
 export interface QueuedMessage { id: string; text: string; attachments: Attachment[] }
@@ -227,7 +240,7 @@ export function showStripTab(key: string) {
 const chats = () => useChats.getState();
 const desk = () => useDesk.getState();
 
-function updateItems(chatId: string, fn: (items: ChatItem[]) => ChatItem[]) {
+export function updateItems(chatId: string, fn: (items: ChatItem[]) => ChatItem[]) {
   chats().patch(chatId, (c) => ({ items: fn(c.items) }));
 }
 
@@ -256,6 +269,29 @@ export async function loadSessions(project: Project) {
 
 export function loadAllSessions() {
   for (const p of desk().projects) if (!p.worktreeOf) void loadSessions(p);
+}
+
+// Sandbox chats after a restart
+
+/** Puts back a sandbox chat Desk had open, without taking focus. */
+export function restoreChat(chat: Chat) {
+  if (chats().chats[chat.id]) return;
+  useChats.setState((s) => ({ chats: { ...s.chats, [chat.id]: chat }, strip: s.strip.includes(`c:${chat.id}`) ? s.strip : [...s.strip, `c:${chat.id}`] }));
+}
+
+/** Follows a sandbox agent that kept running while Desk was closed, from the
+ *  line Desk last saw. Claude and Codex only: an ACP agent's replies need the
+ *  requests that asked for them. */
+export async function reattachChat(chatId: string, line: number) {
+  const chat = chats().chats[chatId];
+  if (!chat?.runId || chat.proc != null || (chat.tool !== "claude" && chat.tool !== "codex")) return false;
+  const target = await remoteTarget(chatId);
+  if (!target) return false;
+  target.attach = { runId: chat.runId, line };
+  const parser = chat.tool === "claude" ? claudeParser(chatId) : codexParser(chatId);
+  const proc = await agentSpawn({ cwd: chat.cwd, args: [], env: {}, unset: [], stdin: chat.tool === "claude" }, (l) => parser(l, proc), target);
+  chats().patch(chatId, { proc, status: chat.tool === "codex" ? "running" : chat.status });
+  return true;
 }
 
 // Opening chats
@@ -311,6 +347,15 @@ const seed = (account: Account | undefined) => ({ model: account?.model ?? "", e
 /** Trust follows the folder the agent runs in, as well as the project the chat is filed under. */
 const untrusted = (chat: Chat) => untrustedPath(chat.cwd) || !!desk().projects.find((p) => p.id === chat.projectId)?.untrusted;
 
+/** Ends the chat's agent process, if any, so its next message starts it again (same conversation). */
+export function restartAgent(chatId: string) {
+  const chat = chats().chats[chatId];
+  if (!chat) return;
+  if (isAcpAgent(chat.tool)) dropAcp(chat.id);
+  else if (chat.proc != null) void agentKill(chat.proc);
+  chats().patch(chat.id, { proc: null });
+}
+
 /** A folder was just marked untrusted: agents already running there were started with its
  *  own settings, so stop them. Chats restart restricted on the next message, in a read-only mode. */
 export function distrustChats(path: string) {
@@ -318,7 +363,7 @@ export function distrustChats(path: string) {
   for (const chat of Object.values(chats().chats)) {
     if (!inside(chat.cwd)) continue;
     if (isAcpAgent(chat.tool)) dropAcp(chat.id);
-    else if (chat.proc != null) void ipc.chatKill(chat.proc);
+    else if (chat.proc != null) void agentKill(chat.proc);
     chats().patch(chat.id, { proc: null, status: "idle", mode: chat.tool === "claude" ? "plan" : chat.tool === "codex" ? "read-only" : chat.mode });
   }
 }
@@ -369,7 +414,7 @@ export function closeChat(id: string) {
   const chat = chats().chats[id];
   if (!chat) return;
   if (isAcpAgent(chat.tool)) dropAcp(id);
-  else if (chat.proc != null) void ipc.chatKill(chat.proc);
+  else if (chat.proc != null) void agentKill(chat.proc);
   closeStripTab(`c:${id}`);
   useChats.setState((s) => {
     const rest = { ...s.chats };
@@ -380,12 +425,25 @@ export function closeChat(id: string) {
 
 // Sending
 
+// A chat working here with its code in a sandbox keeps that sandbox from stopping as idle.
+setBusySource(() => [
+  ...Object.values(chats().chats).filter((c) => chatSandboxMode(c) === "code" && c.status !== "idle" && c.where).map((c) => c.where!),
+  ...desk().tabs.flatMap((t) => (t.type === "terminal" && t.codeSandbox && t.status === "running" ? [t.codeSandbox] : [])),
+]);
+
 function accountFor(chat: Chat) {
   const s = desk();
   const project = s.projects.find((p) => p.id === chat.projectId);
   const account = s.accounts.find((a) => a.id === chat.accountId) ?? projectAccount(s.accounts, project, chat.tool);
   const { env, unset } = sessionEnv(s.accounts, project, { [chat.tool]: account });
   return { account, env, unset };
+}
+
+/** Desk's MCP servers for this chat: none in untrusted folders, only URL ones in a sandbox. */
+function mcpFor(chat: Chat) {
+  const project = desk().projects.find((p) => p.id === chat.projectId);
+  const servers = serversFor(desk().preferences.mcpServers, project?.worktreeOf ?? chat.projectId, chat.tool, untrusted(chat));
+  return chatSandboxMode(chat) === "agent" ? servers.filter((s) => s.kind === "http") : servers;
 }
 
 export async function send(chatId: string, text: string, attachments: Attachment[] = []) {
@@ -403,11 +461,27 @@ export async function send(chatId: string, text: string, attachments: Attachment
     status: c.proc != null ? "running" : "starting",
     startedAt: Date.now(),
   }));
-  if (first && chat.worktree) {
+  if (chatSandboxMode(chat) === "agent") {
+    try {
+      await prepareRemote(chatId, text || attachments.map((a) => a.name).join(" "));
+    } catch (e) {
+      fail(chatId, `Couldn't start the sandbox: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
+  } else if (first && chat.worktree) {
     try {
       await moveToWorktree(chatId, text || attachments.map((a) => a.name).join(" "));
     } catch (e) {
       fail(chatId, `Couldn't create a worktree: ${String(e)}`);
+      return;
+    }
+  }
+  // Agent here, code in the sandbox: wake it and set up desk-sandbox before the agent starts.
+  if (chatSandboxMode(chat) === "code") {
+    try {
+      await prepareBridge(chatId);
+    } catch (e) {
+      fail(chatId, `Couldn't start the sandbox: ${e instanceof Error ? e.message : String(e)}`);
       return;
     }
   }
@@ -438,9 +512,9 @@ export function stop(chatId: string) {
   if (isAcpAgent(chat.tool)) {
     stopAcp(chatId);
   } else if (chat.tool === "claude") {
-    void ipc.chatWrite(chat.proc, JSON.stringify({ type: "control_request", request_id: `stop-${uid()}`, request: { subtype: "interrupt" } })).catch(() => void ipc.chatKill(chat.proc!));
+    void agentWrite(chat.proc, JSON.stringify({ type: "control_request", request_id: `stop-${uid()}`, request: { subtype: "interrupt" } })).catch(() => void agentKill(chat.proc!));
   } else {
-    void ipc.chatKill(chat.proc);
+    void agentKill(chat.proc);
   }
 }
 
@@ -562,15 +636,21 @@ async function sendClaude(chatId: string, text: string, attachments: Attachment[
   }));
   const body = withFiles(text, attachments, false);
   const content = [...images, ...(body ? [{ type: "text", text: body }] : [])];
-  await ipc.chatWrite(chat.proc, JSON.stringify({ type: "user", message: { role: "user", content }, parent_tool_use_id: null }));
+  await agentWrite(chat.proc, JSON.stringify({ type: "user", message: { role: "user", content }, parent_tool_use_id: null }));
 }
 
 async function startClaude(chatId: string) {
   const chat = chats().chats[chatId];
   const { account, env, unset } = accountFor(chat);
+  const mcp = mcpFor(chat);
+  Object.assign(env, secretEnv(mcp));
+  const bridge = bridgeOf(chatId);
+  if (bridge) Object.assign(env, bridge.env);
   const id = chat.sessionId ?? uid();
   // A chat whose session Claude Code has saved is resumed; a new one is started under its id.
-  const state = await ipc.claudeSessionState(account.dir, chat.cwd, id).catch(() => "missing" as const);
+  const target = await remoteTarget(chatId);
+  // In a sandbox the transcript lives there; a chat that has run before resumes.
+  const state = target ? (chat.saved ? "resumable" as const : "missing" as const) : await ipc.claudeSessionState(account.dir, chat.cwd, id).catch(() => "missing" as const);
   const sessionId = state === "empty" ? uid() : id;
   const args = [
     "claude", "-p",
@@ -586,24 +666,33 @@ async function startClaude(chatId: string) {
     ...(chat.effort ? ["--effort", chat.effort] : []),
     // Questions come as plain text instead; the chat has no card for answering them.
     "--disallowedTools", "AskUserQuestion",
+    ...(bridge ? ["--append-system-prompt", bridge.instructions] : []),
+    ...claudeMcpArgs(mcp),
     ...(state === "resumable" ? ["--resume", sessionId] : ["--session-id", sessionId]),
   ];
   const parser = claudeParser(chatId);
-  const proc = await ipc.chatSpawn({ cwd: chat.cwd, args, env, unset, stdin: true }, (line) => parser(line, proc));
+  const proc = await agentSpawn({ cwd: chat.cwd, args, env, unset, stdin: true }, (line) => parser(line, proc), target);
   chats().patch(chatId, { proc, sessionId, accountId: account.id, saved: state === "resumable" || chat.saved });
-  await ipc.chatWrite(proc, JSON.stringify({ type: "control_request", request_id: `init-${uid()}`, request: { subtype: "initialize" } })).catch(() => {});
+  await agentWrite(proc, JSON.stringify({ type: "control_request", request_id: `init-${uid()}`, request: { subtype: "initialize" } })).catch(() => {});
 }
 
-/** Answers a permission question from Claude Code. */
-export function answer(chatId: string, requestId: string, allow: boolean) {
-  if (permissions.has(requestId)) return answerAcp(chatId, requestId, allow);
+/** Whether a question can be allowed just this once. Some ACP agents only offer
+ *  "always"; the notch and phone never grant that, so they send you to Desk. */
+export function canAllowOnce(requestId: string) {
+  const p = permissions.get(requestId);
+  return !p || p.options.some((o) => o.kind === "allow_once");
+}
+
+/** Answers a permission question. `onceOnly` (the notch, the phone) never picks an "always" answer. */
+export function answer(chatId: string, requestId: string, allow: boolean, onceOnly = false) {
+  if (permissions.has(requestId)) return answerAcp(chatId, requestId, allow, onceOnly);
   const chat = chats().chats[chatId];
   const item = chat?.items.find((i) => i.kind === "approval" && i.id === requestId);
   if (!chat || chat.proc == null || item?.kind !== "approval" || item.state !== "pending") return;
   const response = allow
     ? { behavior: "allow", updatedInput: item.input ?? {} }
     : { behavior: "deny", message: item.tool === "ExitPlanMode" ? "The user wants to keep planning. Ask what to change." : "The user declined this action.", interrupt: false };
-  void ipc.chatWrite(chat.proc, JSON.stringify({ type: "control_response", response: { subtype: "success", request_id: requestId, response } }));
+  void agentWrite(chat.proc, JSON.stringify({ type: "control_response", response: { subtype: "success", request_id: requestId, response } }));
   updateItems(chatId, (items) => upsert(items, { ...item, state: allow ? "allowed" : "denied" }));
 }
 
@@ -616,7 +705,7 @@ export function setMode(chatId: string, mode: string) {
   else if (chat.tool === "claude" && chat.proc != null) {
     // Full access needs a flag at start-up, so that one restarts the process.
     if (mode === "bypassPermissions" || chat.mode === "bypassPermissions") restart(chatId);
-    else void ipc.chatWrite(chat.proc, JSON.stringify({ type: "control_request", request_id: `mode-${uid()}`, request: { subtype: "set_permission_mode", mode } })).catch(() => {});
+    else void agentWrite(chat.proc, JSON.stringify({ type: "control_request", request_id: `mode-${uid()}`, request: { subtype: "set_permission_mode", mode } })).catch(() => {});
   }
 }
 
@@ -677,10 +766,10 @@ export async function loadClaudeCommands(chat: Chat) {
   probing.add(key);
   const { env, unset } = accountFor(chat);
   let proc: number | null = null;
-  const done = () => { if (proc != null) void ipc.chatKill(proc); probing.delete(key); };
+  const done = () => { if (proc != null) void agentKill(proc); probing.delete(key); };
   const timer = setTimeout(done, 20_000);
   try {
-    proc = await ipc.chatSpawn(
+    proc = await agentSpawn(
       { cwd: chat.cwd, args: ["claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--no-session-persistence", ...(untrusted(chat) ? UNTRUSTED_CLAUDE_ARGS : [])], env, unset, stdin: true },
       (line) => {
         let record: Json;
@@ -689,7 +778,7 @@ export async function loadClaudeCommands(chat: Chat) {
         if (record.type === "desk_exit") { clearTimeout(timer); probing.delete(key); }
       },
     );
-    await ipc.chatWrite(proc, JSON.stringify({ type: "control_request", request_id: `init-${uid()}`, request: { subtype: "initialize" } }));
+    await agentWrite(proc, JSON.stringify({ type: "control_request", request_id: `init-${uid()}`, request: { subtype: "initialize" } }));
   } catch {
     clearTimeout(timer);
     done();
@@ -712,7 +801,7 @@ function restart(chatId: string) {
   if (!chat || chat.proc == null || chat.status !== "idle") return;
   const proc = chat.proc;
   chats().patch(chatId, { proc: null });
-  void ipc.chatKill(proc);
+  void agentKill(proc);
 }
 
 export function setAccount(chatId: string, accountId: string) {
@@ -886,15 +975,19 @@ function describeInput(input: unknown) {
 async function runCodex(chatId: string, text: string, attachments: Attachment[] = []) {
   const chat = chats().chats[chatId];
   const { account, env, unset } = accountFor(chat);
+  const mcp = mcpFor(chat);
+  Object.assign(env, secretEnv(mcp));
+  const bridge = bridgeOf(chatId);
+  if (bridge) Object.assign(env, bridge.env);
   const access = chat.mode === "danger-full-access" ? ["--dangerously-bypass-approvals-and-sandbox"] : ["-c", `sandbox_mode="${chat.mode === "read-only" ? "read-only" : "workspace-write"}"`];
   const images = attachments.filter((a) => a.image).map((a) => `--image=${a.path}`);
-  const common = ["--json", "--skip-git-repo-check", ...access, ...(chat.model ? ["-m", chat.model] : []), ...(chat.effort ? ["-c", `model_reasoning_effort="${chat.effort}"`] : []), ...images];
+  const common = ["--json", "--skip-git-repo-check", ...access, ...(chat.model ? ["-m", chat.model] : []), ...(chat.effort ? ["-c", `model_reasoning_effort="${chat.effort}"`] : []), ...codexMcpArgs(mcp), ...(bridge ? codexBridgeArgs(bridge, chat.mode) : []), ...images];
   text = withFiles(text, attachments, false) || "See the attached image.";
   const args = chat.sessionId
     ? ["codex", "exec", "resume", ...common, "--", chat.sessionId, text]
     : ["codex", "exec", ...common, "--", text];
   const parser = codexParser(chatId);
-  const proc = await ipc.chatSpawn({ cwd: chat.cwd, args, env, unset, stdin: false }, (line) => parser(line, proc));
+  const proc = await agentSpawn({ cwd: chat.cwd, args, env, unset, stdin: false }, (line) => parser(line, proc), await remoteTarget(chatId));
   chats().patch(chatId, { proc, accountId: account.id, status: "running" });
 }
 
@@ -988,11 +1081,7 @@ export function codexHistory(records: Json[]): ChatItem[] {
 }
 
 /** Live chats that are working or waiting on an answer, for the sidebar dots. */
-export function chatBusy(chat: Chat | undefined) {
-  if (!chat) return null;
-  if (chat.items.some((i) => i.kind === "approval" && i.state === "pending")) return "waiting";
-  return chat.status === "idle" ? null : "running";
-}
+export { chatBusy } from "./feedCore";
 
 // ACP agents: Gemini CLI, Cursor Agent, Grok, OpenCode
 
@@ -1079,13 +1168,18 @@ async function startAcp(chatId: string): Promise<AcpConnection> {
   const tool = chat.tool as AcpAgent;
   const label = TOOL_LABEL[tool];
   const { account, env, unset } = accountFor(chat);
+  const mcpServers = acpMcpServers(mcpFor(chat));
+  Object.assign(env, secretEnv(mcpFor(chat)));
+  const bridge = bridgeOf(chatId);
+  if (bridge) Object.assign(env, bridge.env);
   dropAcp(chatId);
   const holder: { conn?: AcpConnection } = {};
+  const target = await remoteTarget(chatId);
   const conn = await AcpConnection.start({ cwd: chat.cwd, args: ACP_COMMAND[tool], env, unset }, {
     onNotify: (method, params) => holder.conn && acpNotify(chatId, holder.conn, method, params),
     onRequest: (req) => holder.conn && acpRequest(chatId, holder.conn, req),
     onExit: (code, stderr) => holder.conn && acpExit(chatId, holder.conn, code, stderr),
-  }).catch((e) => { throw new Error(`${label} couldn't start: ${String(e)}`); });
+  }, { spawn: (opts, onLine) => agentSpawn(opts, onLine, target), write: agentWrite, kill: agentKill }).catch((e) => { throw new Error(`${label} couldn't start: ${String(e)}`); });
   holder.conn = conn;
   conns.set(chatId, conn);
   chats().patch(chatId, { proc: conn.proc, accountId: account.id });
@@ -1101,11 +1195,11 @@ async function startAcp(chatId: string): Promise<AcpConnection> {
       const fold = newFold("h", true);
       if (current.items.length) fold.n = -1;
       folds.set(chatId, fold);
-      result = await conn.request("session/load", { sessionId: current.sessionId, cwd: current.cwd, mcpServers: [] }, 120_000);
+      result = await conn.request("session/load", { sessionId: current.sessionId, cwd: current.cwd, mcpServers }, 120_000);
       chats().patch(chatId, (c) => ({ loading: false, items: c.items.map((i) => (i.kind === "assistant" && i.streaming ? { ...i, streaming: false } : i)) }));
     } else {
       if (current.saved && current.sessionId) updateItems(chatId, (items) => [...items, { kind: "notice", id: uid(), text: `${label} can't reopen this conversation, so this continues in a new one.` }]);
-      result = await conn.request("session/new", { cwd: current.cwd, mcpServers: [] }, 120_000);
+      result = await conn.request("session/new", { cwd: current.cwd, mcpServers }, 120_000);
       if (typeof result.sessionId !== "string") throw new Error("it didn't start a conversation.");
       chats().patch(chatId, { sessionId: result.sessionId, saved: false, loading: false });
     }
@@ -1171,13 +1265,14 @@ function acpRequest(chatId: string, conn: AcpConnection, req: AcpRequest) {
   alertChat(chat, `Wants to use ${name}`);
 }
 
-function answerAcp(chatId: string, id: string, allow: boolean) {
+function answerAcp(chatId: string, id: string, allow: boolean, onceOnly = false) {
   const p = permissions.get(id);
   const item = chats().chats[chatId]?.items.find((i) => i.id === id);
   if (!p || item?.kind !== "approval" || item.state !== "pending") return;
+  if (onceOnly && allow && !p.options.some((o) => o.kind === "allow_once")) return;
   permissions.delete(id);
   const pick = (...kinds: string[]) => kinds.map((k) => p.options.find((o) => o.kind === k)).find(Boolean);
-  const option = allow ? pick("allow_once", "allow_always") : pick("reject_once", "reject_always");
+  const option = allow ? pick("allow_once", ...(onceOnly ? [] : ["allow_always"])) : pick("reject_once", "reject_always");
   void p.conn.respond(p.rpcId, option ? { outcome: { outcome: "selected", optionId: option.optionId } } : { outcome: { outcome: "cancelled" } });
   updateItems(chatId, (items) => upsert(items, { ...item, state: allow ? "allowed" : "denied" }));
 }
@@ -1214,6 +1309,8 @@ function exitText(tool: Agent, code: number | null, stderr: string) {
   return stderr || `${TOOL_LABEL[tool]} stopped (exit ${code ?? "?"}).`;
 }
 
+const told = new WeakSet<AcpConnection>();
+
 async function sendAcp(chatId: string, text: string, attachments: Attachment[] = []) {
   let conn = conns.get(chatId);
   if (!conn?.alive) conn = await startAcp(chatId);
@@ -1224,7 +1321,10 @@ async function sendAcp(chatId: string, text: string, attachments: Attachment[] =
     const { mediaType, data } = await ipc.attachmentImage(a.path);
     return { type: "image", mimeType: mediaType, data };
   }));
-  const body = withFiles(text, attachments, !images.length) || "See the attached image.";
+  let body = withFiles(text, attachments, !images.length) || "See the attached image.";
+  // ACP agents have no flag for extra instructions; the first prompt carries them.
+  const bridge = bridgeOf(chatId);
+  if (bridge && !told.has(conn)) { told.add(conn); body = `<desk-sandbox>${bridge.instructions}</desk-sandbox>\n\n${body}`; }
   folds.set(chatId, newFold(uid()));
   chats().patch(chatId, { status: "running" });
   rememberAcp(chatId, text);

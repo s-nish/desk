@@ -61,18 +61,22 @@ fn scrubbed(key: &str) -> bool {
 }
 
 impl ChatManager {
-    pub fn spawn<F>(self: &Arc<Self>, opts: ChatOpts, on_line: F) -> Result<u32, String>
+    pub fn spawn<F>(self: &Arc<Self>, mut opts: ChatOpts, on_line: F) -> Result<u32, String>
     where
         F: Fn(String) + Send + Sync + 'static,
     {
         if opts.args.is_empty() {
             return Err("nothing to run".into());
         }
+        // Saved tokens (MCP servers' keys) go in the environment, not on the command line.
+        let secrets = crate::sandbox::take_secrets(&mut opts.env);
         let shell = crate::pty::user_shell();
         // `env` applies the account after rc files run, so they can't override it.
         // Arguments go through "$@", so nothing is quoted or parsed by the shell.
         let mut cmd = Command::new(&shell);
-        cmd.arg("-l").arg("-i").arg("-c").arg("exec env \"$@\"").arg("desk");
+        // A folder to put first on PATH (desk-sandbox) goes on after rc files set PATH.
+        let prepend = opts.env.remove("DESK_PATH_PREPEND");
+        cmd.arg("-l").arg("-i").arg("-c").arg("[ -n \"${DESK_PATH_PREPEND:-}\" ] && PATH=\"$DESK_PATH_PREPEND:$PATH\" && export PATH; exec env \"$@\"").arg("desk");
         for key in &opts.unset {
             cmd.arg("-u").arg(key);
         }
@@ -88,6 +92,12 @@ impl ChatManager {
             }
         }
         cmd.env("NO_COLOR", "1").env("TERM", "dumb").env("SHELL", &shell);
+        if let Some(dir) = &prepend {
+            cmd.env("DESK_PATH_PREPEND", dir);
+        }
+        for (key, value) in &secrets {
+            cmd.env(key, value);
+        }
         cmd.stdin(if opts.stdin { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
         #[cfg(unix)]
         {
@@ -285,7 +295,7 @@ const MAX_IMAGE_BYTES: u64 = 5 * 1024 * 1024;
 
 /// Desk's own folder for pasted images, so Codex (which takes file paths) can read them.
 fn attachment_dir() -> PathBuf {
-    dirs::cache_dir().unwrap_or_else(std::env::temp_dir).join("dev.desk.Desk").join("attachments")
+    dirs::cache_dir().unwrap_or_else(std::env::temp_dir).join(crate::variant::cache_dir()).join("attachments")
 }
 
 /// Saves a pasted image and returns its path. Old pastes are cleared after a week.
