@@ -17,6 +17,7 @@ mod tray;
 mod ssh;
 mod usage_live;
 mod variant;
+mod windows;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -25,7 +26,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use serde::Serialize;
 use serde_json::Value;
 use tauri::ipc::{Channel, InvokeResponseBody};
-use tauri::menu::{AboutMetadata, Menu, PredefinedMenuItem, Submenu};
+use tauri::menu::{AboutMetadata, Menu, MenuItemBuilder, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
 
 use pty::{PtyManager, SpawnOpts};
@@ -44,12 +45,6 @@ struct FsChange {
     paths: Vec<String>,
 }
 
-fn state_file() -> PathBuf {
-    dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(variant::app_dir())
-        .join("state.json")
-}
 
 #[derive(Default)]
 struct QuitState(AtomicBool);
@@ -184,17 +179,30 @@ async fn tool_installed(bins: Vec<String>) -> bool {
 
 // Persisted app state (projects, accounts, layout). The frontend owns its shape.
 
-#[tauri::command]
-fn state_load() -> Value {
-    std::fs::read_to_string(state_file())
-        .ok()
+// Each window has its own file (see windows.rs); the main one's is state.json.
+
+fn read_state(path: Result<PathBuf, String>) -> Value {
+    path.ok()
+        .and_then(|p| std::fs::read_to_string(p).ok())
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or(Value::Null)
 }
 
 #[tauri::command]
-fn state_save(state: Value) -> Result<(), String> {
-    let path = state_file();
+fn state_load(webview: tauri::Webview) -> Value {
+    read_state(windows::state_file(webview.label()))
+}
+
+/// The main window's saved state: where an extra window finds the settings,
+/// accounts and connections every window shares.
+#[tauri::command]
+fn state_load_main() -> Value {
+    read_state(windows::state_file(windows::MAIN))
+}
+
+#[tauri::command]
+fn state_save(webview: tauri::Webview, state: Value) -> Result<(), String> {
+    let path = windows::state_file(webview.label())?;
     std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(&state).map_err(|e| e.to_string())?;
     files::write_file(&path.to_string_lossy(), &json).map(|_| ())
@@ -360,20 +368,20 @@ async fn git_commits_since(root: String, base: String) -> Result<Vec<String>, St
 }
 // Async so they run off the main thread, which creating the webview needs.
 #[tauri::command]
-async fn browser_open(app: AppHandle, url: String, x: f64, y: f64, width: f64, height: f64) -> Result<(), String> {
-    browser::open(&app, &url, x, y, width, height)
+async fn browser_open(app: AppHandle, webview: tauri::Webview, url: String, x: f64, y: f64, width: f64, height: f64) -> Result<(), String> {
+    browser::open(&app, webview.label(), &url, x, y, width, height)
 }
 #[tauri::command]
-async fn browser_bounds(app: AppHandle, x: f64, y: f64, width: f64, height: f64, visible: bool) -> Result<(), String> {
-    browser::bounds(&app, x, y, width, height, visible)
+async fn browser_bounds(app: AppHandle, webview: tauri::Webview, x: f64, y: f64, width: f64, height: f64, visible: bool) -> Result<(), String> {
+    browser::bounds(&app, webview.label(), x, y, width, height, visible)
 }
 #[tauri::command]
-async fn browser_command(app: AppHandle, action: String) -> Result<(), String> {
-    browser::command(&app, &action)
+async fn browser_command(app: AppHandle, webview: tauri::Webview, action: String) -> Result<(), String> {
+    browser::command(&app, webview.label(), &action)
 }
 #[tauri::command]
-async fn browser_close(app: AppHandle) -> Result<(), String> {
-    browser::close(&app)
+async fn browser_close(app: AppHandle, webview: tauri::Webview) -> Result<(), String> {
+    browser::close(&app, webview.label())
 }
 #[tauri::command]
 async fn gh_run(cwd: String, args: Vec<String>, config: Option<String>) -> Result<String, String> {
@@ -567,6 +575,12 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &PredefinedMenuItem::select_all(app, None)?,
         ],
     )?;
+    let file = Submenu::with_items(
+        app,
+        "File",
+        true,
+        &[&MenuItemBuilder::with_id("new-window", "New Window").accelerator("CmdOrCtrl+Shift+N").build(app)?],
+    )?;
     let window = Submenu::with_items(
         app,
         "Window",
@@ -577,7 +591,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &PredefinedMenuItem::fullscreen(app, None)?,
         ],
     )?;
-    Menu::with_items(app, &[&app_menu, &edit, &window])
+    Menu::with_items(app, &[&app_menu, &file, &edit, &window])
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -615,6 +629,30 @@ async fn port_forward_start(app: AppHandle, key: String, args: Vec<String>, port
 #[tauri::command]
 fn port_forward_stop(state: State<ports::PortState>, key: String) {
     ports::stop(&state, &key);
+}
+
+// Windows (see windows.rs)
+
+#[tauri::command]
+fn window_new(app: AppHandle) -> Result<String, String> {
+    windows::open(&app, None)
+}
+
+#[tauri::command]
+fn window_labels(app: AppHandle) -> Vec<String> {
+    windows::labels(&app)
+}
+
+/// Closes the calling (extra) window for good.
+#[tauri::command]
+fn window_forget(app: AppHandle, webview: tauri::Webview) -> Result<(), String> {
+    windows::forget(&app, webview.label())
+}
+
+/// Brings the calling window forward.
+#[tauri::command]
+fn window_focus(app: AppHandle, webview: tauri::Webview) {
+    windows::focus(&app, webview.label());
 }
 
 #[tauri::command]
@@ -724,7 +762,23 @@ pub fn run() {
         .manage(remote::RemoteState::default())
         .manage(ports::PortState::default())
         .menu(build_menu)
+        .on_menu_event(|app, event| {
+            if event.id().as_ref() == "new-window" {
+                if let Err(e) = windows::open(app, None) {
+                    eprintln!("Couldn't open a window: {e}");
+                }
+            }
+        })
+        .on_window_event(|window, event| {
+            // The main window forgets what a closed window was running.
+            if let tauri::WindowEvent::Destroyed = event {
+                if windows::is_extra(window.label()) {
+                    let _ = window.app_handle().emit_to(windows::MAIN, "window-closed", window.label().to_string());
+                }
+            }
+        })
         .setup(|app| {
+            windows::reopen(app.handle());
             // The menu bar icon is a nicety: Desk runs without it.
             if let Err(e) = tray::create(app.handle()) {
                 eprintln!("Couldn't add the menu bar icon: {e}");
@@ -828,6 +882,11 @@ pub fn run() {
             sandbox_resource,
             sandbox_helper,
             sandbox_bridge,
+            state_load_main,
+            window_new,
+            window_labels,
+            window_forget,
+            window_focus,
             port_forward_start,
             port_forward_stop,
             sandbox_secret_set,
@@ -836,7 +895,7 @@ pub fn run() {
             ]);
             move |invoke: tauri::ipc::Invoke| {
                 let label = invoke.message.webview().label().to_string();
-                let allowed = label == "main" || (label == notch::LABEL && notch::COMMANDS.contains(&invoke.message.command()));
+                let allowed = windows::is_desk(&label) || (label == notch::LABEL && notch::COMMANDS.contains(&invoke.message.command()));
                 if !allowed {
                     invoke.resolver.reject("Not allowed from this page");
                     return true;

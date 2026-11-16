@@ -14,6 +14,7 @@ import { chatSandboxMode } from "./sandbox/bridge";
 import { interruptTerminal, terminalScreen, typeIntoTerminal } from "./terminals";
 import type { PhoneAction, PhoneEntry, PhonePayload, PhoneSession, PhoneState, PhoneThread, PhoneWhere } from "./remote/protocol";
 import type { TerminalTab } from "./types";
+import { otherFeeds, useWindowFeeds } from "./windows";
 
 /** How long a phone's "I have this open" lasts; the page renews it while open. */
 const WATCH_MS = 45_000;
@@ -124,8 +125,15 @@ export function phonePayload(now = Date.now()): PhonePayload {
       if (screen != null) threads[id] = { kind: "terminal", screen };
     }
   }
-  return { sessions, usage: notchPayload(now).usage, threads };
+  // Desk's other windows send theirs (see windows.ts); in those windows this list is empty.
+  const others = otherFeeds();
+  const all = others.length ? [...sessions, ...others.flatMap((f) => f.sessions)].sort((a, b) => ORDER[a.state] - ORDER[b.state] || b.updated - a.updated) : sessions;
+  for (const f of others) Object.assign(threads, f.threads);
+  return { sessions: all, usage: notchPayload(now).usage, threads };
 }
+
+/** Whether a phone has one of this window's terminal tabs open (their screens aren't in a store). */
+export const watchingTerminal = () => [...watched.keys()].some((k) => k.startsWith("t:"));
 
 /**
  * What the phone may type into an agent's terminal: one line of plain text. No
@@ -188,6 +196,7 @@ export function watchPhone() {
   const schedule = () => { if (!timer) timer = setTimeout(push, 150); };
   const offChats = useChats.subscribe(schedule);
   const offDesk = useDesk.subscribe(schedule);
+  const offWindows = useWindowFeeds.subscribe(schedule);
   // Terminal screens aren't in a store: look again each second while one is open on a phone.
   const tick = setInterval(() => { if ([...watched.keys()].some((k) => k.startsWith("t:"))) schedule(); }, 1_000);
   const slow = setInterval(push, 20_000);
@@ -199,6 +208,7 @@ export function watchPhone() {
   return () => {
     offChats();
     offDesk();
+    offWindows();
     clearInterval(tick);
     clearInterval(slow);
     if (timer) clearTimeout(timer);

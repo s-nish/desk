@@ -140,6 +140,10 @@ export function buildFeedFrom(input: FeedInput): FeedItem[] {
       canReply: false,
     });
   }
-  // Stable: within a group, chats keep their order, then terminal tabs.
+  return sortFeed(items);
+}
+
+/** Waiting first, then working, then done. Stable: within a group, chats keep their order, then terminal tabs. */
+export function sortFeed(items: FeedItem[]) {
   return items.sort((a, b) => ORDER[a.state] - ORDER[b.state]);
 }

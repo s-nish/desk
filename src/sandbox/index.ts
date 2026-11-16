@@ -6,6 +6,7 @@ import { ipc } from "../ipc";
 import { useDesk } from "../store";
 import { PROVIDERS, provider } from "./providers";
 import { forgetSandbox, remoteRuns, sandboxExec } from "./transport";
+import { otherFeeds } from "../windows";
 import { q, type CreateOpts, type ProviderId, type Runner, type Sandbox, type SandboxState } from "./types";
 
 export { PROVIDERS, provider };
@@ -264,11 +265,15 @@ const lastUsed = new Map<string, number>();
 let busySource: () => string[] = () => [];
 export const setBusySource = (f: () => string[]) => { busySource = f; };
 
+/** Sandboxes this window is using right now. */
+export const localBusySandboxes = () => [...new Set([...remoteRuns().map((r) => r.sandboxId), ...busySource()])];
+
 export function watchSandboxes() {
   const tick = setInterval(() => {
     const desk = useDesk.getState();
     if (desk.preferences.sandboxAutoStop === false) return;
-    const busy = new Set([...remoteRuns().map((r) => r.sandboxId), ...busySource()]);
+    // This window's, and those Desk's other windows are using.
+    const busy = new Set([...localBusySandboxes(), ...otherFeeds().flatMap((f) => f.busy)]);
     for (const x of desk.sandboxes) {
       if (busy.has(x.id)) { lastUsed.set(x.id, Date.now()); continue; }
       const since = lastUsed.get(x.id);

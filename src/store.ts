@@ -352,8 +352,9 @@ export const useDesk = create<DeskState>((set, get) => ({
       accounts,
       identities,
       connections: saved?.connections ?? [],
-      // Sandboxes of a provider Desk no longer offers (Render) are dropped.
-      sandboxes: (saved?.sandboxes ?? []).filter((x) => projects.some((p) => p.id === x.projectId) && KNOWN_PROVIDERS.includes(x.provider)),
+      // Sandboxes of a provider Desk no longer offers (Render) are dropped. Every window
+      // has them all (they're shared), so ones for another window's projects stay.
+      sandboxes: (saved?.sandboxes ?? []).filter((x) => KNOWN_PROVIDERS.includes(x.provider)),
       projects,
       activeProjectId,
       layout: { ...DEFAULT_LAYOUT, ...saved?.layout },

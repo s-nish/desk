@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { errorText, ipc } from "../ipc";
 import { Command, Search } from "lucide-react";
 import { useDesk, TOOL_LABEL, EXTRA_AGENTS, focusedTabId } from "../store";
 import type { TabTool } from "../types";
@@ -31,6 +32,7 @@ function Palette() {
     const s = useDesk.getState();
     const items: Action[] = [
       { id: "add-project", label: "Add project folder", group: "Workspace", shortcut: "⌘O", run: () => void addProjectsFromDialog() },
+      { id: "new-window", label: "New window", group: "Workspace", shortcut: "⇧⌘N", run: () => void ipc.windowNew().catch((e) => s.toast(errorText(e), "error")) },
       { id: "settings", label: "Open settings", group: "Preferences", shortcut: "⌘,", run: () => s.setModal({ kind: "settings" }) },
       { id: "sidebar", label: "Toggle projects sidebar", group: "View", shortcut: "⌘B", run: () => s.setLayout({ sidebarOpen: !useDesk.getState().layout.sidebarOpen }) },
       { id: "files", label: "Show file explorer", group: "View", run: () => s.setLayout({ filesOpen: true, panel: "files" }) },
@@ -55,7 +57,7 @@ function Palette() {
     );
     if (tabs.find((t) => t.id === focusedId)?.type === "file") items.push({ id: "save", label: "Save current file", group: "Editor", shortcut: "⌘S", run: () => void saveTab(focusedId!) });
     if (s.tabs.some((t) => t.type === "terminal" && t.attention)) items.unshift({ id: "waiting", label: "Jump to next waiting agent", group: "Terminal", shortcut: "⌘⇧A", run: jumpToWaiting });
-    items.push({ id: "ssh-new", label: "New SSH connection", group: "SSH", shortcut: "⌘⇧N", run: () => s.setModal({ kind: "ssh", id: null }) });
+    items.push({ id: "ssh-new", label: "New SSH connection", group: "SSH", shortcut: "⌥⌘N", run: () => s.setModal({ kind: "ssh", id: null }) });
     items.push(...s.connections.map((c) => ({ id: `ssh-${c.id}`, label: `Connect: ${c.name} (${connectionLabel(c)})`, group: "SSH", run: () => openConnection(c.id) })));
     items.push(...projects.map((p) => ({ id: `project-${p.id}`, label: `Switch project: ${p.name}`, group: "Projects", run: () => s.selectProject(p.id) })));
     items.push(...tabs.map((t) => ({ id: `tab-${t.id}`, label: `${(t.type === "terminal" && t.sshId ? s.connections.find((c) => c.id === t.sshId)?.name : t.title) || (t.type === "terminal" ? TOOL_LABEL[t.tool] : "File")} · ${projects.find((p) => p.id === t.projectId)?.name ?? ""}`, group: "Open tabs", run: () => s.selectTab(t.id) })));

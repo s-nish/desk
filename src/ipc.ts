@@ -60,6 +60,14 @@ export const ipc = {
   sshHasPassword: (id: string) => invoke<boolean>("ssh_has_password", { id }),
 
   stateLoad: () => invoke<unknown>("state_load"),
+  /** The main window's saved state (settings and accounts every window shares). */
+  stateLoadMain: () => invoke<unknown>("state_load_main"),
+  windowNew: () => invoke<string>("window_new"),
+  windowLabels: () => invoke<string[]>("window_labels"),
+  /** Closes this (extra) window for good. */
+  windowForget: () => invoke<void>("window_forget"),
+  /** Brings this window forward. */
+  windowFocus: () => invoke<void>("window_focus"),
   stateSave: (state: unknown) => invoke<void>("state_save", { state }),
 
   listDir: (path: string) => invoke<DirEntry[]>("fs_list_dir", { path }),

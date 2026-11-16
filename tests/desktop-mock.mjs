@@ -14,6 +14,10 @@ export function mockDesktop() {
       window.testCalls.push({ cmd, args });
       if (cmd === 'state_load') return JSON.parse(localStorage.getItem('test-state') || 'null');
       if (cmd === 'state_save') { localStorage.setItem('test-state', JSON.stringify(args.state)); return; }
+      // Windows: an extra window (label set by the test) reads the main one's save from window.testMainState.
+      if (cmd === 'state_load_main') return window.testMainState ?? JSON.parse(localStorage.getItem('test-state') || 'null');
+      if (cmd === 'window_new') return 'w-new';
+      if (cmd === 'window_labels') return window.testWindowLabels ?? [];
       if (cmd === 'plugin:dialog|open') return ['/demo/studio'];
       if (cmd === 'accounts_detect') return JSON.parse(localStorage.getItem('test-detected') || '[]');
       if (cmd === 'account_usage') return [];
