@@ -51,6 +51,7 @@
         <span>Desk</span>
       </a>
       <nav class="nav-links" aria-label="Primary">
+        <a href="#new">New</a>
         <a href="#tour">Tour</a>
         <a href="#features">Features</a>
         <a href="#how">How it works</a>
@@ -71,6 +72,7 @@
       </div>
     </div>
     <div class="mobile-menu glass" id="mobile-menu" hidden>
+      <a href="#new">New in 1.5</a>
       <a href="#tour">Tour</a>
       <a href="#features">Features</a>
       <a href="#how">How it works</a>
@@ -115,7 +117,7 @@
               </button>
             </div>
           </div>
-          <p class="meta mono">v1.0.0 · Apple silicon · macOS 12+</p>
+          <p class="meta mono">v1.5.0 · Apple silicon · macOS 12+</p>
         </div>
 
         <dl class="stats stats-l" aria-label="Desk at a glance">
@@ -124,7 +126,7 @@
         </dl>
         <dl class="stats stats-r">
           <div><dt>24</dt><dd>themes, 4 with pixels</dd></div>
-          <div><dt>0</dt><dd>tokens stored or sent</dd></div>
+          <div><dt>0</dt><dd>tokens read or sent</dd></div>
         </dl>
 
         <div class="hero-shot reveal">
@@ -167,6 +169,72 @@
           <li class="glass"><svg class="logo" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"></path></svg>GitHub</li>
         </ul>
       </div>
+    </section>
+
+    <!-- ───────────── New in 1.5 ───────────── -->
+    <section class="section" id="new">
+      <header class="section-head reveal">
+        <p class="eyebrow"><span class="dot"></span>New in 1.5</p>
+        <h2 class="display">Your agents,<br><em>wherever you are.</em></h2>
+        <p class="lede">Glance at the notch, answer from your phone, and let agents work in a sandbox instead of on your Mac.</p>
+      </header>
+
+      <div class="news">
+        <!-- Notch -->
+        <article class="tile t-notch reveal">
+          <div class="tile-copy">
+            <p class="tile-kicker mono">Notch</p>
+            <h3>Every agent, in the notch.</h3>
+            <p>Working and waiting agents sit beside the camera. Hover to see them all, allow or deny a request, or reply without leaving what you're doing.</p>
+          </div>
+          <div class="notch-viz" aria-hidden="true">
+            <div class="nv-bar"><span class="nv-wing"><i class="nv-spin"></i>2</span><span class="nv-cam"></span><span class="nv-wing"><i class="nv-wait"></i>1</span></div>
+            <div class="nv-card">
+              <div class="nv-row"><b>Claude Code</b><span class="mono">taskflow</span></div>
+              <p>Run <code>npm test</code>?</p>
+              <div class="nv-actions"><span class="nv-btn yes">Allow</span><span class="nv-btn">Deny</span></div>
+            </div>
+          </div>
+        </article>
+
+        <!-- Phone -->
+        <article class="tile t-phone reveal">
+          <div class="tile-copy">
+            <p class="tile-kicker mono">Phone · Tailscale</p>
+            <h3>Answer from your phone.</h3>
+            <p>Pair once with a QR code. Your phone reaches Desk over your own tailnet, never the open internet, and can allow, deny, reply and stop.</p>
+          </div>
+          <div class="phone-viz" aria-hidden="true">
+            <div class="pv-screen">
+              <p class="pv-top mono"><span class="dot live"></span>desk · tailnet</p>
+              <div class="pv-row wait"><b>Codex</b><span>Needs your answer</span></div>
+              <div class="pv-row"><b>Claude Code</b><span>Writing tests…</span></div>
+              <div class="pv-row"><b>Gemini</b><span>Done · 2m ago</span></div>
+              <div class="pv-reply">Ship it<span>↑</span></div>
+            </div>
+          </div>
+        </article>
+
+        <!-- Sandboxes -->
+        <article class="tile t-sandbox reveal">
+          <div class="tile-copy">
+            <p class="tile-kicker mono">Sandboxes</p>
+            <h3>Let agents run off your Mac.</h3>
+            <p>Start a chat in Docker on this Mac, Docker Cloud, Boat or Modal. Desk syncs the project, forwards dev-server ports to localhost, and stops idle sandboxes.</p>
+          </div>
+          <div class="sb-viz" aria-hidden="true">
+            <div class="sb-list">
+              <span class="sb-chip on"><i></i>Docker</span>
+              <span class="sb-chip"><i></i>Docker Cloud</span>
+              <span class="sb-chip"><i></i>Boat</span>
+              <span class="sb-chip"><i></i>Modal</span>
+            </div>
+            <div class="sb-port mono"><span>sandbox:5173</span><em></em><span>localhost:5173</span></div>
+          </div>
+        </article>
+      </div>
+
+      <p class="also reveal"><b>Also new:</b> more than one window. <kbd>⌘</kbd><kbd>⇧</kbd><kbd>N</kbd> opens another Desk with its own projects and tabs, and settings stay in step.</p>
     </section>
 
     <!-- ───────────── Tour ───────────── -->
@@ -333,7 +401,7 @@
           <div class="tile-copy">
             <p class="tile-kicker mono">Private</p>
             <h3>Your tokens stay put.</h3>
-            <p>Desk never stores or sends them. Sign-in runs through each tool's own login.</p>
+            <p>Desk never reads or sends them. Sign-in runs through each tool's own login.</p>
           </div>
         </article>
 
@@ -414,6 +482,7 @@
             <div><dt><kbd>⌘</kbd><kbd>P</kbd></dt><dd>Open file</dd></div>
             <div><dt><kbd>⌘</kbd><kbd>⇧</kbd><kbd>L</kbd></dt><dd>Browser pane</dd></div>
             <div><dt><kbd>⌥</kbd><kbd>⌘</kbd><kbd>↑</kbd></dt><dd>Switch projects</dd></div>
+            <div><dt><kbd>⌘</kbd><kbd>⇧</kbd><kbd>N</kbd></dt><dd>New window</dd></div>
             <div><dt><kbd>⌘</kbd><kbd>,</kbd></dt><dd>Settings</dd></div>
           </dl>
         </div>
@@ -437,7 +506,7 @@
         </details>
         <details>
           <summary>Can Desk see my tokens?</summary>
-          <p>No. An account is a config folder, and Desk only sets the folder path for each terminal. To show which email is signed in, it reads that one field locally. Tokens are never stored or sent.</p>
+          <p>No. An account is a config folder, and Desk only sets the folder path for each terminal. To show which email is signed in, it reads that one field locally. Tokens are never read or sent. The one exception is a token you choose to paste into Settings ▸ Sandboxes so an agent can sign in inside a sandbox: Desk keeps it in a file only you can read and sends it only to that sandbox.</p>
         </details>
         <details>
           <summary>macOS says it can't verify Desk. What now?</summary>
@@ -490,6 +559,7 @@
       <nav class="footer-cols" aria-label="Footer">
         <div>
           <p class="col-title mono">Product</p>
+          <a href="#new">New in 1.5</a>
           <a href="#tour">Tour</a>
           <a href="#features">Features</a>
           <a href="#how">How it works</a>

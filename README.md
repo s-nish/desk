@@ -45,6 +45,15 @@ Projects, terminals, files, git and chat in one window, and the right account fo
 
 Desk runs the command-line tools you already have installed and signed in. It never stores or sends your tokens, unless you paste one into Settings ▸ Sandboxes so an agent can sign in inside a sandbox; that token is kept in a file only you can read and goes only to that sandbox.
 
+## New in 1.5
+
+| | |
+| --- | --- |
+| **Every agent, in the notch** | Working and waiting agents sit beside the camera. Hover to see them all, allow or deny a request, or reply without switching windows. Turn it on in **Settings ▸ Notch**. |
+| **Answer from your phone** | Pair your phone once with a QR code in **Settings ▸ Phone**. It reaches Desk over your own Tailscale tailnet (`tailscale serve`), never the open internet, and can see every open chat and agent tab, then allow, deny, reply and stop. Desk itself only listens on `127.0.0.1`. |
+| **Sandboxes** | Run a chat in Docker on this Mac, Docker Cloud, Boat or Modal instead of on your Mac. Desk syncs the project in and out, forwards dev-server ports to `localhost`, and stops sandboxes that sit idle. Set them up in **Settings ▸ Sandboxes**. |
+| **More than one window** | <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>N</kbd> opens another Desk window with its own projects and tabs. Settings, accounts and sandboxes stay in step, and windows reopen where you left them. |
+
 ## Highlights
 
 |  |  |
@@ -129,6 +138,7 @@ Desk finds existing folders on launch. **Add account** creates a new folder and 
 | <kbd>⌘</kbd> <kbd>W</kbd> | Close tab | <kbd>⌘</kbd> <kbd>1</kbd>–<kbd>9</kbd> | Switch tabs |
 | <kbd>⌘</kbd> <kbd>S</kbd> | Save file | <kbd>⌥</kbd> <kbd>⌘</kbd> <kbd>↑</kbd> / <kbd>↓</kbd> | Switch projects |
 | <kbd>⌘</kbd> <kbd>,</kbd> | Settings | <kbd>⇧</kbd> <kbd>Enter</kbd> | Newline in Claude Code / Codex |
+| <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>N</kbd> | New window | <kbd>⌥</kbd> <kbd>⌘</kbd> <kbd>N</kbd> | New SSH connection |
 
 Drop folders on the window to add projects. Drop files on a terminal to paste their paths.
 
