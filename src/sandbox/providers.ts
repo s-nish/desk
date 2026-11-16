@@ -150,6 +150,7 @@ export const dockerCloud: SandboxProvider = {
   tty: (id, script) => `sbx --cloud exec -it ${q(id)} sh -lc ${q(script)}`,
 };
 
+// Not in PROVIDERS for now.
 export const boat: SandboxProvider = {
   id: "boat",
   label: "Boat",
@@ -250,7 +251,7 @@ export const modal: SandboxProvider = {
   tty: (id, script) => `modal shell ${q(id)} --pty -c ${q(`export HOME=${MODAL_HOME}; cd "$HOME"; exec sh -lc ${q(script)}`)}`,
 };
 
-export const PROVIDERS: SandboxProvider[] = [docker, dockerCloud, boat, modal];
+export const PROVIDERS: SandboxProvider[] = [docker, dockerCloud, modal];
 export const provider = (id: string) => PROVIDERS.find((p) => p.id === id) ?? null;
 
 export type { Runner };

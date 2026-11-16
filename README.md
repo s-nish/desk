@@ -15,6 +15,7 @@ Projects, terminals, files, git and chat in one window, and the right account fo
 ![Apple silicon](https://img.shields.io/badge/Apple%20silicon-arm64-0297DE?style=flat-square)
 ![Tauri 2](https://img.shields.io/badge/Tauri-2-FC734D?style=flat-square&logo=tauri&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/License-MIT-EAF4F8?style=flat-square)
+![Sandboxes on Modal](https://img.shields.io/badge/Sandboxes-Modal-7FEE64?style=flat-square&labelColor=0b0b0d)
 
 <br>
 
@@ -51,7 +52,7 @@ Desk runs the command-line tools you already have installed and signed in. It ne
 | --- | --- |
 | **Every agent, in the notch** | Working and waiting agents sit beside the camera. Hover to see them all, allow or deny a request, or reply without switching windows. Turn it on in **Settings ▸ Notch**. |
 | **Answer from your phone** | Pair your phone once with a QR code in **Settings ▸ Phone**. It reaches Desk over your own Tailscale tailnet (`tailscale serve`), never the open internet, and can see every open chat and agent tab, then allow, deny, reply and stop. Desk itself only listens on `127.0.0.1`. |
-| **Sandboxes** | Run a chat in Docker on this Mac, Docker Cloud, Boat or Modal instead of on your Mac. Desk syncs the project in and out, forwards dev-server ports to `localhost`, and stops sandboxes that sit idle. Set them up in **Settings ▸ Sandboxes**. |
+| **Sandboxes on Modal** | Run a chat in a **[Modal](https://modal.com)** cloud sandbox, Docker Cloud, or an isolated Docker container on this Mac. Desk syncs the project in and out, forwards dev-server ports to `localhost`, and stops sandboxes that sit idle. Set them up in **Settings ▸ Sandboxes**. |
 | **More than one window** | <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>N</kbd> opens another Desk window with its own projects and tabs. Settings, accounts and sandboxes stay in step, and windows reopen where you left them. |
 
 ## Highlights

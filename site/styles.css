@@ -625,6 +625,22 @@ h2.display { font-size: clamp(40px, 5.4vw, 72px); }
 .sb-port em { flex: 1; height: 2px; border-radius: 2px; background: linear-gradient(90deg, transparent, var(--accent-hi), transparent) 0 0 / 50% 100% no-repeat, var(--line); animation: sb-flow 2.2s linear infinite; }
 @keyframes sb-flow { from { background-position: -50% 0, 0 0; } to { background-position: 150% 0, 0 0; } }
 
+/* Modal, in its own green */
+:root { --modal: #7fee64; --modal-rgb: 127, 238, 100; --modal-text: #7fee64; }
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) { --modal-text: #2f8a1d; } }
+:root[data-theme="light"] { --modal-text: #2f8a1d; }
+.modal-text { color: var(--modal-text); font-weight: inherit; }
+.tile-kicker .modal-text { color: var(--modal-text); }
+.t-sandbox { border-color: rgba(var(--modal-rgb), 0.35); }
+.t-sandbox:hover { border-color: rgba(var(--modal-rgb), 0.6); }
+.news .t-sandbox::after { background: rgba(var(--modal-rgb), 0.22); }
+.sb-mark { width: 16px; height: 16px; fill: var(--modal-text); }
+.sb-chip.modal { height: 36px; padding: 0 14px; font-weight: 600; color: var(--text); border-color: var(--modal); background: rgba(var(--modal-rgb), 0.12); box-shadow: 0 0 0 3px rgba(var(--modal-rgb), 0.14), 0 0 24px -6px rgba(var(--modal-rgb), 0.6); }
+.sb-chip.modal i { background: var(--modal); box-shadow: 0 0 8px var(--modal); }
+.sb-port.modal { border-color: rgba(var(--modal-rgb), 0.3); }
+.sb-port.modal span:first-child { color: var(--modal-text); }
+.sb-port.modal em { background: linear-gradient(90deg, transparent, var(--modal), transparent) 0 0 / 50% 100% no-repeat, var(--line); }
+
 .also { max-width: 720px; margin: 28px auto 0; text-align: center; font-size: 15px; color: var(--text-2); text-wrap: pretty; }
 .also b { color: var(--text); font-weight: 600; }
 .also kbd { height: 1.7em; min-width: 1.7em; font-size: 11px; vertical-align: 1px; }

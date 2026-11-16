@@ -2,7 +2,8 @@
 // keeps going with the lid closed. Desk drives each provider's own CLI.
 
 export type ProviderId = "docker" | "dockerCloud" | "boat" | "modal";
-export const KNOWN_PROVIDERS: string[] = ["docker", "dockerCloud", "boat", "modal"];
+/** The providers Desk offers. */
+export const KNOWN_PROVIDERS: string[] = ["docker", "dockerCloud", "modal"];
 
 /** One sandbox, as Desk remembers it. A project can have any number. */
 export interface Sandbox {

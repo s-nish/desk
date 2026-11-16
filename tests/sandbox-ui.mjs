@@ -30,10 +30,11 @@ await modes.getByRole('radio', { name: /Agent runs in the sandbox/ }).click();
 assert.equal(await modes.getByRole('radio', { name: /Agent runs in the sandbox/ }).getAttribute('aria-checked'), 'true');
 await modes.getByRole('radio', { name: /Agent on this Mac/ }).click();
 assert.equal(await modes.getByRole('radio', { name: /Agent on this Mac/ }).getAttribute('aria-checked'), 'true');
-for (const name of ['Docker', 'Docker Cloud', 'Boat', 'Modal']) await page.locator('.sandbox-provider-name strong', { hasText: new RegExp(`^${name}$`) }).waitFor();
+for (const name of ['Docker', 'Docker Cloud', 'Modal']) await page.locator('.sandbox-provider-name strong', { hasText: new RegExp(`^${name}$`) }).waitFor();
 assert.equal(await page.getByText('Render', { exact: true }).count(), 0, 'Render is gone');
+assert.equal(await page.locator('.sandbox-provider-name strong', { hasText: /^Boat$/ }).count(), 0, 'only the offered providers');
 await page.locator('.sandbox-provider').first().getByText('Not installed').waitFor();
-assert.equal(await page.locator('.sandbox-provider .sandbox-dot.is-bad').count(), 4, 'four red dots');
+assert.equal(await page.locator('.sandbox-provider .sandbox-dot.is-bad').count(), 3, 'three red dots');
 assert.equal(await page.getByText(/TypeError/).count(), 0, 'no raw errors');
 
 // Setup steps open inline, nothing ticked.
@@ -81,7 +82,7 @@ await page.getByRole('menuitemradio', { name: /^New Docker sandbox/ }).waitFor()
 // The reload closed the mock's Docker again: amber, and picking it would start it.
 await page.waitForTimeout(500);
 assert.equal(await page.locator('.radial-item .radial-dot.is-warn').count(), 1, 'Docker amber');
-assert.equal(await page.locator('.radial-item .radial-dot.is-bad').count(), 3, 'the rest red');
+assert.equal(await page.locator('.radial-item .radial-dot.is-bad').count(), 2, 'the rest red');
 if (shot) { await page.waitForTimeout(700); await page.screenshot({ path: shot.replace('.png', '-radial.png') }); }
 await page.keyboard.press('Escape');
 
@@ -111,7 +112,7 @@ await page.getByRole('menuitem', { name: /Claude Code in a sandbox/ }).click();
 await page.locator('.radial.is-shown').waitFor();
 await page.getByRole('menuitemradio', { name: /^New Docker sandbox/ }).waitFor();
 await page.getByRole('menuitemradio', { name: /^New Docker Cloud sandbox/ }).waitFor();
-await page.getByRole('menuitemradio', { name: /^New Boat sandbox/ }).waitFor();
+assert.equal(await page.getByRole('menuitemradio', { name: /^New Boat sandbox/ }).count(), 0);
 await page.getByRole('menuitemradio', { name: /^New Modal sandbox/ }).waitFor();
 assert.equal(await page.getByRole('menuitemradio', { name: /^This Mac/ }).count(), 0, 'already a choice in the menu');
 await page.keyboard.press('Escape');
@@ -119,7 +120,7 @@ await page.waitForTimeout(300);
 // The tab bar's own sandbox button opens the same radial.
 await page.getByRole('button', { name: 'Agent in a sandbox' }).click();
 await page.locator('.radial.is-shown').waitFor();
-assert.equal(await page.getByRole('menuitemradio', { name: /^New .* sandbox/ }).count(), 4, 'all four providers');
+assert.equal(await page.getByRole('menuitemradio', { name: /^New .* sandbox/ }).count(), 3, 'all three providers');
 if (shot) { await page.waitForTimeout(700); await page.screenshot({ path: shot.replace('.png', '-terminal.png') }); }
 await page.keyboard.press('Escape');
 
@@ -166,4 +167,4 @@ await page.locator('.sandbox-bar').getByRole('button', { name: 'Ports', exact: t
 
 assert.deepEqual(errors, []);
 await browser.close();
-console.log('PASS sandbox-ui: settings page, four providers, dots and refresh, inline setup, startup saved, Start Docker, radial Run in, ports forwarded with a toast, menu, stop, closed');
+console.log('PASS sandbox-ui: settings page, three providers, dots and refresh, inline setup, startup saved, Start Docker, radial Run in, ports forwarded with a toast, menu, stop, closed');

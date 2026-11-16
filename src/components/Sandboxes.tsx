@@ -201,7 +201,7 @@ export function SandboxTabButton({ projectId, picker }: { projectId: string; pic
   const running = sandboxes.filter((x) => x.projectId === root && states[x.id] === "running").length;
   const busy = useSandboxes((s) => Object.entries(s.progress).some(([k, v]) => v && (k.startsWith("term:|") || k.startsWith("new:|")) && k.split("|")[1] === root));
   return (
-    <button className={"icon-btn sandbox-tab-button" + (busy ? " is-busy" : "")} aria-label="Agent in a sandbox" title={"Claude Code in a sandbox: Docker, Docker Cloud, Boat or Modal\n⌥-click for Codex"} onClick={(e) => picker.open(e.currentTarget, projectId, e.altKey ? "codex" : "claude")}>
+    <button className={"icon-btn sandbox-tab-button" + (busy ? " is-busy" : "")} aria-label="Agent in a sandbox" title={"Claude Code in a sandbox: Docker, Docker Cloud or Modal\n⌥-click for Codex"} onClick={(e) => picker.open(e.currentTarget, projectId, e.altKey ? "codex" : "claude")}>
       {busy ? <LoaderCircle size={15} className="is-spinning" /> : <Container size={15} />}
       {running > 0 && <span className="sandbox-tab-count" aria-label={`${running} running`}>{running}</span>}
     </button>
